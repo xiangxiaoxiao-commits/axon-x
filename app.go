@@ -13,6 +13,7 @@ import (
 	"axon/internal/db"
 	"axon/internal/model"
 	"axon/internal/provider"
+	"axon/internal/routing"
 	"axon/internal/secret"
 	"axon/internal/store"
 	"axon/internal/store/sqlite"
@@ -53,6 +54,9 @@ type App struct {
 	// emit sends an event to the frontend. Injectable so streaming logic can be
 	// tested without a live Wails runtime; defaults to wruntime.EventsEmit.
 	emit func(event string, data ...interface{})
+
+	// routes is the task-type -> model recommendation table.
+	routes routing.Table
 }
 
 // NewApp creates a new App application struct.
@@ -86,6 +90,12 @@ func (a *App) startup(ctx context.Context) {
 	}
 	a.cfg = cfg
 	a.secrets = secret.NewKeychainStore()
+
+	routes, err := routing.Default()
+	if err != nil {
+		log.Fatalf("load routing table: %v", err)
+	}
+	a.routes = routes
 
 	log.Printf("axon: ready at %s", dataDir)
 }
@@ -183,6 +193,91 @@ func (a *App) newProvider(pc provider.Config) (provider.Provider, error) {
 	}
 }
 
+// --- Routing / task recommendation API (Phase 3) ---
+
+// RoutingTable returns the full task-type recommendation table for display and
+// editing in settings.
+func (a *App) RoutingTable() routing.Table {
+	return a.routes
+}
+
+// ClassifyTask heuristically guesses a task type from free-form input. The
+// frontend uses this to preselect a task on the first message; the user can
+// always override.
+func (a *App) ClassifyTask(input string) string {
+	return routing.Classify(input)
+}
+
+// Recommendation is what the frontend shows in the "recommendation bar":
+// the chosen model plus reference cost/IQ/time, and whether a usable provider
+// is actually configured for it.
+type Recommendation struct {
+	TaskType     string  `json:"taskType"`
+	Tier         string  `json:"tier"` // "primary" | "alternate"
+	Provider     string  `json:"provider"`
+	Model        string  `json:"model"`
+	Temperature  float64 `json:"temperature"`
+	MaxTokens    int     `json:"maxTokens"`
+	IQ           float64 `json:"iq"`
+	CostUSD      float64 `json:"costUsd"`
+	Minutes      float64 `json:"minutes"`
+	ProviderName string  `json:"providerName"` // configured provider matched by protocol, if any
+	Available    bool    `json:"available"`    // a configured provider with a stored key exists
+}
+
+// Recommend returns the recommendation for a task type and tier ("primary" or
+// "alternate"), resolving which configured provider (if any) can serve it.
+func (a *App) Recommend(taskType, tier string) (Recommendation, error) {
+	profile, ok := a.routes.Profiles[taskType]
+	if !ok {
+		return Recommendation{}, fmt.Errorf("unknown task type %q", taskType)
+	}
+	rec := profile.Primary
+	if tier == "alternate" {
+		rec = profile.Alternate
+	} else {
+		tier = "primary"
+	}
+
+	out := Recommendation{
+		TaskType:    taskType,
+		Tier:        tier,
+		Provider:    rec.Provider,
+		Model:       rec.Model,
+		Temperature: rec.Temperature,
+		MaxTokens:   rec.MaxTokens,
+		IQ:          rec.IQ,
+		CostUSD:     rec.CostUSD,
+		Minutes:     rec.Minutes,
+	}
+
+	// Match a configured provider by protocol (rec.Provider is a protocol name).
+	if name, ok := a.providerForProtocol(rec.Provider); ok {
+		out.ProviderName = name
+		if pc, ok := a.cfg.Provider(name); ok {
+			out.Available = a.secrets.Has(pc.KeyRef)
+		}
+	}
+	return out, nil
+}
+
+// providerForProtocol returns the name of a configured provider whose protocol
+// matches, preferring the default provider when it qualifies.
+func (a *App) providerForProtocol(protocol string) (string, bool) {
+	cfg := a.cfg.Get()
+	if cfg.DefaultProvider != "" {
+		if pc, ok := a.cfg.Provider(cfg.DefaultProvider); ok && pc.Protocol == protocol {
+			return pc.Name, true
+		}
+	}
+	for _, pc := range cfg.Providers {
+		if pc.Protocol == protocol {
+			return pc.Name, true
+		}
+	}
+	return "", false
+}
+
 // --- Chat (streaming) ---
 
 // SendMessage persists the user's message, then streams an assistant reply from
@@ -193,7 +288,7 @@ func (a *App) newProvider(pc provider.Config) (provider.Provider, error) {
 //
 // providerName/modelID may be empty to use configured defaults. It returns the
 // assistant message id so the frontend can correlate stream events.
-func (a *App) SendMessage(conversationID, content, providerName, modelID string) (int64, error) {
+func (a *App) SendMessage(conversationID, content, providerName, modelID string, temperature float64, maxTokens int) (int64, error) {
 	cfg := a.cfg.Get()
 	if providerName == "" {
 		providerName = cfg.DefaultProvider
@@ -252,7 +347,12 @@ func (a *App) SendMessage(conversationID, content, providerName, modelID string)
 	a.cancels[conversationID] = cancel
 	a.mu.Unlock()
 
-	go a.runStream(streamCtx, prov, provider.ChatRequest{Model: modelID, Messages: reqMsgs}, conversationID, asst.ID)
+	go a.runStream(streamCtx, prov, provider.ChatRequest{
+		Model:       modelID,
+		Messages:    reqMsgs,
+		Temperature: temperature,
+		MaxTokens:   maxTokens,
+	}, conversationID, asst.ID)
 	return asst.ID, nil
 }
 
