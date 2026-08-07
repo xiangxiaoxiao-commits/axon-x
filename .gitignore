@@ -1,0 +1,29 @@
+# Wails / build artifacts
+build/bin
+
+# Frontend
+node_modules
+frontend/dist
+frontend/node_modules
+
+# Go
+*.test
+*.out
+
+# Local databases (runtime data, never commit)
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.db
+
+# Secrets / local env
+.env
+.env.local
+
+# OS
+.DS_Store
+
+# Editor
+.idea
+.vscode/*
+!.vscode/extensions.json
