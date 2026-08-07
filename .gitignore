@@ -5,6 +5,7 @@ build/bin
 node_modules
 frontend/dist
 frontend/node_modules
+frontend/package.json.md5
 
 # Go
 *.test
