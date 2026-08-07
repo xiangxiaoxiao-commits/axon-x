@@ -366,5 +366,3 @@ func TestTouchConversationNotFound(t *testing.T) {
 		t.Errorf("touch missing: expected sql.ErrNoRows, got %v", err)
 	}
 }
-
-

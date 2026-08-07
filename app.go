@@ -57,11 +57,18 @@ type App struct {
 
 	// routes is the task-type -> model recommendation table.
 	routes routing.Table
+
+	// summaryTimers holds per-conversation idle timers; when one fires the
+	// conversation is summarized into a memory in the background. Guarded by mu.
+	summaryTimers map[string]*time.Timer
 }
 
 // NewApp creates a new App application struct.
 func NewApp() *App {
-	return &App{cancels: make(map[string]context.CancelFunc)}
+	return &App{
+		cancels:       make(map[string]context.CancelFunc),
+		summaryTimers: make(map[string]*time.Timer),
+	}
 }
 
 // startup opens the archive database, config and keychain. A failure to open
@@ -288,7 +295,9 @@ func (a *App) providerForProtocol(protocol string) (string, bool) {
 //
 // providerName/modelID may be empty to use configured defaults. It returns the
 // assistant message id so the frontend can correlate stream events.
-func (a *App) SendMessage(conversationID, content, providerName, modelID string, temperature float64, maxTokens int) (int64, error) {
+// injectMemoryIDs are conversation ids whose summaries the user chose to inject
+// as extra context for this turn (Phase 4). Empty means no injection.
+func (a *App) SendMessage(conversationID, content, providerName, modelID string, temperature float64, maxTokens int, injectMemoryIDs []string) (int64, error) {
 	cfg := a.cfg.Get()
 	if providerName == "" {
 		providerName = cfg.DefaultProvider
@@ -321,7 +330,12 @@ func (a *App) SendMessage(conversationID, content, providerName, modelID string,
 	if err != nil {
 		return 0, fmt.Errorf("load history: %w", err)
 	}
-	reqMsgs := make([]provider.ChatMessage, 0, len(history))
+	reqMsgs := make([]provider.ChatMessage, 0, len(history)+1)
+	// Prepend user-selected memories as a system message with clear attribution,
+	// so the model can use past context and the user knows what was injected.
+	if inj := a.buildMemoryInjection(injectMemoryIDs); inj != "" {
+		reqMsgs = append(reqMsgs, provider.ChatMessage{Role: provider.RoleSystem, Content: inj})
+	}
 	for _, m := range history {
 		reqMsgs = append(reqMsgs, provider.ChatMessage{Role: m.Role, Content: m.Content})
 	}
@@ -430,6 +444,9 @@ func (a *App) runStream(ctx context.Context, prov provider.Provider, req provide
 			ConversationID: convID, MessageID: msgID,
 			PromptTokens: prompt, CompletionTokens: completion,
 		})
+		// Conversation produced a complete reply; (re)arm the idle timer so it
+		// gets summarized into a memory once it settles (Phase 4).
+		a.scheduleSummary(convID)
 	}
 }
 

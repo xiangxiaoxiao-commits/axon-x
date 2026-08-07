@@ -28,6 +28,27 @@ type Conversation struct {
 	UpdatedAt int64  `json:"updatedAt"` // unix epoch millis
 }
 
+// Memory is a semantic memory unit: a generated summary of one conversation
+// plus its embedding, used for cross-session recall (Phase 4).
+type Memory struct {
+	ID             int64     `json:"id"`
+	ConversationID string    `json:"conversationId"`
+	Summary        string    `json:"summary"`
+	Embedding      []float32 `json:"-"` // not sent to the frontend
+	EmbedModel     string    `json:"embedModel"`
+	Dim            int       `json:"dim"`
+	CreatedAt      int64     `json:"createdAt"`
+	UpdatedAt      int64     `json:"updatedAt"`
+}
+
+// MemoryHit is a memory returned by similarity search, with its score and the
+// title of its source conversation for display/attribution.
+type MemoryHit struct {
+	Memory
+	Score float32 `json:"score"` // cosine similarity in [-1, 1]
+	Title string  `json:"title"` // source conversation title
+}
+
 // Message is one turn within a conversation.
 type Message struct {
 	ID               int64  `json:"id"`

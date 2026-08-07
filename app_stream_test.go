@@ -410,7 +410,7 @@ func TestSendMessagePersistsUserAndPlaceholder(t *testing.T) {
 		t.Fatalf("CreateConversation: %v", err)
 	}
 
-	asstID, err := app.SendMessage(conv.ID, "hello there", "test-openai", "gpt-test", 0.3, 4096)
+	asstID, err := app.SendMessage(conv.ID, "hello there", "test-openai", "gpt-test", 0.3, 4096, nil)
 	if err != nil {
 		t.Fatalf("SendMessage: %v", err)
 	}
