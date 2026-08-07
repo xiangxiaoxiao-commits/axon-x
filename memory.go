@@ -211,6 +211,32 @@ func (a *App) DeleteMemory(conversationID string) error {
 	return a.store.DeleteMemory(a.ctx, conversationID)
 }
 
+// MemoryEntry is a memory plus its source conversation title, for the memory
+// management view (F4.9).
+type MemoryEntry struct {
+	model.Memory
+	Title string `json:"title"`
+}
+
+// ListMemories returns all stored memories with their source conversation
+// titles, so the memory view can browse the library directly. Embeddings are
+// omitted from the JSON (the Memory type tags them json:"-").
+func (a *App) ListMemories() ([]MemoryEntry, error) {
+	memories, err := a.store.ListMemories(a.ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list memories: %w", err)
+	}
+	out := make([]MemoryEntry, 0, len(memories))
+	for _, m := range memories {
+		title := m.ConversationID
+		if c, err := a.store.GetConversation(a.ctx, m.ConversationID); err == nil && c.Title != "" {
+			title = c.Title
+		}
+		out = append(out, MemoryEntry{Memory: m, Title: title})
+	}
+	return out, nil
+}
+
 // buildMemoryInjection composes a system message from the summaries of the
 // selected conversations, with source attribution. Returns "" when nothing is
 // selected or resolvable, so callers can skip injection entirely.
