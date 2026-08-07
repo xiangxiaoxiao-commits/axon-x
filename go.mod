@@ -4,6 +4,7 @@ go 1.25.0
 
 require (
 	github.com/google/uuid v1.6.0
+	github.com/keybase/go-keychain v0.0.1
 	github.com/mattn/go-sqlite3 v1.14.49
 	github.com/wailsapp/wails/v2 v2.13.0
 )

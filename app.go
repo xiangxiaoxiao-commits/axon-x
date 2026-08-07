@@ -2,47 +2,95 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
+	"strings"
+	"sync"
+	"time"
 
+	"axon/internal/config"
 	"axon/internal/db"
 	"axon/internal/model"
+	"axon/internal/provider"
+	"axon/internal/secret"
 	"axon/internal/store"
 	"axon/internal/store/sqlite"
+
+	wruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
+// Chat stream event names emitted to the frontend during a completion.
+const (
+	EventDelta = "chat:delta"
+	EventDone  = "chat:done"
+	EventError = "chat:error"
+)
+
+// streamEvent is the payload for chat:* events.
+type streamEvent struct {
+	ConversationID   string `json:"conversationId"`
+	MessageID        int64  `json:"messageId"`
+	Delta            string `json:"delta,omitempty"`
+	Error            string `json:"error,omitempty"`
+	PromptTokens     int    `json:"promptTokens,omitempty"`
+	CompletionTokens int    `json:"completionTokens,omitempty"`
+}
+
 // App is the Wails-bound application. Its exported methods are callable from
-// the Svelte frontend; it delegates persistence to the store layer.
+// the Svelte frontend; it wires persistence, secrets and model providers.
 type App struct {
-	ctx   context.Context
-	store store.Store
+	ctx     context.Context
+	store   store.Store
+	secrets secret.Store
+	cfg     *config.Manager
+
+	// mu guards the cancel funcs of in-flight streams, keyed by conversation id,
+	// so the frontend can stop generation per conversation.
+	mu      sync.Mutex
+	cancels map[string]context.CancelFunc
+
+	// emit sends an event to the frontend. Injectable so streaming logic can be
+	// tested without a live Wails runtime; defaults to wruntime.EventsEmit.
+	emit func(event string, data ...interface{})
 }
 
 // NewApp creates a new App application struct.
 func NewApp() *App {
-	return &App{}
+	return &App{cancels: make(map[string]context.CancelFunc)}
 }
 
-// startup opens the archive database and wires up the store. A failure here is
-// fatal: without durable storage the app cannot fulfill its core promise.
+// startup opens the archive database, config and keychain. A failure to open
+// the database is fatal: durable storage is the app's core promise.
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	if a.emit == nil {
+		a.emit = func(event string, data ...interface{}) {
+			wruntime.EventsEmit(a.ctx, event, data...)
+		}
+	}
 
 	dataDir, err := db.AppDataDir()
 	if err != nil {
 		log.Fatalf("resolve app data dir: %v", err)
 	}
-
 	sqlDB, err := db.Open(dataDir)
 	if err != nil {
 		log.Fatalf("open database: %v", err)
 	}
-
 	a.store = sqlite.New(sqlDB)
-	log.Printf("axon: archive ready at %s", dataDir)
+
+	cfg, err := config.Load(dataDir)
+	if err != nil {
+		log.Fatalf("load config: %v", err)
+	}
+	a.cfg = cfg
+	a.secrets = secret.NewKeychainStore()
+
+	log.Printf("axon: ready at %s", dataDir)
 }
 
-// --- Conversation API (bound to frontend) ---
+// --- Conversation API ---
 
 // NewConversation creates an empty conversation and returns it.
 func (a *App) NewConversation(title, taskType, modelName string) (model.Conversation, error) {
@@ -68,27 +116,238 @@ func (a *App) DeleteConversation(id string) error {
 	return a.store.DeleteConversation(a.ctx, id)
 }
 
-// --- Message API (bound to frontend) ---
-
 // ListMessages returns all messages of a conversation in order.
 func (a *App) ListMessages(conversationID string) ([]model.Message, error) {
 	return a.store.ListMessages(a.ctx, conversationID)
 }
 
-// AppendMessage persists one message immediately (append-only).
-// Real streaming/model calls arrive in Phase 2; for now this lets the
-// frontend exercise the durable archive end to end.
-func (a *App) AppendMessage(conversationID, role, content string) (model.Message, error) {
-	return a.store.AppendMessage(a.ctx, model.Message{
-		ConversationID: conversationID,
-		Role:           role,
-		Content:        content,
-		Status:         model.StatusComplete,
-	})
+// --- Settings / Provider API ---
+
+// ProviderInfo is a safe view of a provider config for the frontend: it never
+// includes the API key, only whether one is stored.
+type ProviderInfo struct {
+	provider.Config
+	HasKey bool `json:"hasKey"`
 }
 
-// Greet is a leftover smoke-test method kept until the frontend replaces the
-// scaffold view; harmless and used to verify the Go<->JS bridge.
-func (a *App) Greet(name string) string {
-	return fmt.Sprintf("Hello %s, It's show time!", name)
+// ListProviders returns configured providers with key-presence flags (no keys).
+func (a *App) ListProviders() []ProviderInfo {
+	cfg := a.cfg.Get()
+	out := make([]ProviderInfo, 0, len(cfg.Providers))
+	for _, p := range cfg.Providers {
+		out = append(out, ProviderInfo{Config: p, HasKey: a.secrets.Has(p.KeyRef)})
+	}
+	return out
+}
+
+// SaveProvider persists a provider config and, when apiKey is non-empty, stores
+// the key in the Keychain under the provider's KeyRef. The key never lands in
+// the config file. A blank apiKey leaves any existing stored key untouched.
+func (a *App) SaveProvider(p provider.Config, apiKey string) error {
+	if p.Name == "" || p.Protocol == "" || p.BaseURL == "" {
+		return fmt.Errorf("provider name, protocol and baseURL are required")
+	}
+	if p.KeyRef == "" {
+		p.KeyRef = "provider:" + p.Name
+	}
+	if apiKey != "" {
+		if err := a.secrets.Set(p.KeyRef, apiKey); err != nil {
+			return fmt.Errorf("store api key: %w", err)
+		}
+	}
+	return a.cfg.UpsertProvider(p)
+}
+
+// SetDefaults sets the default provider and model.
+func (a *App) SetDefaults(providerName, modelID string) error {
+	return a.cfg.SetDefaults(providerName, modelID)
+}
+
+// newProvider builds a live Provider for the given config, resolving its key
+// from the Keychain at call time (never persisted elsewhere).
+func (a *App) newProvider(pc provider.Config) (provider.Provider, error) {
+	key, err := a.secrets.Get(pc.KeyRef)
+	if err != nil {
+		if errors.Is(err, secret.ErrNotFound) {
+			return nil, fmt.Errorf("no API key configured for provider %q", pc.Name)
+		}
+		return nil, fmt.Errorf("resolve api key: %w", err)
+	}
+	switch pc.Protocol {
+	case "openai":
+		return provider.NewOpenAI(pc.BaseURL, key), nil
+	case "anthropic":
+		return provider.NewAnthropic(pc.BaseURL, key), nil
+	default:
+		return nil, fmt.Errorf("unknown provider protocol %q", pc.Protocol)
+	}
+}
+
+// --- Chat (streaming) ---
+
+// SendMessage persists the user's message, then streams an assistant reply from
+// the selected provider. Deltas are emitted as chat:delta events; completion as
+// chat:done; failures as chat:error. The assistant message is persisted as a
+// 'streaming' placeholder first and finalized (or marked interrupted) at the
+// end, so a stop or crash never loses partial output (NFR 6.3).
+//
+// providerName/modelID may be empty to use configured defaults. It returns the
+// assistant message id so the frontend can correlate stream events.
+func (a *App) SendMessage(conversationID, content, providerName, modelID string) (int64, error) {
+	cfg := a.cfg.Get()
+	if providerName == "" {
+		providerName = cfg.DefaultProvider
+	}
+	if modelID == "" {
+		modelID = cfg.DefaultModel
+	}
+	pc, ok := a.cfg.Provider(providerName)
+	if !ok {
+		return 0, fmt.Errorf("provider %q not configured", providerName)
+	}
+	prov, err := a.newProvider(pc)
+	if err != nil {
+		return 0, err
+	}
+
+	// Persist the user turn immediately.
+	if _, err := a.store.AppendMessage(a.ctx, model.Message{
+		ConversationID: conversationID,
+		Role:           model.RoleUser,
+		Content:        content,
+		Status:         model.StatusComplete,
+	}); err != nil {
+		return 0, fmt.Errorf("persist user message: %w", err)
+	}
+	a.maybeTitle(conversationID, content)
+
+	// Build the prompt from full history so the model has context.
+	history, err := a.store.ListMessages(a.ctx, conversationID)
+	if err != nil {
+		return 0, fmt.Errorf("load history: %w", err)
+	}
+	reqMsgs := make([]provider.ChatMessage, 0, len(history))
+	for _, m := range history {
+		reqMsgs = append(reqMsgs, provider.ChatMessage{Role: m.Role, Content: m.Content})
+	}
+
+	// Persist a streaming placeholder for the assistant reply.
+	asst, err := a.store.AppendMessage(a.ctx, model.Message{
+		ConversationID: conversationID,
+		Role:           model.RoleAssistant,
+		Model:          modelID,
+		Status:         model.StatusStreaming,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("persist assistant placeholder: %w", err)
+	}
+	a.store.TouchConversation(a.ctx, conversationID, modelID, "")
+
+	// Per-conversation cancellable context for stop-generation.
+	streamCtx, cancel := context.WithCancel(a.ctx)
+	a.mu.Lock()
+	if prev, ok := a.cancels[conversationID]; ok {
+		prev() // supersede any in-flight stream for this conversation
+	}
+	a.cancels[conversationID] = cancel
+	a.mu.Unlock()
+
+	go a.runStream(streamCtx, prov, provider.ChatRequest{Model: modelID, Messages: reqMsgs}, conversationID, asst.ID)
+	return asst.ID, nil
+}
+
+// StopGeneration cancels the in-flight stream for a conversation, if any.
+func (a *App) StopGeneration(conversationID string) {
+	a.mu.Lock()
+	cancel := a.cancels[conversationID]
+	a.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+}
+
+// runStream consumes the provider stream, emits events to the frontend, and
+// persists the final content. It accumulates deltas so the assistant message is
+// saved even if the stream is stopped or errors mid-way.
+func (a *App) runStream(ctx context.Context, prov provider.Provider, req provider.ChatRequest, convID string, msgID int64) {
+	defer func() {
+		a.mu.Lock()
+		delete(a.cancels, convID)
+		a.mu.Unlock()
+	}()
+
+	chunks, errs := prov.Chat(ctx, req)
+	var b strings.Builder
+	var prompt, completion int
+
+	for chunk := range chunks {
+		if chunk.Delta != "" {
+			b.WriteString(chunk.Delta)
+			a.emit(EventDelta, streamEvent{
+				ConversationID: convID, MessageID: msgID, Delta: chunk.Delta,
+			})
+		}
+		if chunk.Done {
+			prompt, completion = chunk.PromptTokens, chunk.CompletionTokens
+		}
+	}
+
+	// The stream channel is closed; check whether it ended due to an error.
+	var streamErr error
+	select {
+	case streamErr = <-errs:
+	default:
+	}
+
+	// Persist whatever we accumulated. Status reflects how the stream ended.
+	status := model.StatusComplete
+	if streamErr != nil {
+		if errors.Is(streamErr, context.Canceled) {
+			status = model.StatusInterrupted // user stopped generation
+		} else {
+			status = model.StatusInterrupted // real failure; keep partial text
+		}
+	}
+	if err := a.store.UpdateMessageContent(a.ctx, msgID, b.String(), prompt, completion, status); err != nil {
+		log.Printf("axon: finalize message %d: %v", msgID, err)
+	}
+
+	switch {
+	case streamErr != nil && errors.Is(streamErr, context.Canceled):
+		a.emit(EventDone, streamEvent{
+			ConversationID: convID, MessageID: msgID,
+			PromptTokens: prompt, CompletionTokens: completion,
+		})
+	case streamErr != nil:
+		// Log with detail; send a readable message to the UI (no secrets — the
+		// provider layer already sanitized it).
+		log.Printf("axon: stream error for conv %s: %v", convID, streamErr)
+		a.emit(EventError, streamEvent{
+			ConversationID: convID, MessageID: msgID, Error: streamErr.Error(),
+		})
+	default:
+		a.emit(EventDone, streamEvent{
+			ConversationID: convID, MessageID: msgID,
+			PromptTokens: prompt, CompletionTokens: completion,
+		})
+	}
+}
+
+// maybeTitle sets a conversation title from the first user message when it is
+// still untitled (F1.5). Best-effort: errors are logged, not fatal.
+func (a *App) maybeTitle(convID, firstContent string) {
+	c, err := a.store.GetConversation(a.ctx, convID)
+	if err != nil || strings.TrimSpace(c.Title) != "" {
+		return
+	}
+	title := strings.TrimSpace(firstContent)
+	if len(title) > 60 {
+		title = title[:60] + "..."
+	}
+	if title == "" {
+		title = "New conversation " + time.Now().Format("2006-01-02 15:04")
+	}
+	if err := a.store.RenameConversation(a.ctx, convID, title); err != nil {
+		log.Printf("axon: auto-title conv %s: %v", convID, err)
+	}
 }
