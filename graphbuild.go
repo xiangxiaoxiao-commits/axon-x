@@ -332,3 +332,67 @@ func (a *App) GenerateArticle(projectSlug, term string) (string, error) {
 		Temperature: 0.3, MaxTokens: 3000,
 	})
 }
+
+// KnowledgeMatch is what the chat injects: the entities whose names appear in
+// the user's message, a readable context block, and the matched names for the
+// UI to show ("injected: X, Y").
+type KnowledgeMatch struct {
+	Names   []string `json:"names"`
+	Context string   `json:"context"`
+}
+
+// MatchKnowledge finds graph entities referenced by the user's message and
+// builds an injectable context block from their facts and relations. Assembled
+// from cache (instant, free). Empty match => Names is empty and Context "".
+func (a *App) MatchKnowledge(projectSlug, text string) (KnowledgeMatch, error) {
+	if strings.TrimSpace(text) == "" || strings.TrimSpace(projectSlug) == "" {
+		return KnowledgeMatch{Names: []string{}}, nil
+	}
+	g, err := a.assembleGraph(projectSlug, "")
+	if err != nil {
+		return KnowledgeMatch{Names: []string{}}, err
+	}
+	lt := strings.ToLower(text)
+
+	hit := map[string]bool{}
+	var matched []graph.Entity
+	for _, e := range g.Entities {
+		n := strings.TrimSpace(e.Name)
+		if n == "" {
+			continue
+		}
+		// Match if the message mentions the entity name (case-insensitive).
+		if strings.Contains(lt, strings.ToLower(n)) {
+			hit[strings.ToLower(n)] = true
+			matched = append(matched, e)
+		}
+	}
+	if len(matched) == 0 {
+		return KnowledgeMatch{Names: []string{}}, nil
+	}
+
+	names := make([]string, 0, len(matched))
+	var b strings.Builder
+	b.WriteString("以下是该项目的相关背景知识（来自你以往的对话，供参考）：\n")
+	for _, e := range matched {
+		names = append(names, e.Name)
+		fmt.Fprintf(&b, "\n【%s】\n", e.Name)
+		for _, o := range e.Observations {
+			fmt.Fprintf(&b, "- %s\n", o)
+		}
+	}
+	// Relations among matched entities add useful structure.
+	var rels []string
+	for _, r := range g.Relations {
+		if hit[strings.ToLower(r.From)] && hit[strings.ToLower(r.To)] {
+			rels = append(rels, fmt.Sprintf("%s —%s→ %s", r.From, r.Label, r.To))
+		}
+	}
+	if len(rels) > 0 {
+		b.WriteString("\n关系：\n")
+		for _, r := range rels {
+			b.WriteString("- " + r + "\n")
+		}
+	}
+	return KnowledgeMatch{Names: names, Context: b.String()}, nil
+}

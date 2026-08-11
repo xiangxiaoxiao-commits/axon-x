@@ -327,7 +327,9 @@ func (a *App) providerForProtocol(protocol string) (string, bool) {
 // assistant message id so the frontend can correlate stream events.
 // injectMemoryIDs are conversation ids whose summaries the user chose to inject
 // as extra context for this turn (Phase 4). Empty means no injection.
-func (a *App) SendMessage(conversationID, content, providerName, modelID string, temperature float64, maxTokens int, injectMemoryIDs []string) (int64, error) {
+// injectContext, when non-empty, is prepended as a system message — used to
+// feed matched knowledge-graph background into the reply (chat injection).
+func (a *App) SendMessage(conversationID, content, providerName, modelID string, temperature float64, maxTokens int, injectMemoryIDs []string, injectContext string) (int64, error) {
 	cfg := a.cfg.Get()
 	if providerName == "" {
 		providerName = cfg.DefaultProvider
@@ -365,6 +367,10 @@ func (a *App) SendMessage(conversationID, content, providerName, modelID string,
 	// so the model can use past context and the user knows what was injected.
 	if inj := a.buildMemoryInjection(injectMemoryIDs); inj != "" {
 		reqMsgs = append(reqMsgs, provider.ChatMessage{Role: provider.RoleSystem, Content: inj})
+	}
+	// Knowledge-graph background matched from the user's message.
+	if strings.TrimSpace(injectContext) != "" {
+		reqMsgs = append(reqMsgs, provider.ChatMessage{Role: provider.RoleSystem, Content: injectContext})
 	}
 	for _, m := range history {
 		reqMsgs = append(reqMsgs, provider.ChatMessage{Role: m.Role, Content: m.Content})

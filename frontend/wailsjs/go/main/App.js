@@ -42,6 +42,10 @@ export function IndexProject(arg1) {
   return window['go']['main']['App']['IndexProject'](arg1);
 }
 
+export function IndexSearch() {
+  return window['go']['main']['App']['IndexSearch']();
+}
+
 export function ListClaudeProjects() {
   return window['go']['main']['App']['ListClaudeProjects']();
 }
@@ -74,6 +78,10 @@ export function ListProviders() {
   return window['go']['main']['App']['ListProviders']();
 }
 
+export function MatchKnowledge(arg1, arg2) {
+  return window['go']['main']['App']['MatchKnowledge'](arg1, arg2);
+}
+
 export function NewConversation(arg1, arg2, arg3) {
   return window['go']['main']['App']['NewConversation'](arg1, arg2, arg3);
 }
@@ -102,8 +110,12 @@ export function SaveProvider(arg1, arg2) {
   return window['go']['main']['App']['SaveProvider'](arg1, arg2);
 }
 
-export function SendMessage(arg1, arg2, arg3, arg4, arg5, arg6, arg7) {
-  return window['go']['main']['App']['SendMessage'](arg1, arg2, arg3, arg4, arg5, arg6, arg7);
+export function SearchSessions(arg1, arg2) {
+  return window['go']['main']['App']['SearchSessions'](arg1, arg2);
+}
+
+export function SendMessage(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8) {
+  return window['go']['main']['App']['SendMessage'](arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8);
 }
 
 export function SetDefaults(arg1, arg2) {

@@ -152,6 +152,20 @@ export namespace graph {
 
 export namespace main {
 	
+	export class KnowledgeMatch {
+	    names: string[];
+	    context: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new KnowledgeMatch(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.names = source["names"];
+	        this.context = source["context"];
+	    }
+	}
 	export class MemoryEntry {
 	    id: number;
 	    conversationId: string;
@@ -456,6 +470,33 @@ export namespace routing {
 		    }
 		    return a;
 		}
+	}
+
+}
+
+export namespace search {
+	
+	export class Hit {
+	    projectSlug: string;
+	    sessionId: string;
+	    title: string;
+	    role: string;
+	    snippet: string;
+	    updatedAt: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new Hit(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.projectSlug = source["projectSlug"];
+	        this.sessionId = source["sessionId"];
+	        this.title = source["title"];
+	        this.role = source["role"];
+	        this.snippet = source["snippet"];
+	        this.updatedAt = source["updatedAt"];
+	    }
 	}
 
 }

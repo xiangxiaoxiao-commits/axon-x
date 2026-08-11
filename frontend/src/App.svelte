@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { activeView, type View } from "./lib/stores";
+  import NeuralHub from "./views/NeuralHub.svelte";
+  import SearchView from "./views/SearchView.svelte";
   import SessionsView from "./views/SessionsView.svelte";
   import GraphView from "./views/GraphView.svelte";
   import MemoryManagerView from "./views/MemoryManagerView.svelte";
@@ -8,149 +10,74 @@
   import TerminalView from "./views/TerminalView.svelte";
   import SettingsView from "./views/SettingsView.svelte";
 
-  // Core purpose: browse Claude Code's saved sessions and manage its memory.
-  // Chat/terminal are secondary. No first-run gate — the core reads local
-  // files and needs no API key.
-  const nav: [View, string, string][] = [
-    ["sessions", "🗂", "会话"],
-    ["graph", "🕸", "知识图谱"],
-    ["memory", "🧠", "记忆"],
-    ["chat", "❯", "对话"],
-    ["terminal", "▮", "终端"],
-    ["settings", "⚙", "设置"],
-  ];
-
-  // Keep the terminal mounted once opened so the shell survives tab switches.
+  // Navigation is a neural hub, not a menu rail: home is a synapse network of
+  // feature-neurons; entering a feature shows it full-screen with a small
+  // "back to nucleus" node in the corner.
   let terminalOpened = false;
   $: if ($activeView === "terminal") terminalOpened = true;
 
   let ready = false;
-  onMount(() => {
-    $activeView = "sessions";
-    ready = true;
-  });
+  onMount(() => { $activeView = "hub"; ready = true; });
   function refreshProviders() {}
 
-  // Global keyboard shortcuts: Cmd/Ctrl+1..5 switch views.
+  function toHub() { $activeView = "hub"; }
   function onKey(e: KeyboardEvent) {
-    if (!(e.metaKey || e.ctrlKey)) return;
-    const map: Record<string, View> = {
-      "1": "sessions",
-      "2": "graph",
-      "3": "memory",
-      "4": "chat",
-      "5": "terminal",
-      "6": "settings",
-    };
-    if (map[e.key]) {
-      e.preventDefault();
-      $activeView = map[e.key];
-    }
+    if (e.key === "Escape" && $activeView !== "hub") { $activeView = "hub"; }
   }
 </script>
 
 <svelte:window on:keydown={onKey} />
 
-<div class="shell">
-  <nav class="rail">
-    {#each nav as [view, icon, label]}
-      <button
-        class="rail-item"
-        class:active={$activeView === view}
-        title={label}
-        on:click={() => ($activeView = view)}
-      >
-        <span class="icon">{icon}</span>
+<div class="app">
+  {#if ready}
+    {#if $activeView === "hub"}
+      <NeuralHub on:go={(e) => ($activeView = e.detail)} />
+    {:else}
+      <!-- back-to-hub synapse -->
+      <button class="back" title="返回中枢 (Esc)" on:click={toHub} aria-label="返回中枢">
+        <span class="dot"></span>
       </button>
-    {/each}
-    <div class="rail-spacer"></div>
-  </nav>
-
-  <div class="content">
-    {#if ready}
-      {#if $activeView === "sessions"}
-        <SessionsView />
-      {:else if $activeView === "graph"}
-        <GraphView />
-      {:else if $activeView === "memory"}
-        <MemoryManagerView />
-      {:else if $activeView === "chat"}
-        <ReplView />
-      {:else if $activeView === "settings"}
-        <SettingsView onSaved={refreshProviders} />
-      {/if}
-      <!-- Terminal stays mounted once opened so the shell survives tab switches. -->
-      {#if terminalOpened}
-        <div class="term-layer" class:hidden={$activeView !== "terminal"}>
-          <TerminalView />
-        </div>
-      {/if}
+      <div class="view">
+        {#if $activeView === "search"}
+          <SearchView />
+        {:else if $activeView === "sessions"}
+          <SessionsView />
+        {:else if $activeView === "graph"}
+          <GraphView />
+        {:else if $activeView === "memory"}
+          <MemoryManagerView />
+        {:else if $activeView === "chat"}
+          <ReplView />
+        {:else if $activeView === "settings"}
+          <SettingsView onSaved={refreshProviders} />
+        {/if}
+      </div>
     {/if}
-  </div>
+    <!-- Terminal stays mounted once opened so the shell survives switches. -->
+    {#if terminalOpened}
+      <div class="term-layer" class:hidden={$activeView !== "terminal"}>
+        <button class="back" title="返回中枢 (Esc)" on:click={toHub} aria-label="返回中枢"><span class="dot"></span></button>
+        <div class="view"><TerminalView /></div>
+      </div>
+    {/if}
+  {/if}
 </div>
 
 <style>
-  .shell {
-    display: flex;
-    height: 100vh;
+  .app { height: 100vh; overflow: hidden; position: relative; background: var(--bg-base); }
+  .view { height: 100vh; }
+  .term-layer { position: absolute; inset: 0; background: var(--bg-base); }
+  .term-layer.hidden { display: none; }
+
+  /* Back-to-hub synapse: a small pulsing neuron in the top-left corner. */
+  .back {
+    position: absolute; top: 10px; left: 10px; z-index: 50;
+    width: 30px; height: 30px; border-radius: 50%;
+    background: var(--bg-elevated); border: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: center; padding: 0;
   }
-  .rail {
-    width: 48px;
-    flex: 0 0 48px;
-    background: var(--bg-surface);
-    border-right: 1px solid var(--border);
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    padding: 8px 0;
-    gap: 4px;
-  }
-  .rail-item {
-    width: 36px;
-    height: 36px;
-    border: none;
-    background: transparent;
-    border-radius: var(--radius-control);
-    font-size: 18px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    opacity: 0.6;
-  }
-  .rail-item:hover {
-    background: var(--bg-elevated);
-    opacity: 1;
-  }
-  .rail-item.active {
-    background: var(--bg-elevated);
-    opacity: 1;
-    box-shadow: inset 2px 0 0 var(--accent);
-  }
-  .rail-spacer {
-    flex: 1;
-  }
-  .status-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: var(--text-muted);
-    margin-bottom: 8px;
-  }
-  .status-dot.ok {
-    background: var(--success);
-  }
-  .content {
-    flex: 1;
-    min-width: 0;
-    overflow: hidden;
-    position: relative;
-  }
-  .term-layer {
-    position: absolute;
-    inset: 0;
-    background: var(--bg-base);
-  }
-  .term-layer.hidden {
-    display: none;
-  }
+  .back:hover { border-color: var(--accent); }
+  .back .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+  .back:hover .dot { animation: back-pulse 0.9s ease-in-out infinite; }
+  @keyframes back-pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.35); } }
 </style>

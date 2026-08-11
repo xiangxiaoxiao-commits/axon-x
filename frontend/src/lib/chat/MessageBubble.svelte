@@ -59,7 +59,10 @@
     {#if isUser}
       <div class="text selectable">{message.content}</div>
     {:else if isEmptyStreaming}
-      <div class="generating">正在生成<span class="dots"></span></div>
+      <div class="generating">
+        信号传导中
+        <span class="axon-signal"><i></i><i></i><i></i></span>
+      </div>
     {:else}
       <!-- svelte-ignore a11y-no-static-element-interactions a11y-click-events-have-key-events -->
       <div class="body selectable" on:click={onBodyClick}>

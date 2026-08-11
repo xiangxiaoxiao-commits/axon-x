@@ -6,6 +6,7 @@ import {model} from '../models';
 import {main} from '../models';
 import {routing} from '../models';
 import {provider} from '../models';
+import {search} from '../models';
 
 export function BackfillMemories():Promise<number>;
 
@@ -27,6 +28,8 @@ export function GetGraph(arg1:string):Promise<graph.Graph>;
 
 export function IndexProject(arg1:string):Promise<void>;
 
+export function IndexSearch():Promise<void>;
+
 export function ListClaudeProjects():Promise<Array<claudedata.Project>>;
 
 export function ListClaudeSessions(arg1:string):Promise<Array<claudedata.SessionMeta>>;
@@ -43,6 +46,8 @@ export function ListModels(arg1:string):Promise<Array<string>>;
 
 export function ListProviders():Promise<Array<main.ProviderInfo>>;
 
+export function MatchKnowledge(arg1:string,arg2:string):Promise<main.KnowledgeMatch>;
+
 export function NewConversation(arg1:string,arg2:string,arg3:string):Promise<model.Conversation>;
 
 export function ReadClaudeSession(arg1:string,arg2:string):Promise<Array<claudedata.SessionMessage>>;
@@ -57,7 +62,9 @@ export function RoutingTable():Promise<routing.Table>;
 
 export function SaveProvider(arg1:provider.Config,arg2:string):Promise<void>;
 
-export function SendMessage(arg1:string,arg2:string,arg3:string,arg4:string,arg5:number,arg6:number,arg7:Array<string>):Promise<number>;
+export function SearchSessions(arg1:string,arg2:string):Promise<Array<search.Hit>>;
+
+export function SendMessage(arg1:string,arg2:string,arg3:string,arg4:string,arg5:number,arg6:number,arg7:Array<string>,arg8:string):Promise<number>;
 
 export function SetDefaults(arg1:string,arg2:string):Promise<void>;
 

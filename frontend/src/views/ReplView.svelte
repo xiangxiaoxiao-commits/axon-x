@@ -7,15 +7,16 @@
   import {
     ListConversations, ListMessages, NewConversation,
     SendMessage, StopGeneration, ListProviders, ListModels, RecallMemories,
+    ListClaudeProjects, MatchKnowledge,
   } from "../../wailsjs/go/main/App.js";
   import { EventsOn, EventsOff } from "../../wailsjs/runtime/runtime.js";
   import MessageBubble from "../lib/chat/MessageBubble.svelte";
 
   // Transient system/notice lines shown inline in the flow (command output).
-  type Notice = { id: number; kind: "sys" | "err"; text: string };
+  type Notice = { id: number; kind: "sys" | "err" | "synapse"; text: string };
   let notices: Notice[] = [];
   let noticeSeq = -1;
-  function note(text: string, kind: "sys" | "err" = "sys") {
+  function note(text: string, kind: "sys" | "err" | "synapse" = "sys") {
     notices = [...notices, { id: noticeSeq--, kind, text }];
     autoScroll();
   }
@@ -23,6 +24,10 @@
   let providerName = "";
   let currentModel = "";
   let models: string[] = [];
+  // Knowledge injection: which project's graph to match against, on/off.
+  let kProjects: { slug: string; path: string }[] = [];
+  let kProject = "";
+  let useKnowledge = true;
   let streamingMsgID = -1;
   let value = "";
   let scroller: HTMLElement;
@@ -131,9 +136,23 @@
     const now = Date.now();
     $messages = [...$messages, { id: -now, conversationId: convID, role: "user", content: text, model: "", promptTokens: 0, completionTokens: 0, status: "complete", createdAt: now } as model.Message];
     autoScroll();
+
+    // Match the message against the selected project's knowledge graph and
+    // inject the relevant background so the AI answers with prior context.
+    let injectContext = "";
+    if (useKnowledge && kProject) {
+      try {
+        const m = await MatchKnowledge(kProject, text);
+        if (m && m.names && m.names.length) {
+          injectContext = m.context;
+          note("🧠 突触激活: " + m.names.join("、"), "synapse");
+        }
+      } catch (e) { console.error("match knowledge", e); }
+    }
+
     try {
       $streaming = true;
-      const aid = await SendMessage(convID, text, providerName, currentModel, 0.3, 4096, []);
+      const aid = await SendMessage(convID, text, providerName, currentModel, 0.3, 4096, [], injectContext);
       streamingMsgID = aid;
       $messages = [...$messages, { id: aid, conversationId: convID, role: "assistant", content: "", model: currentModel, promptTokens: 0, completionTokens: 0, status: "streaming", createdAt: Date.now() } as model.Message];
       autoScroll();
@@ -148,23 +167,37 @@
   onMount(async () => {
     EventsOn("chat:delta", onDelta); EventsOn("chat:done", onDone); EventsOn("chat:error", onError);
     await loadModels(); await refreshConvs();
+    try {
+      kProjects = await ListClaudeProjects();
+      if (kProjects.length) kProject = kProjects[0].slug;
+    } catch (e) { console.error("load kProjects", e); }
     if ($conversations.length) await openConv($conversations[0].id);
-    note("输入消息开始对话，或 /help 看命令。⌘J 切换终端。");
+    note("输入消息开始对话，或 /help 看命令。命中项目知识会自动注入。");
     inputEl?.focus();
   });
   onDestroy(() => { EventsOff("chat:delta"); EventsOff("chat:done"); EventsOff("chat:error"); });
 </script>
 
 <div class="repl">
-  <div class="flow" bind:this={scroller}>
+  <div class="flow neural-bg" bind:this={scroller}>
     <div class="flow-inner">
       {#each $messages as m (m.id)}
         <MessageBubble message={m} streaming={m.id === streamingMsgID} />
       {/each}
       {#each notices as n (n.id)}
-        <div class="notice {n.kind}">{n.text}</div>
+        <div class="notice {n.kind}" class:synapse-fire={n.kind === "synapse"}>{n.text}</div>
       {/each}
     </div>
+  </div>
+  <div class="kbar">
+    <label class="k-toggle">
+      <input type="checkbox" bind:checked={useKnowledge} />
+      注入项目知识
+    </label>
+    <select class="k-select" bind:value={kProject} disabled={!useKnowledge}>
+      {#each kProjects as p}<option value={p.slug}>{p.path}</option>{/each}
+    </select>
+    <span class="k-hint">命中知识图谱的实体时，自动把相关背景喂给 AI</span>
   </div>
   <div class="prompt-row">
     <span class="sigil">{$streaming ? "…" : "❯"}</span>
@@ -194,10 +227,13 @@
     overflow-y: auto;
     min-height: 0;
     padding: 12px 16px;
+    position: relative;
   }
   .flow-inner {
     max-width: 900px;
     margin: 0 auto;
+    position: relative;
+    z-index: 1;
   }
   .notice {
     white-space: pre-wrap;
@@ -208,6 +244,26 @@
   .notice.err {
     color: var(--danger);
   }
+  .notice.synapse {
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .kbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 4px 16px;
+    border-top: 1px solid var(--border);
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+  .k-toggle { display: flex; align-items: center; gap: 4px; color: var(--text-primary); }
+  .k-select {
+    background: var(--bg-elevated); color: var(--text-primary);
+    border: 1px solid var(--border); border-radius: var(--radius-control);
+    font-family: var(--font-mono); font-size: 11px; padding: 2px 6px; max-width: 240px;
+  }
+  .k-hint { color: var(--text-muted); }
   .prompt-row {
     display: flex;
     align-items: flex-start;
