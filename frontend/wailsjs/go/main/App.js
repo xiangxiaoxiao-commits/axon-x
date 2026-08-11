@@ -6,6 +6,14 @@ export function BackfillMemories() {
   return window['go']['main']['App']['BackfillMemories']();
 }
 
+export function BuildGraph(arg1) {
+  return window['go']['main']['App']['BuildGraph'](arg1);
+}
+
+export function BuildGraphFocused(arg1, arg2) {
+  return window['go']['main']['App']['BuildGraphFocused'](arg1, arg2);
+}
+
 export function ClassifyTask(arg1) {
   return window['go']['main']['App']['ClassifyTask'](arg1);
 }
@@ -18,6 +26,30 @@ export function DeleteMemory(arg1) {
   return window['go']['main']['App']['DeleteMemory'](arg1);
 }
 
+export function DeleteMemoryFile(arg1) {
+  return window['go']['main']['App']['DeleteMemoryFile'](arg1);
+}
+
+export function GenerateArticle(arg1, arg2) {
+  return window['go']['main']['App']['GenerateArticle'](arg1, arg2);
+}
+
+export function GetGraph(arg1) {
+  return window['go']['main']['App']['GetGraph'](arg1);
+}
+
+export function IndexProject(arg1) {
+  return window['go']['main']['App']['IndexProject'](arg1);
+}
+
+export function ListClaudeProjects() {
+  return window['go']['main']['App']['ListClaudeProjects']();
+}
+
+export function ListClaudeSessions(arg1) {
+  return window['go']['main']['App']['ListClaudeSessions'](arg1);
+}
+
 export function ListConversations() {
   return window['go']['main']['App']['ListConversations']();
 }
@@ -26,8 +58,16 @@ export function ListMemories() {
   return window['go']['main']['App']['ListMemories']();
 }
 
+export function ListMemoryFiles(arg1) {
+  return window['go']['main']['App']['ListMemoryFiles'](arg1);
+}
+
 export function ListMessages(arg1) {
   return window['go']['main']['App']['ListMessages'](arg1);
+}
+
+export function ListModels(arg1) {
+  return window['go']['main']['App']['ListModels'](arg1);
 }
 
 export function ListProviders() {
@@ -36,6 +76,10 @@ export function ListProviders() {
 
 export function NewConversation(arg1, arg2, arg3) {
   return window['go']['main']['App']['NewConversation'](arg1, arg2, arg3);
+}
+
+export function ReadClaudeSession(arg1, arg2) {
+  return window['go']['main']['App']['ReadClaudeSession'](arg1, arg2);
 }
 
 export function RecallMemories(arg1, arg2) {
@@ -72,4 +116,24 @@ export function StopGeneration(arg1) {
 
 export function SummarizeConversation(arg1) {
   return window['go']['main']['App']['SummarizeConversation'](arg1);
+}
+
+export function TermResize(arg1, arg2) {
+  return window['go']['main']['App']['TermResize'](arg1, arg2);
+}
+
+export function TermStart() {
+  return window['go']['main']['App']['TermStart']();
+}
+
+export function TermStop() {
+  return window['go']['main']['App']['TermStop']();
+}
+
+export function TermWrite(arg1) {
+  return window['go']['main']['App']['TermWrite'](arg1);
+}
+
+export function WriteMemoryFile(arg1, arg2) {
+  return window['go']['main']['App']['WriteMemoryFile'](arg1, arg2);
 }

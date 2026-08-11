@@ -61,6 +61,9 @@ type App struct {
 	// summaryTimers holds per-conversation idle timers; when one fires the
 	// conversation is summarized into a memory in the background. Guarded by mu.
 	summaryTimers map[string]*time.Timer
+
+	// term is the embedded PTY shell session (Terminal tab).
+	term termState
 }
 
 // NewApp creates a new App application struct.
@@ -198,6 +201,33 @@ func (a *App) newProvider(pc provider.Config) (provider.Provider, error) {
 	default:
 		return nil, fmt.Errorf("unknown provider protocol %q", pc.Protocol)
 	}
+}
+
+// ListModels returns the model ids a configured provider exposes, so the
+// settings UI can offer a dropdown of real models instead of a free-typed name.
+// For OpenAI-compatible providers it queries {baseURL}/models; for Anthropic it
+// returns a curated list (its models endpoint is less universally available).
+func (a *App) ListModels(providerName string) ([]string, error) {
+	pc, ok := a.cfg.Provider(providerName)
+	if !ok {
+		return nil, fmt.Errorf("provider %q not configured", providerName)
+	}
+	if pc.Protocol == "anthropic" {
+		return []string{
+			"claude-opus-4-8", "claude-sonnet-5", "claude-haiku-4-5",
+		}, nil
+	}
+	prov, err := a.newProvider(pc)
+	if err != nil {
+		return nil, err
+	}
+	op, ok := prov.(*provider.OpenAIProvider)
+	if !ok {
+		return nil, fmt.Errorf("provider %q does not support listing models", providerName)
+	}
+	ctx, cancel := context.WithTimeout(a.ctx, 20*time.Second)
+	defer cancel()
+	return op.ListModels(ctx)
 }
 
 // --- Routing / task recommendation API (Phase 3) ---

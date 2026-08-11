@@ -35,6 +35,45 @@ func NewOpenAI(baseURL, apiKey string) *OpenAIProvider {
 // Name implements Provider.
 func (p *OpenAIProvider) Name() string { return "openai" }
 
+// ListModels fetches the available model ids from {baseURL}/models, so the UI
+// can offer a real dropdown instead of a free-typed model name. Works for any
+// OpenAI-compatible endpoint (OpenAI, DeepSeek, gateways).
+func (p *OpenAIProvider) ListModels(ctx context.Context) ([]string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.baseURL+"/models", nil)
+	if err != nil {
+		return nil, fmt.Errorf("openai: build models request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+p.apiKey)
+
+	resp, err := p.client.Do(req)
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return nil, fmt.Errorf("openai: models request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, statusError("openai models", resp)
+	}
+
+	var parsed struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
+		return nil, fmt.Errorf("openai: decode models response (is the base URL an OpenAI-compatible API with /v1?): %w", err)
+	}
+	models := make([]string, 0, len(parsed.Data))
+	for _, m := range parsed.Data {
+		if m.ID != "" {
+			models = append(models, m.ID)
+		}
+	}
+	return models, nil
+}
+
 type openaiStreamOptions struct {
 	IncludeUsage bool `json:"include_usage"`
 }
@@ -122,14 +161,23 @@ func parseOpenAIStream(ctx context.Context, r io.Reader, out chan<- ChatChunk) e
 
 	var usage openaiUsage
 	var haveUsage bool
+	var sawData bool            // saw at least one "data:" SSE line
+	var preview strings.Builder // first non-SSE bytes, for diagnostics
 	for scanner.Scan() {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 		line := strings.TrimSpace(scanner.Text())
 		if !strings.HasPrefix(line, "data:") {
+			// Collect a little of the body so a non-stream response (HTML login
+			// page, JSON error) yields a readable error instead of a blank reply.
+			if line != "" && preview.Len() < 300 {
+				preview.WriteString(line)
+				preview.WriteString(" ")
+			}
 			continue
 		}
+		sawData = true
 		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
 		if data == "[DONE]" {
 			break
@@ -158,6 +206,15 @@ func parseOpenAIStream(ctx context.Context, r io.Reader, out chan<- ChatChunk) e
 			return ctx.Err()
 		}
 		return fmt.Errorf("openai: read stream: %w", err)
+	}
+	// A 2xx response that carried no SSE data is not a valid stream — usually a
+	// wrong endpoint (missing /v1) or a gateway page. Surface it, don't go blank.
+	if !sawData {
+		body := truncate(strings.TrimSpace(preview.String()), 200)
+		if body == "" {
+			body = "empty response body"
+		}
+		return fmt.Errorf("openai: response was not an event stream (check the base URL includes /v1 and the model name): %s", body)
 	}
 
 	done := ChatChunk{Done: true}

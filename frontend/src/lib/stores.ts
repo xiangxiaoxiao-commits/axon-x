@@ -3,7 +3,7 @@
 import { writable } from "svelte/store";
 import type { model } from "../../wailsjs/go/models";
 
-export type View = "chat" | "archive" | "memory" | "settings";
+export type View = "sessions" | "graph" | "memory" | "chat" | "terminal" | "settings";
 
 // Active main view (Rail navigation).
 export const activeView = writable<View>("chat");

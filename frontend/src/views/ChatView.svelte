@@ -13,6 +13,8 @@
     StopGeneration,
     ClassifyTask,
     Recommend,
+    ListProviders,
+    ListModels,
   } from "../../wailsjs/go/main/App.js";
   import { EventsOn, EventsOff } from "../../wailsjs/runtime/runtime.js";
   import SessionList from "../lib/chat/SessionList.svelte";
@@ -25,6 +27,28 @@
   let errorText = "";
   let scroller: HTMLElement;
   let input: MessageInput;
+
+  // Model selection: which provider + model this chat uses.
+  let providerName = "";
+  let currentModel = "";
+  let models: string[] = [];
+  let modelsLoading = false;
+
+  async function loadModels() {
+    try {
+      const provs = await ListProviders();
+      const usable = provs.find((p) => p.hasKey) ?? provs[0];
+      if (!usable) return;
+      providerName = usable.name;
+      modelsLoading = true;
+      models = await ListModels(providerName);
+      if (models.length && !models.includes(currentModel)) currentModel = models[0];
+    } catch (e) {
+      console.error("load models", e);
+    } finally {
+      modelsLoading = false;
+    }
+  }
 
   // --- Streaming event payloads (from the Go backend). ---
   type DeltaEvt = { conversationId: string; messageId: number; delta: string };
@@ -80,6 +104,7 @@
     EventsOn("chat:delta", onDelta);
     EventsOn("chat:done", onDone);
     EventsOn("chat:error", onError);
+    loadModels();
   });
 
   onDestroy(() => {
@@ -228,7 +253,7 @@
 
     try {
       $streaming = true;
-      const assistantID = await SendMessage(convID, content, "", "", 0.3, 4096, []);
+      const assistantID = await SendMessage(convID, content, providerName, currentModel, 0.3, 4096, []);
       streamingMsgID = assistantID;
       // Assistant placeholder that delta events will fill.
       const assistantMsg = {
@@ -282,6 +307,20 @@
   />
 
   <div class="main">
+    <div class="topbar">
+      <span class="tb-label">model</span>
+      <select class="model-select" bind:value={currentModel} disabled={$streaming || modelsLoading}>
+        {#if models.length === 0}
+          <option value="">{modelsLoading ? "加载中…" : (currentModel || "未配置")}</option>
+        {:else}
+          {#each models as m}
+            <option value={m}>{m}</option>
+          {/each}
+        {/if}
+      </select>
+      <button class="tb-refresh" title="拉取模型列表" on:click={loadModels} disabled={$streaming || modelsLoading}>↻</button>
+      <span class="tb-provider">{providerName}</span>
+    </div>
     {#if hasCurrent}
       <div class="stream" bind:this={scroller}>
         <div class="stream-inner">
@@ -339,6 +378,44 @@
     display: flex;
     flex-direction: column;
     min-height: 0;
+  }
+  .topbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-surface);
+    font-family: var(--font-mono);
+    font-size: 12px;
+  }
+  .tb-label {
+    color: var(--text-muted);
+  }
+  .model-select {
+    background: var(--bg-elevated);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-control);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    padding: 3px 8px;
+    max-width: 260px;
+  }
+  .tb-refresh {
+    background: var(--bg-elevated);
+    color: var(--text-muted);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-control);
+    padding: 3px 8px;
+  }
+  .tb-refresh:hover:not(:disabled) {
+    color: var(--text-primary);
+    border-color: var(--accent);
+  }
+  .tb-provider {
+    margin-left: auto;
+    color: var(--text-muted);
   }
   .stream {
     flex: 1;

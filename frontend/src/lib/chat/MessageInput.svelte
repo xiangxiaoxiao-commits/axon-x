@@ -53,21 +53,22 @@
   }
 </script>
 
-<div class="composer">
+<div class="composer" class:streaming>
+  <span class="prompt">{streaming ? "…" : "$"}</span>
   <textarea
     bind:this={el}
     bind:value
     on:input={onInput}
     on:keydown={onKey}
-    placeholder="输入消息…  (⏎ 发送 · ⇧⏎ 换行)"
+    placeholder={streaming ? "生成中… 按 ⏎ 之前请先停止" : "输入消息，⏎ 发送 · ⇧⏎ 换行"}
     rows="1"
   ></textarea>
   <div class="actions">
     {#if streaming}
-      <button class="stop" on:click={() => dispatch("stop")}>■ 停止</button>
+      <button class="stop" on:click={() => dispatch("stop")}>■ stop</button>
     {:else}
       <button class="send" disabled={disabled || !value.trim()} on:click={() => doSend(false)}
-        >↑ 发送</button
+        >send ↵</button
       >
     {/if}
   </div>
@@ -76,15 +77,27 @@
 <style>
   .composer {
     display: flex;
-    align-items: flex-end;
-    gap: var(--space);
-    background: var(--bg-surface);
+    align-items: flex-start;
+    gap: 8px;
+    background: var(--bg-base);
     border: 1px solid var(--border);
-    border-radius: var(--radius-card);
-    padding: var(--space);
+    border-radius: var(--radius-control);
+    padding: 8px 10px;
+    font-family: var(--font-mono);
   }
   .composer:focus-within {
     border-color: var(--accent);
+  }
+  .prompt {
+    flex: 0 0 auto;
+    color: var(--accent);
+    font-family: var(--font-mono);
+    font-size: 13px;
+    line-height: 1.6;
+    user-select: none;
+  }
+  .composer.streaming .prompt {
+    color: var(--warning);
   }
   textarea {
     flex: 1;
@@ -93,37 +106,43 @@
     border: none;
     outline: none;
     color: var(--text-primary);
-    font-family: inherit;
-    font-size: 14px;
-    line-height: 1.5;
+    caret-color: var(--accent);
+    font-family: var(--font-mono);
+    font-size: 13px;
+    line-height: 1.6;
     max-height: 200px;
     overflow-y: auto;
+  }
+  textarea::placeholder {
+    color: var(--text-muted);
   }
   .actions {
     flex: 0 0 auto;
   }
   .send,
   .stop {
-    border: none;
+    background: transparent;
+    border: 1px solid var(--border);
     border-radius: var(--radius-control);
-    padding: 6px 14px;
-    font-size: 13px;
-    font-weight: 500;
+    padding: 4px 12px;
+    font-family: var(--font-mono);
+    font-size: 12px;
   }
   .send {
-    background: var(--accent);
-    color: var(--accent-fg);
+    color: var(--accent);
+    border-color: var(--accent);
   }
   .send:disabled {
-    background: var(--bg-elevated);
     color: var(--text-muted);
+    border-color: var(--border);
     cursor: not-allowed;
   }
   .stop {
-    background: var(--danger);
-    color: #fff;
+    color: var(--danger);
+    border-color: var(--danger);
   }
   .stop:hover {
-    filter: brightness(1.1);
+    background: var(--danger);
+    color: #fff;
   }
 </style>

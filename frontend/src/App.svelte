@@ -1,48 +1,47 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { activeView, hasProvider, conversations, type View } from "./lib/stores";
-  import { ListProviders, ListConversations } from "../wailsjs/go/main/App.js";
-  import ChatView from "./views/ChatView.svelte";
-  import ArchiveView from "./views/ArchiveView.svelte";
-  import MemoryView from "./views/MemoryView.svelte";
+  import { activeView, type View } from "./lib/stores";
+  import SessionsView from "./views/SessionsView.svelte";
+  import GraphView from "./views/GraphView.svelte";
+  import MemoryManagerView from "./views/MemoryManagerView.svelte";
+  import ReplView from "./views/ReplView.svelte";
+  import TerminalView from "./views/TerminalView.svelte";
   import SettingsView from "./views/SettingsView.svelte";
 
-  // Rail items: [view, icon, label]. Icons are simple glyphs for now.
+  // Core purpose: browse Claude Code's saved sessions and manage its memory.
+  // Chat/terminal are secondary. No first-run gate — the core reads local
+  // files and needs no API key.
   const nav: [View, string, string][] = [
-    ["chat", "💬", "聊天"],
-    ["archive", "📥", "归档"],
+    ["sessions", "🗂", "会话"],
+    ["graph", "🕸", "知识图谱"],
     ["memory", "🧠", "记忆"],
+    ["chat", "❯", "对话"],
+    ["terminal", "▮", "终端"],
     ["settings", "⚙", "设置"],
   ];
 
-  let ready = false;
+  // Keep the terminal mounted once opened so the shell survives tab switches.
+  let terminalOpened = false;
+  $: if ($activeView === "terminal") terminalOpened = true;
 
-  onMount(async () => {
-    await refreshProviders();
-    try {
-      $conversations = await ListConversations();
-    } catch (e) {
-      console.error("load conversations", e);
-    }
-    // First-run gate: with no usable provider, force the settings view (UX §5.1).
-    if (!$hasProvider) $activeView = "settings";
+  let ready = false;
+  onMount(() => {
+    $activeView = "sessions";
     ready = true;
   });
+  function refreshProviders() {}
 
-  async function refreshProviders() {
-    try {
-      const provs = await ListProviders();
-      $hasProvider = provs.some((p) => p.hasKey);
-    } catch (e) {
-      console.error("load providers", e);
-      $hasProvider = false;
-    }
-  }
-
-  // Global keyboard shortcuts: ⌘1..4 switch views.
+  // Global keyboard shortcuts: Cmd/Ctrl+1..5 switch views.
   function onKey(e: KeyboardEvent) {
     if (!(e.metaKey || e.ctrlKey)) return;
-    const map: Record<string, View> = { "1": "chat", "2": "archive", "3": "memory", "4": "settings" };
+    const map: Record<string, View> = {
+      "1": "sessions",
+      "2": "graph",
+      "3": "memory",
+      "4": "chat",
+      "5": "terminal",
+      "6": "settings",
+    };
     if (map[e.key]) {
       e.preventDefault();
       $activeView = map[e.key];
@@ -65,19 +64,26 @@
       </button>
     {/each}
     <div class="rail-spacer"></div>
-    <div class="status-dot" class:ok={$hasProvider} title={$hasProvider ? "已连接" : "未配置"}></div>
   </nav>
 
   <div class="content">
     {#if ready}
-      {#if $activeView === "chat"}
-        <ChatView />
-      {:else if $activeView === "archive"}
-        <ArchiveView />
+      {#if $activeView === "sessions"}
+        <SessionsView />
+      {:else if $activeView === "graph"}
+        <GraphView />
       {:else if $activeView === "memory"}
-        <MemoryView />
+        <MemoryManagerView />
+      {:else if $activeView === "chat"}
+        <ReplView />
       {:else if $activeView === "settings"}
         <SettingsView onSaved={refreshProviders} />
+      {/if}
+      <!-- Terminal stays mounted once opened so the shell survives tab switches. -->
+      {#if terminalOpened}
+        <div class="term-layer" class:hidden={$activeView !== "terminal"}>
+          <TerminalView />
+        </div>
       {/if}
     {/if}
   </div>
@@ -137,5 +143,14 @@
     flex: 1;
     min-width: 0;
     overflow: hidden;
+    position: relative;
+  }
+  .term-layer {
+    position: absolute;
+    inset: 0;
+    background: var(--bg-base);
+  }
+  .term-layer.hidden {
+    display: none;
   }
 </style>

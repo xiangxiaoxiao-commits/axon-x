@@ -1,3 +1,155 @@
+export namespace claudedata {
+	
+	export class MemoryFile {
+	    scope: string;
+	    name: string;
+	    path: string;
+	    content: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new MemoryFile(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.scope = source["scope"];
+	        this.name = source["name"];
+	        this.path = source["path"];
+	        this.content = source["content"];
+	    }
+	}
+	export class Project {
+	    slug: string;
+	    path: string;
+	    sessionCount: number;
+	    updatedAt: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new Project(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.slug = source["slug"];
+	        this.path = source["path"];
+	        this.sessionCount = source["sessionCount"];
+	        this.updatedAt = source["updatedAt"];
+	    }
+	}
+	export class SessionMessage {
+	    role: string;
+	    text: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SessionMessage(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.role = source["role"];
+	        this.text = source["text"];
+	    }
+	}
+	export class SessionMeta {
+	    id: string;
+	    projectSlug: string;
+	    title: string;
+	    messageCount: number;
+	    updatedAt: number;
+	    sizeBytes: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new SessionMeta(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.projectSlug = source["projectSlug"];
+	        this.title = source["title"];
+	        this.messageCount = source["messageCount"];
+	        this.updatedAt = source["updatedAt"];
+	        this.sizeBytes = source["sizeBytes"];
+	    }
+	}
+
+}
+
+export namespace graph {
+	
+	export class Entity {
+	    name: string;
+	    type: string;
+	    observations: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new Entity(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.type = source["type"];
+	        this.observations = source["observations"];
+	    }
+	}
+	export class Relation {
+	    from: string;
+	    to: string;
+	    label: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Relation(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.from = source["from"];
+	        this.to = source["to"];
+	        this.label = source["label"];
+	    }
+	}
+	export class Graph {
+	    projectSlug: string;
+	    entities: Entity[];
+	    relations: Relation[];
+	    updatedAt: number;
+	    sourceSessions: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new Graph(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.projectSlug = source["projectSlug"];
+	        this.entities = this.convertValues(source["entities"], Entity);
+	        this.relations = this.convertValues(source["relations"], Relation);
+	        this.updatedAt = source["updatedAt"];
+	        this.sourceSessions = source["sourceSessions"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+
+}
+
 export namespace main {
 	
 	export class MemoryEntry {

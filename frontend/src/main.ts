@@ -1,8 +1,10 @@
-import './style.css'
-import App from './App.svelte'
+import "./style.css";
+import { mount } from "svelte";
+import App from "./App.svelte";
 
-const app = new App({
-  target: document.getElementById('app')
-})
+// Svelte 5 mounts components with mount(), not `new Component()`.
+const app = mount(App, {
+  target: document.getElementById("app")!,
+});
 
-export default app
+export default app;

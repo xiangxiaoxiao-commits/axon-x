@@ -1,0 +1,334 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"strings"
+	"time"
+
+	"axon/internal/claudedata"
+	"axon/internal/db"
+	"axon/internal/graph"
+	"axon/internal/provider"
+)
+
+// graphModel is the model used to distill knowledge. gpt-5.6-sol has the
+// strongest comprehension on the user's gateway; extraction needs judgement.
+const graphModel = "gpt-5.6-sol"
+
+// Graph build events for the frontend.
+const (
+	EventGraphProgress = "graph:progress"
+	EventGraphDone     = "graph:done"
+)
+
+// extractPrompt tells the model to keep only durable, reusable project
+// knowledge and to drop noise (greetings, tool logs, one-off asks, abandoned
+// ideas). Output is strict JSON so it can be merged programmatically.
+const extractPrompt = `你是一个知识提炼器。从下面的对话中，只提炼「下次处理这个项目还用得上」的持久知识，构建知识图谱。
+
+【只保留有价值的】
+- 项目/模块/服务/概念，及它们之间的关系（依赖、调用、属于等）
+- 关键决策及其理由（为什么这么设计/选型）
+- 踩过的坑、约束、教训（如"这里不能用X，因为Y"）
+- 稳定事实：接口约定、数据结构、依赖关系
+
+【坚决丢弃的噪音】
+- 寒暄、"好的/继续/谢谢"等无信息量的话
+- 工具调用过程、构建日志、报错堆栈等临时内容
+- 一次性、不影响后续的操作
+- 探索中被否定/放弃的方案（除非"为什么放弃"是有价值的教训）
+
+宁可少而准，不要多而杂。若这段对话没有值得入图的知识，返回空数组。
+
+只输出如下 JSON，不要任何解释：
+{"entities":[{"name":"实体名","type":"module|service|concept|decision|constraint","observations":["关于它的事实"]}],"relations":[{"from":"实体A","to":"实体B","label":"关系"}]}`
+
+// GetGraph returns the stored knowledge graph for a project.
+func (a *App) GetGraph(projectSlug string) (*graph.Graph, error) {
+	dataDir, err := db.AppDataDir()
+	if err != nil {
+		return nil, err
+	}
+	return graph.Load(dataDir, projectSlug)
+}
+
+// extracted is the model's JSON output shape.
+type extracted struct {
+	Entities  []graph.Entity   `json:"entities"`
+	Relations []graph.Relation `json:"relations"`
+}
+
+// extractFromText runs one distillation call over a transcript chunk.
+func (a *App) extractFromText(ctx context.Context, prov provider.Provider, transcript string) (extracted, error) {
+	reply, err := collectReply(ctx, prov, provider.ChatRequest{
+		Model: graphModel,
+		Messages: []provider.ChatMessage{
+			{Role: provider.RoleSystem, Content: extractPrompt},
+			{Role: provider.RoleUser, Content: transcript},
+		},
+		Temperature: 0.1,
+		MaxTokens:   2000,
+	})
+	if err != nil {
+		return extracted{}, err
+	}
+	return parseExtracted(reply), nil
+}
+
+// parseExtracted pulls the JSON object out of the model reply (tolerates code
+// fences or surrounding prose).
+func parseExtracted(reply string) extracted {
+	s := strings.TrimSpace(reply)
+	if i := strings.Index(s, "{"); i >= 0 {
+		if j := strings.LastIndex(s, "}"); j > i {
+			s = s[i : j+1]
+		}
+	}
+	var ex extracted
+	if err := json.Unmarshal([]byte(s), &ex); err != nil {
+		return extracted{} // treat unparseable as "nothing valuable"
+	}
+	return ex
+}
+
+// maxTranscriptChars bounds how much of one session is sent per extraction,
+// keeping token cost predictable (newest content matters most for knowledge).
+const maxTranscriptChars = 16000
+
+// IndexProject builds the per-session distillation cache: for each session,
+// if there's no fresh cache it calls the model once and stores the result.
+// This is the slow, one-time pass; afterwards focus/full assembly is instant
+// and free. Re-running only processes new/changed sessions (incremental).
+func (a *App) IndexProject(projectSlug string) error {
+	dataDir, err := db.AppDataDir()
+	if err != nil {
+		return err
+	}
+	name, ok := a.providerForProtocol("openai")
+	if !ok {
+		return fmt.Errorf("需要一个 OpenAI 协议的 provider 来调用 %s（去设置配一个）", graphModel)
+	}
+	pc, _ := a.cfg.Provider(name)
+	prov, err := a.newProvider(pc)
+	if err != nil {
+		return err
+	}
+	sessions, err := claudedata.ListSessions(projectSlug)
+	if err != nil {
+		return err
+	}
+
+	newly := 0
+	for i, s := range sessions {
+		if _, ok := graph.LoadCache(dataDir, projectSlug, s.ID, s.UpdatedAt); ok {
+			continue // fresh cache, skip
+		}
+		a.emit(EventGraphProgress, map[string]any{
+			"projectSlug": projectSlug, "current": i + 1, "total": len(sessions),
+			"title": s.Title, "phase": "index",
+		})
+		msgs, err := claudedata.ReadSession(projectSlug, s.ID)
+		if err != nil {
+			continue
+		}
+		ex := extracted{}
+		transcript := buildTranscript(msgs)
+		if strings.TrimSpace(transcript) != "" {
+			ex, err = a.extractFromText(a.ctx, prov, transcript)
+			if err != nil {
+				a.emit(EventGraphProgress, map[string]any{
+					"projectSlug": projectSlug, "current": i + 1, "total": len(sessions),
+					"title": s.Title, "error": err.Error(),
+				})
+				continue // skip; will retry next index run
+			}
+		}
+		_ = graph.SaveCache(dataDir, projectSlug, &graph.SessionCache{
+			SessionID: s.ID, Mtime: s.UpdatedAt, Entities: ex.Entities, Relations: ex.Relations,
+		})
+		newly++
+	}
+	a.emit(EventGraphDone, map[string]any{
+		"projectSlug": projectSlug, "processed": newly, "phase": "index",
+	})
+	return nil
+}
+
+// BuildGraph assembles the full graph from cached sessions (instant, no model
+// calls). Callers should run IndexProject first to populate the cache.
+func (a *App) BuildGraph(projectSlug string) (*graph.Graph, error) {
+	return a.assembleGraph(projectSlug, "")
+}
+
+// assembleGraph merges cached session knowledge into one graph. If term != "",
+// only entities/relations related to the term (by substring on name/type/
+// observations/relation label) are kept — a focused, local, zero-token view.
+func (a *App) assembleGraph(projectSlug, term string) (*graph.Graph, error) {
+	dataDir, err := db.AppDataDir()
+	if err != nil {
+		return nil, err
+	}
+	caches, err := graph.LoadAllCache(dataDir, projectSlug)
+	if err != nil {
+		return nil, err
+	}
+	g := &graph.Graph{ProjectSlug: projectSlug, Entities: []graph.Entity{}, Relations: []graph.Relation{}}
+	for _, c := range caches {
+		g.Merge(c.Entities, c.Relations)
+	}
+	if term != "" {
+		g = filterGraph(g, term)
+	}
+	g.UpdatedAt = time.Now().UnixMilli()
+	_ = graph.Save(dataDir, g)
+	return g, nil
+}
+
+// buildTranscript joins user/assistant text into a bounded transcript.
+func buildTranscript(msgs []claudedata.SessionMessage) string {
+	var b strings.Builder
+	for _, m := range msgs {
+		b.WriteString(m.Role)
+		b.WriteString(": ")
+		b.WriteString(m.Text)
+		b.WriteString("\n\n")
+		if b.Len() > maxTranscriptChars {
+			break
+		}
+	}
+	return b.String()
+}
+
+// focusPrompt extracts only knowledge related to a given focus term, keeping
+// the graph small and readable so the user can verify it.
+func focusPrompt(term string) string {
+	return `你是一个知识提炼器。用户关心的主题是：「` + term + `」。
+
+只提炼与这个主题【直接相关】的持久知识，构建一张聚焦的小图。与主题无关的一律不要。
+
+保留：与「` + term + `」相关的模块/概念/服务、它们的关系、关键决策及理由、踩过的坑与约束。
+丢弃：寒暄、日志、报错堆栈、一次性操作、与主题无关的内容。
+
+宁可少而准。若这段对话与「` + term + `」无关，返回空数组。
+
+只输出 JSON，不要解释：
+{"entities":[{"name":"实体名","type":"module|service|concept|decision|constraint","observations":["事实"]}],"relations":[{"from":"A","to":"B","label":"关系"}]}`
+}
+
+// BuildGraphFocused returns a term-focused subgraph assembled from the cache —
+// instant and free. Requires the project to have been indexed first.
+func (a *App) BuildGraphFocused(projectSlug, term string) (*graph.Graph, error) {
+	term = strings.TrimSpace(term)
+	if term == "" {
+		return nil, fmt.Errorf("请先输入一个关注的词")
+	}
+	return a.assembleGraph(projectSlug, term)
+}
+
+// filterGraph keeps entities matching the term (name/type/observation contains
+// it) plus their directly linked neighbors, and the relations among the kept
+// set. Case-insensitive substring match.
+func filterGraph(g *graph.Graph, term string) *graph.Graph {
+	lt := strings.ToLower(term)
+	keep := map[string]bool{}
+	for _, e := range g.Entities {
+		if entityMatches(e, lt) {
+			keep[strings.ToLower(e.Name)] = true
+		}
+	}
+	// Pull in neighbors linked to a matched entity.
+	for _, r := range g.Relations {
+		lf, lto := strings.ToLower(r.From), strings.ToLower(r.To)
+		if keep[lf] {
+			keep[lto] = true
+		}
+		if keep[lto] {
+			keep[lf] = true
+		}
+	}
+	out := &graph.Graph{ProjectSlug: g.ProjectSlug, Entities: []graph.Entity{}, Relations: []graph.Relation{}}
+	for _, e := range g.Entities {
+		if keep[strings.ToLower(e.Name)] {
+			out.Entities = append(out.Entities, e)
+		}
+	}
+	for _, r := range g.Relations {
+		if keep[strings.ToLower(r.From)] && keep[strings.ToLower(r.To)] {
+			out.Relations = append(out.Relations, r)
+		}
+	}
+	return out
+}
+
+func entityMatches(e graph.Entity, lt string) bool {
+	if strings.Contains(strings.ToLower(e.Name), lt) || strings.Contains(strings.ToLower(e.Type), lt) {
+		return true
+	}
+	for _, o := range e.Observations {
+		if strings.Contains(strings.ToLower(o), lt) {
+			return true
+		}
+	}
+	return false
+}
+
+// articlePrompt asks the model to weave the graph facts into a readable,
+// well-structured article (not a list dump) so the user can read the project
+// knowledge like prose.
+const articlePrompt = `下面是从一个项目的历史对话里提炼出的结构化知识（实体、关系、事实）。请把它组织成一篇【条理清晰、可顺畅阅读】的中文文章，像给新接手的人讲清楚这个项目。
+
+要求：
+- 用小标题分段（## 概览、## 核心模块、## 关键决策与理由、## 踩过的坑与约束 等，按实际内容调整）
+- 把零散事实串成连贯的叙述，说明模块之间的关系
+- 忠于给定知识，不要编造没有的内容
+- 用 Markdown 输出，正文为主，避免大段罗列
+
+只输出文章正文。`
+
+// GenerateArticle turns the (optionally term-focused) knowledge graph into a
+// readable Markdown article via the model. Assembled from cache, one model call.
+func (a *App) GenerateArticle(projectSlug, term string) (string, error) {
+	g, err := a.assembleGraph(projectSlug, strings.TrimSpace(term))
+	if err != nil {
+		return "", err
+	}
+	if len(g.Entities) == 0 {
+		return "", fmt.Errorf("还没有可用的知识，请先「建索引」")
+	}
+	name, ok := a.providerForProtocol("openai")
+	if !ok {
+		return "", fmt.Errorf("需要一个 OpenAI 协议的 provider 来调用 %s", graphModel)
+	}
+	pc, _ := a.cfg.Provider(name)
+	prov, err := a.newProvider(pc)
+	if err != nil {
+		return "", err
+	}
+
+	// Serialize the graph knowledge as the source material.
+	var b strings.Builder
+	if term != "" {
+		fmt.Fprintf(&b, "关注主题：%s\n\n", term)
+	}
+	b.WriteString("实体与事实：\n")
+	for _, e := range g.Entities {
+		fmt.Fprintf(&b, "- %s（%s）\n", e.Name, e.Type)
+		for _, o := range e.Observations {
+			fmt.Fprintf(&b, "  · %s\n", o)
+		}
+	}
+	if len(g.Relations) > 0 {
+		b.WriteString("\n关系：\n")
+		for _, r := range g.Relations {
+			fmt.Fprintf(&b, "- %s —%s→ %s\n", r.From, r.Label, r.To)
+		}
+	}
+
+	return collectReply(a.ctx, prov, provider.ChatRequest{
+		Model:       graphModel,
+		Messages:    []provider.ChatMessage{{Role: provider.RoleSystem, Content: articlePrompt}, {Role: provider.RoleUser, Content: b.String()}},
+		Temperature: 0.3, MaxTokens: 3000,
+	})
+}
