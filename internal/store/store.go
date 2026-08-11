@@ -48,21 +48,4 @@ type Store interface {
 
 	// ListMessages returns all messages of a conversation ordered by id ASC.
 	ListMessages(ctx context.Context, conversationID string) ([]model.Message, error)
-
-	// --- Memories (Phase 4 semantic memory) ---
-
-	// UpsertMemory inserts or replaces the memory for a conversation (one per
-	// conversation). Timestamps are managed by the store.
-	UpsertMemory(ctx context.Context, m model.Memory) (model.Memory, error)
-
-	// ListMemories returns all memories (used to load vectors for in-Go
-	// similarity search). Embeddings are populated.
-	ListMemories(ctx context.Context) ([]model.Memory, error)
-
-	// ConversationsWithoutMemory returns conversation ids that have no memory
-	// yet, for idle-triggered and backfill summarization.
-	ConversationsWithoutMemory(ctx context.Context) ([]string, error)
-
-	// DeleteMemory removes the memory for a conversation. Missing is not an error.
-	DeleteMemory(ctx context.Context, conversationID string) error
 }

@@ -8,9 +8,8 @@
     ListProviders,
     SaveProvider,
     SetDefaults,
-    RoutingTable,
   } from "../../wailsjs/go/main/App.js";
-  import type { main, provider, routing } from "../../wailsjs/go/models";
+  import type { main, provider } from "../../wailsjs/go/models";
   import ProviderCard from "../lib/settings/ProviderCard.svelte";
   import ProviderForm from "../lib/settings/ProviderForm.svelte";
 
@@ -18,7 +17,6 @@
   export let onSaved: () => void = () => {};
 
   let providers: main.ProviderInfo[] = [];
-  let table: routing.Table | null = null;
   let loading = true;
   let loadError = "";
 
@@ -49,12 +47,6 @@
       }
     } catch (e) {
       loadError = `加载 Providers 失败:${String(e)}`;
-    }
-    try {
-      table = await RoutingTable();
-    } catch (e) {
-      // Routing table is informational; don't block the page on it.
-      console.error("load routing table", e);
     }
     loading = false;
   }
@@ -100,11 +92,6 @@
       defaultsMsg = `保存失败:${String(e)}`;
     }
     savingDefaults = false;
-  }
-
-  function fmtCost(v: number): string {
-    if (!v && v !== 0) return "—";
-    return `$${v.toFixed(2)}`;
   }
 </script>
 
@@ -217,39 +204,6 @@
         </div>
       </section>
 
-      <!-- Routing table (read-only) -->
-      <section>
-        <h2>路由规则</h2>
-        <p class="muted small">任务类型 → 模型映射(只读,来自 routing.json)。</p>
-        {#if table && table.order && table.order.length}
-          <div class="table">
-            <div class="tr th">
-              <span>任务类型</span>
-              <span>主模型</span>
-              <span class="num">IQ</span>
-              <span class="num">成本</span>
-              <span class="num">耗时</span>
-            </div>
-            {#each table.order as key (key)}
-              {#if table.profiles[key]}
-                <div class="tr">
-                  <span>{table.profiles[key].title || key}</span>
-                  <span class="mono">{table.profiles[key].primary?.model || "—"}</span>
-                  <span class="num mono">{table.profiles[key].primary?.iq ?? "—"}</span>
-                  <span class="num mono">{fmtCost(table.profiles[key].primary?.costUsd)}</span>
-                  <span class="num mono">
-                    {table.profiles[key].primary?.minutes
-                      ? `~${table.profiles[key].primary.minutes}m`
-                      : "—"}
-                  </span>
-                </div>
-              {/if}
-            {/each}
-          </div>
-        {:else}
-          <p class="muted">暂无路由数据。</p>
-        {/if}
-      </section>
     {/if}
   </div>
 </div>
@@ -297,9 +251,6 @@
   .muted {
     color: var(--text-muted);
     font-size: 13px;
-  }
-  .small {
-    margin: 0 0 12px;
   }
   .banner {
     border-radius: var(--radius-card);
@@ -389,30 +340,6 @@
   }
   .note.warn {
     border-color: var(--warning);
-  }
-  .table {
-    border: 1px solid var(--border);
-    border-radius: var(--radius-card);
-    overflow: hidden;
-  }
-  .tr {
-    display: grid;
-    grid-template-columns: 1.4fr 1.6fr 0.6fr 0.7fr 0.7fr;
-    gap: 8px;
-    padding: 8px 12px;
-    font-size: 13px;
-    border-bottom: 1px solid var(--border);
-  }
-  .tr:last-child {
-    border-bottom: none;
-  }
-  .tr.th {
-    background: var(--bg-elevated);
-    color: var(--text-muted);
-    font-size: 12px;
-  }
-  .num {
-    text-align: right;
   }
   .btn {
     background: transparent;

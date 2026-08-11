@@ -21,6 +21,11 @@ func (g *Graph) Merge(entities []Entity, relations []Relation) {
 			if g.Entities[i].Type == "" {
 				g.Entities[i].Type = ne.Type
 			}
+			// Embedding: latest non-empty wins, so the freshest vector (from the
+			// most recently indexed session) is kept.
+			if len(ne.Embedding) > 0 {
+				g.Entities[i].Embedding = ne.Embedding
+			}
 		} else {
 			ne.Observations = unionStrings(nil, ne.Observations)
 			g.Entities = append(g.Entities, ne)

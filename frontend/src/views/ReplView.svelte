@@ -6,7 +6,7 @@
   import type { model } from "../../wailsjs/go/models";
   import {
     ListConversations, ListMessages, NewConversation,
-    SendMessage, StopGeneration, ListProviders, ListModels, RecallMemories,
+    SendMessage, StopGeneration, ListProviders, ListModels,
     ListClaudeProjects, MatchKnowledge,
   } from "../../wailsjs/go/main/App.js";
   import { EventsOn, EventsOff } from "../../wailsjs/runtime/runtime.js";
@@ -55,7 +55,7 @@
     const arg = rest.join(" ");
     switch (cmd) {
       case "help":
-        note("命令: /new 新会话 · /model [名] 看或切模型 · /models 列模型 · /sessions 列会话 · /open <n> 打开 · /search <词> 搜历史 · /term 终端 · /settings 设置 · /clear 清屏");
+        note("命令: /new 新会话 · /model [名] 看或切模型 · /models 列模型 · /sessions 列会话 · /open <n> 打开 · /term 终端 · /settings 设置 · /clear 清屏。搜索历史请用「搜索」视图。");
         break;
       case "new":
         await newConv(); note("已开新会话"); break;
@@ -78,14 +78,6 @@
         const n = parseInt(arg, 10);
         if (!n || n < 1 || n > $conversations.length) { note("用法: /open <序号>（先 /sessions）", "err"); break; }
         await openConv($conversations[n - 1].id); break;
-      }
-      case "search": {
-        if (!arg) { note("用法: /search <关键词>", "err"); break; }
-        const hits = await RecallMemories("", arg).catch(() => []);
-        note(hits && hits.length
-          ? "相关历史:\n" + hits.map((h: any) => `· ${h.title || h.conversationId}  (${Math.round((h.score || 0) * 100)}%)`).join("\n")
-          : "没搜到相关历史（或未配 embedding）");
-        break;
       }
       case "term": $activeView = "terminal"; break;
       case "settings": $activeView = "settings"; break;
@@ -152,7 +144,7 @@
 
     try {
       $streaming = true;
-      const aid = await SendMessage(convID, text, providerName, currentModel, 0.3, 4096, [], injectContext);
+      const aid = await SendMessage(convID, text, providerName, currentModel, 0.3, 4096, injectContext);
       streamingMsgID = aid;
       $messages = [...$messages, { id: aid, conversationId: convID, role: "assistant", content: "", model: currentModel, promptTokens: 0, completionTokens: 0, status: "streaming", createdAt: Date.now() } as model.Message];
       autoScroll();

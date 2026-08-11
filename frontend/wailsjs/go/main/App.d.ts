@@ -4,21 +4,14 @@ import {graph} from '../models';
 import {claudedata} from '../models';
 import {model} from '../models';
 import {main} from '../models';
-import {routing} from '../models';
 import {provider} from '../models';
 import {search} from '../models';
-
-export function BackfillMemories():Promise<number>;
 
 export function BuildGraph(arg1:string):Promise<graph.Graph>;
 
 export function BuildGraphFocused(arg1:string,arg2:string):Promise<graph.Graph>;
 
-export function ClassifyTask(arg1:string):Promise<string>;
-
 export function DeleteConversation(arg1:string):Promise<void>;
-
-export function DeleteMemory(arg1:string):Promise<void>;
 
 export function DeleteMemoryFile(arg1:string):Promise<void>;
 
@@ -36,8 +29,6 @@ export function ListClaudeSessions(arg1:string):Promise<Array<claudedata.Session
 
 export function ListConversations():Promise<Array<model.Conversation>>;
 
-export function ListMemories():Promise<Array<main.MemoryEntry>>;
-
 export function ListMemoryFiles(arg1:string):Promise<Array<claudedata.MemoryFile>>;
 
 export function ListMessages(arg1:string):Promise<Array<model.Message>>;
@@ -52,25 +43,17 @@ export function NewConversation(arg1:string,arg2:string,arg3:string):Promise<mod
 
 export function ReadClaudeSession(arg1:string,arg2:string):Promise<Array<claudedata.SessionMessage>>;
 
-export function RecallMemories(arg1:string,arg2:string):Promise<Array<model.MemoryHit>>;
-
-export function Recommend(arg1:string,arg2:string):Promise<main.Recommendation>;
-
 export function RenameConversation(arg1:string,arg2:string):Promise<void>;
-
-export function RoutingTable():Promise<routing.Table>;
 
 export function SaveProvider(arg1:provider.Config,arg2:string):Promise<void>;
 
 export function SearchSessions(arg1:string,arg2:string):Promise<Array<search.Hit>>;
 
-export function SendMessage(arg1:string,arg2:string,arg3:string,arg4:string,arg5:number,arg6:number,arg7:Array<string>,arg8:string):Promise<number>;
+export function SendMessage(arg1:string,arg2:string,arg3:string,arg4:string,arg5:number,arg6:number,arg7:string):Promise<number>;
 
 export function SetDefaults(arg1:string,arg2:string):Promise<void>;
 
 export function StopGeneration(arg1:string):Promise<void>;
-
-export function SummarizeConversation(arg1:string):Promise<model.Memory>;
 
 export function TermResize(arg1:number,arg2:number):Promise<void>;
 

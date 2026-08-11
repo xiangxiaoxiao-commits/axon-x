@@ -17,6 +17,10 @@ type Entity struct {
 	Name         string   `json:"name"`         // unique key within a graph
 	Type         string   `json:"type"`         // module | service | concept | decision | ...
 	Observations []string `json:"observations"` // durable facts about it
+	// Embedding is the dense vector of name+observations, used for semantic
+	// (HybridRAG) retrieval. Optional: empty when no embedder was available at
+	// index time, in which case matching falls back to substring lookup.
+	Embedding []float32 `json:"embedding,omitempty"`
 }
 
 // Relation is a directed edge between two entities.

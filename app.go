@@ -13,7 +13,6 @@ import (
 	"axon/internal/db"
 	"axon/internal/model"
 	"axon/internal/provider"
-	"axon/internal/routing"
 	"axon/internal/secret"
 	"axon/internal/store"
 	"axon/internal/store/sqlite"
@@ -55,13 +54,6 @@ type App struct {
 	// tested without a live Wails runtime; defaults to wruntime.EventsEmit.
 	emit func(event string, data ...interface{})
 
-	// routes is the task-type -> model recommendation table.
-	routes routing.Table
-
-	// summaryTimers holds per-conversation idle timers; when one fires the
-	// conversation is summarized into a memory in the background. Guarded by mu.
-	summaryTimers map[string]*time.Timer
-
 	// term is the embedded PTY shell session (Terminal tab).
 	term termState
 }
@@ -69,8 +61,7 @@ type App struct {
 // NewApp creates a new App application struct.
 func NewApp() *App {
 	return &App{
-		cancels:       make(map[string]context.CancelFunc),
-		summaryTimers: make(map[string]*time.Timer),
+		cancels: make(map[string]context.CancelFunc),
 	}
 }
 
@@ -100,12 +91,6 @@ func (a *App) startup(ctx context.Context) {
 	}
 	a.cfg = cfg
 	a.secrets = secret.NewKeychainStore()
-
-	routes, err := routing.Default()
-	if err != nil {
-		log.Fatalf("load routing table: %v", err)
-	}
-	a.routes = routes
 
 	log.Printf("axon: ready at %s", dataDir)
 }
@@ -230,74 +215,6 @@ func (a *App) ListModels(providerName string) ([]string, error) {
 	return op.ListModels(ctx)
 }
 
-// --- Routing / task recommendation API (Phase 3) ---
-
-// RoutingTable returns the full task-type recommendation table for display and
-// editing in settings.
-func (a *App) RoutingTable() routing.Table {
-	return a.routes
-}
-
-// ClassifyTask heuristically guesses a task type from free-form input. The
-// frontend uses this to preselect a task on the first message; the user can
-// always override.
-func (a *App) ClassifyTask(input string) string {
-	return routing.Classify(input)
-}
-
-// Recommendation is what the frontend shows in the "recommendation bar":
-// the chosen model plus reference cost/IQ/time, and whether a usable provider
-// is actually configured for it.
-type Recommendation struct {
-	TaskType     string  `json:"taskType"`
-	Tier         string  `json:"tier"` // "primary" | "alternate"
-	Provider     string  `json:"provider"`
-	Model        string  `json:"model"`
-	Temperature  float64 `json:"temperature"`
-	MaxTokens    int     `json:"maxTokens"`
-	IQ           float64 `json:"iq"`
-	CostUSD      float64 `json:"costUsd"`
-	Minutes      float64 `json:"minutes"`
-	ProviderName string  `json:"providerName"` // configured provider matched by protocol, if any
-	Available    bool    `json:"available"`    // a configured provider with a stored key exists
-}
-
-// Recommend returns the recommendation for a task type and tier ("primary" or
-// "alternate"), resolving which configured provider (if any) can serve it.
-func (a *App) Recommend(taskType, tier string) (Recommendation, error) {
-	profile, ok := a.routes.Profiles[taskType]
-	if !ok {
-		return Recommendation{}, fmt.Errorf("unknown task type %q", taskType)
-	}
-	rec := profile.Primary
-	if tier == "alternate" {
-		rec = profile.Alternate
-	} else {
-		tier = "primary"
-	}
-
-	out := Recommendation{
-		TaskType:    taskType,
-		Tier:        tier,
-		Provider:    rec.Provider,
-		Model:       rec.Model,
-		Temperature: rec.Temperature,
-		MaxTokens:   rec.MaxTokens,
-		IQ:          rec.IQ,
-		CostUSD:     rec.CostUSD,
-		Minutes:     rec.Minutes,
-	}
-
-	// Match a configured provider by protocol (rec.Provider is a protocol name).
-	if name, ok := a.providerForProtocol(rec.Provider); ok {
-		out.ProviderName = name
-		if pc, ok := a.cfg.Provider(name); ok {
-			out.Available = a.secrets.Has(pc.KeyRef)
-		}
-	}
-	return out, nil
-}
-
 // providerForProtocol returns the name of a configured provider whose protocol
 // matches, preferring the default provider when it qualifies.
 func (a *App) providerForProtocol(protocol string) (string, bool) {
@@ -325,11 +242,9 @@ func (a *App) providerForProtocol(protocol string) (string, bool) {
 //
 // providerName/modelID may be empty to use configured defaults. It returns the
 // assistant message id so the frontend can correlate stream events.
-// injectMemoryIDs are conversation ids whose summaries the user chose to inject
-// as extra context for this turn (Phase 4). Empty means no injection.
 // injectContext, when non-empty, is prepended as a system message — used to
 // feed matched knowledge-graph background into the reply (chat injection).
-func (a *App) SendMessage(conversationID, content, providerName, modelID string, temperature float64, maxTokens int, injectMemoryIDs []string, injectContext string) (int64, error) {
+func (a *App) SendMessage(conversationID, content, providerName, modelID string, temperature float64, maxTokens int, injectContext string) (int64, error) {
 	cfg := a.cfg.Get()
 	if providerName == "" {
 		providerName = cfg.DefaultProvider
@@ -363,11 +278,6 @@ func (a *App) SendMessage(conversationID, content, providerName, modelID string,
 		return 0, fmt.Errorf("load history: %w", err)
 	}
 	reqMsgs := make([]provider.ChatMessage, 0, len(history)+1)
-	// Prepend user-selected memories as a system message with clear attribution,
-	// so the model can use past context and the user knows what was injected.
-	if inj := a.buildMemoryInjection(injectMemoryIDs); inj != "" {
-		reqMsgs = append(reqMsgs, provider.ChatMessage{Role: provider.RoleSystem, Content: inj})
-	}
 	// Knowledge-graph background matched from the user's message.
 	if strings.TrimSpace(injectContext) != "" {
 		reqMsgs = append(reqMsgs, provider.ChatMessage{Role: provider.RoleSystem, Content: injectContext})
@@ -480,9 +390,6 @@ func (a *App) runStream(ctx context.Context, prov provider.Provider, req provide
 			ConversationID: convID, MessageID: msgID,
 			PromptTokens: prompt, CompletionTokens: completion,
 		})
-		// Conversation produced a complete reply; (re)arm the idle timer so it
-		// gets summarized into a memory once it settles (Phase 4).
-		a.scheduleSummary(convID)
 	}
 }
 

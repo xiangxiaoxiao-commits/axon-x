@@ -4,11 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
+	"sort"
 	"strings"
 	"time"
 
 	"axon/internal/claudedata"
 	"axon/internal/db"
+	"axon/internal/embed"
 	"axon/internal/graph"
 	"axon/internal/provider"
 )
@@ -16,6 +19,20 @@ import (
 // graphModel is the model used to distill knowledge. gpt-5.6-sol has the
 // strongest comprehension on the user's gateway; extraction needs judgement.
 const graphModel = "gpt-5.6-sol"
+
+// HybridRAG retrieval tuning for MatchKnowledge. Named so they are easy to
+// adjust as the graph grows.
+const (
+	// knowledgeSeedMinScore is the cosine-similarity floor for an entity to be
+	// picked as a semantic seed. Below it the entity is considered unrelated.
+	knowledgeSeedMinScore = 0.35
+	// knowledgeSeedTopK caps how many semantic seed entities are taken (the
+	// closest ones), before relation expansion.
+	knowledgeSeedTopK = 5
+	// knowledgeExpandHops is how many relation hops to walk out from the seeds
+	// (undirected). 1 keeps the injected context tight; bump to 2 for wider recall.
+	knowledgeExpandHops = 1
+)
 
 // Graph build events for the frontend.
 const (
@@ -120,6 +137,14 @@ func (a *App) IndexProject(projectSlug string) error {
 		return err
 	}
 
+	// Build an embedder for semantic (HybridRAG) retrieval. Optional: if none is
+	// available, indexing proceeds without vectors and MatchKnowledge falls back
+	// to substring matching.
+	emb, embErr := a.newEmbedder()
+	if embErr != nil {
+		emb = nil
+	}
+
 	newly := 0
 	for i, s := range sessions {
 		if _, ok := graph.LoadCache(dataDir, projectSlug, s.ID, s.UpdatedAt); ok {
@@ -145,6 +170,10 @@ func (a *App) IndexProject(projectSlug string) error {
 				continue // skip; will retry next index run
 			}
 		}
+		// Attach embeddings so this session's entities are semantically searchable.
+		if emb != nil {
+			a.embedEntities(emb, ex.Entities)
+		}
 		_ = graph.SaveCache(dataDir, projectSlug, &graph.SessionCache{
 			SessionID: s.ID, Mtime: s.UpdatedAt, Entities: ex.Entities, Relations: ex.Relations,
 		})
@@ -154,6 +183,32 @@ func (a *App) IndexProject(projectSlug string) error {
 		"projectSlug": projectSlug, "processed": newly, "phase": "index",
 	})
 	return nil
+}
+
+// entityEmbedText builds the text embedded for an entity: its name plus its
+// observations, so the vector reflects both the label and its facts.
+func entityEmbedText(e graph.Entity) string {
+	parts := append([]string{e.Name}, e.Observations...)
+	return strings.TrimSpace(strings.Join(parts, " "))
+}
+
+// embedEntities fills in each entity's Embedding in place. Best-effort: a single
+// failure is logged and skipped (that entity simply won't be semantically
+// searchable and falls back to substring matching), so one bad call does not
+// abort indexing.
+func (a *App) embedEntities(emb embed.Embedder, entities []graph.Entity) {
+	for i := range entities {
+		text := entityEmbedText(entities[i])
+		if text == "" {
+			continue
+		}
+		vec, err := emb.Embed(a.ctx, text)
+		if err != nil {
+			log.Printf("axon: embed entity %q failed: %v", entities[i].Name, err)
+			continue
+		}
+		entities[i].Embedding = vec
+	}
 }
 
 // BuildGraph assembles the full graph from cached sessions (instant, no model
@@ -341,9 +396,18 @@ type KnowledgeMatch struct {
 	Context string   `json:"context"`
 }
 
-// MatchKnowledge finds graph entities referenced by the user's message and
-// builds an injectable context block from their facts and relations. Assembled
-// from cache (instant, free). Empty match => Names is empty and Context "".
+// MatchKnowledge finds the graph knowledge relevant to the user's message using
+// HybridRAG and builds an injectable context block. Retrieval combines:
+//  1. semantic seeds — entities whose embedding is closest to the message
+//     (cosine >= threshold, top-K), when an embedder and entity vectors exist;
+//  2. relation expansion — neighbors of the seeds walked out a few hops
+//     (undirected), so linked knowledge comes along;
+//  3. substring fallback — entities whose name literally appears in the message
+//     (the original behavior), always applied and merged in.
+//
+// When no embedder is configured (e.g. no OpenAI provider) or the graph has no
+// vectors yet, it degrades gracefully to pure substring matching. Assembled from
+// cache (instant). Empty match => Names is empty and Context "".
 func (a *App) MatchKnowledge(projectSlug, text string) (KnowledgeMatch, error) {
 	if strings.TrimSpace(text) == "" || strings.TrimSpace(projectSlug) == "" {
 		return KnowledgeMatch{Names: []string{}}, nil
@@ -352,29 +416,54 @@ func (a *App) MatchKnowledge(projectSlug, text string) (KnowledgeMatch, error) {
 	if err != nil {
 		return KnowledgeMatch{Names: []string{}}, err
 	}
-	lt := strings.ToLower(text)
 
-	hit := map[string]bool{}
-	var matched []graph.Entity
+	// Index entities by normalized name for O(1) lookup during expansion.
+	byName := make(map[string]graph.Entity, len(g.Entities))
+	for _, e := range g.Entities {
+		if n := strings.ToLower(strings.TrimSpace(e.Name)); n != "" {
+			byName[n] = e
+		}
+	}
+
+	hit := map[string]bool{} // normalized name -> in the hit set
+
+	// (1) Semantic seeds via embeddings, then (2) expand along relations.
+	if emb, embErr := a.newEmbedder(); embErr == nil {
+		seeds := a.semanticSeeds(emb, g, text)
+		for _, s := range seeds {
+			hit[strings.ToLower(s)] = true
+		}
+		if len(seeds) > 0 {
+			expandAlongRelations(g, hit, knowledgeExpandHops)
+		}
+	}
+
+	// (3) Substring fallback: any entity whose name appears in the message.
+	// Always applied and merged, so this both complements the vector seeds and
+	// preserves the original behavior when embeddings are unavailable.
+	lt := strings.ToLower(text)
 	for _, e := range g.Entities {
 		n := strings.TrimSpace(e.Name)
 		if n == "" {
 			continue
 		}
-		// Match if the message mentions the entity name (case-insensitive).
 		if strings.Contains(lt, strings.ToLower(n)) {
 			hit[strings.ToLower(n)] = true
-			matched = append(matched, e)
 		}
 	}
-	if len(matched) == 0 {
+
+	if len(hit) == 0 {
 		return KnowledgeMatch{Names: []string{}}, nil
 	}
 
-	names := make([]string, 0, len(matched))
+	// Collect matched entities in the graph's original order for stable output.
+	names := make([]string, 0, len(hit))
 	var b strings.Builder
 	b.WriteString("以下是该项目的相关背景知识（来自你以往的对话，供参考）：\n")
-	for _, e := range matched {
+	for _, e := range g.Entities {
+		if !hit[strings.ToLower(strings.TrimSpace(e.Name))] {
+			continue
+		}
 		names = append(names, e.Name)
 		fmt.Fprintf(&b, "\n【%s】\n", e.Name)
 		for _, o := range e.Observations {
@@ -395,4 +484,69 @@ func (a *App) MatchKnowledge(projectSlug, text string) (KnowledgeMatch, error) {
 		}
 	}
 	return KnowledgeMatch{Names: names, Context: b.String()}, nil
+}
+
+// semanticSeeds embeds the message and returns the names of the top-K entities
+// whose embedding is most similar (cosine >= knowledgeSeedMinScore). Returns nil
+// when the message can't be embedded or no entity carries a vector, so the
+// caller falls back to substring matching without erroring.
+func (a *App) semanticSeeds(emb embed.Embedder, g *graph.Graph, text string) []string {
+	qv, err := emb.Embed(a.ctx, text)
+	if err != nil {
+		log.Printf("axon: knowledge query embed failed: %v", err)
+		return nil
+	}
+
+	type scored struct {
+		name  string
+		score float32
+	}
+	var cands []scored
+	for _, e := range g.Entities {
+		if len(e.Embedding) == 0 {
+			continue
+		}
+		score := embed.Cosine(qv, e.Embedding)
+		if score < knowledgeSeedMinScore {
+			continue
+		}
+		cands = append(cands, scored{name: e.Name, score: score})
+	}
+	if len(cands) == 0 {
+		return nil
+	}
+	sort.Slice(cands, func(i, j int) bool { return cands[i].score > cands[j].score })
+	if len(cands) > knowledgeSeedTopK {
+		cands = cands[:knowledgeSeedTopK]
+	}
+	out := make([]string, len(cands))
+	for i, c := range cands {
+		out[i] = c.name
+	}
+	return out
+}
+
+// expandAlongRelations grows the hit set by walking `hops` relation edges out
+// from the currently-hit entities, treating relations as undirected so both
+// upstream and downstream neighbors are pulled in. Only names present in the
+// graph are added.
+func expandAlongRelations(g *graph.Graph, hit map[string]bool, hops int) {
+	for h := 0; h < hops; h++ {
+		frontier := map[string]bool{}
+		for _, r := range g.Relations {
+			from, to := strings.ToLower(r.From), strings.ToLower(r.To)
+			if hit[from] && !hit[to] {
+				frontier[to] = true
+			}
+			if hit[to] && !hit[from] {
+				frontier[from] = true
+			}
+		}
+		if len(frontier) == 0 {
+			break // nothing new to add
+		}
+		for n := range frontier {
+			hit[n] = true
+		}
+	}
 }
