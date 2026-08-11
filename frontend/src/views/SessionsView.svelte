@@ -1,16 +1,14 @@
 <script lang="ts">
   // Browse Claude Code's saved sessions: projects -> sessions -> transcript.
   // These live on disk under ~/.claude and are never lost when a tab closes.
-  import { onMount } from "svelte";
   import {
-    ListClaudeProjects, ListClaudeSessions, ReadClaudeSession,
+    ListClaudeSessions, ReadClaudeSession,
   } from "../../wailsjs/go/main/App.js";
   import type { claudedata } from "../../wailsjs/go/models";
+  import { currentProject } from "../lib/stores";
 
-  let projects: claudedata.Project[] = [];
   let sessions: claudedata.SessionMeta[] = [];
   let messages: claudedata.SessionMessage[] = [];
-  let curProject = "";
   let curSession = "";
   let filter = "";
   let loading = false;
@@ -20,19 +18,19 @@
     return new Date(ms).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
   }
 
-  onMount(async () => {
-    try { projects = await ListClaudeProjects(); } catch (e) { console.error(e); }
-    if (projects.length) selectProject(projects[0].slug);
-  });
+  // Reload the session list whenever the global project changes.
+  let loadedFor = " ";
+  $: if ($currentProject !== loadedFor) { loadedFor = $currentProject; loadSessions(); }
 
-  async function selectProject(slug: string) {
-    curProject = slug; curSession = ""; messages = []; sessions = [];
-    try { sessions = await ListClaudeSessions(slug); } catch (e) { console.error(e); }
+  async function loadSessions() {
+    curSession = ""; messages = []; sessions = [];
+    if (!$currentProject) return; // "all projects" has no single session list
+    try { sessions = await ListClaudeSessions($currentProject); } catch (e) { console.error(e); }
   }
 
   async function selectSession(id: string) {
     curSession = id; loading = true; messages = [];
-    try { messages = await ReadClaudeSession(curProject, id); }
+    try { messages = await ReadClaudeSession($currentProject, id); }
     catch (e) { console.error(e); }
     finally { loading = false; }
   }
@@ -43,17 +41,6 @@
 </script>
 
 <div class="browser">
-  <div class="col projects">
-    <div class="col-head">项目</div>
-    {#each projects as p}
-      <button class="item" class:active={p.slug === curProject} on:click={() => selectProject(p.slug)}>
-        <div class="item-title">{p.path}</div>
-        <div class="item-sub">{p.sessionCount} 个会话 · {fmtTime(p.updatedAt)}</div>
-      </button>
-    {/each}
-    {#if projects.length === 0}<div class="empty">没有找到 Claude Code 会话</div>{/if}
-  </div>
-
   <div class="col sessions">
     <input class="filter" placeholder="搜索会话标题…" bind:value={filter} />
     {#each shownSessions as s}
@@ -62,7 +49,8 @@
         <div class="item-sub">{s.messageCount} 条 · {fmtTime(s.updatedAt)}</div>
       </button>
     {/each}
-    {#if curProject && shownSessions.length === 0}<div class="empty">无会话</div>{/if}
+    {#if !$currentProject}<div class="empty">在顶部选择一个项目查看它的会话</div>
+    {:else if shownSessions.length === 0}<div class="empty">无会话</div>{/if}
   </div>
 
   <div class="col transcript">
@@ -91,15 +79,8 @@
     overflow-y: auto;
     border-right: 1px solid var(--border);
   }
-  .projects { flex: 0 0 240px; }
-  .sessions { flex: 0 0 260px; }
+  .sessions { flex: 0 0 300px; }
   .transcript { flex: 1; padding: 16px; min-width: 0; }
-  .col-head {
-    padding: 8px 12px;
-    font-size: 11px;
-    color: var(--text-muted);
-    border-bottom: 1px solid var(--border);
-  }
   .filter {
     width: 100%;
     background: var(--bg-base);

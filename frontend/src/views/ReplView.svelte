@@ -2,12 +2,12 @@
   // Minimal REPL: one full-screen flow, a "❯" input at the bottom, slash
   // commands for everything else. No sidebar / topbar / panels.
   import { onMount, onDestroy, tick } from "svelte";
-  import { conversations, currentConversationID, messages, streaming, activeView } from "../lib/stores";
+  import { conversations, currentConversationID, messages, streaming, activeView, currentProject, projects } from "../lib/stores";
   import type { model } from "../../wailsjs/go/models";
   import {
     ListConversations, ListMessages, NewConversation,
     SendMessage, StopGeneration, ListProviders, ListModels,
-    ListClaudeProjects, MatchKnowledge,
+    MatchKnowledge,
   } from "../../wailsjs/go/main/App.js";
   import { EventsOn, EventsOff } from "../../wailsjs/runtime/runtime.js";
   import MessageBubble from "../lib/chat/MessageBubble.svelte";
@@ -24,10 +24,9 @@
   let providerName = "";
   let currentModel = "";
   let models: string[] = [];
-  // Knowledge injection: which project's graph to match against, on/off.
-  let kProjects: { slug: string; path: string }[] = [];
-  let kProject = "";
+  // Knowledge injection: match against the globally-selected project's graph.
   let useKnowledge = true;
+  $: curProjectPath = $projects.find((p) => p.slug === $currentProject)?.path ?? "";
   let streamingMsgID = -1;
   let value = "";
   let scroller: HTMLElement;
@@ -132,9 +131,9 @@
     // Match the message against the selected project's knowledge graph and
     // inject the relevant background so the AI answers with prior context.
     let injectContext = "";
-    if (useKnowledge && kProject) {
+    if (useKnowledge && $currentProject) {
       try {
-        const m = await MatchKnowledge(kProject, text);
+        const m = await MatchKnowledge($currentProject, text);
         if (m && m.names && m.names.length) {
           injectContext = m.context;
           note("🧠 突触激活: " + m.names.join("、"), "synapse");
@@ -159,10 +158,6 @@
   onMount(async () => {
     EventsOn("chat:delta", onDelta); EventsOn("chat:done", onDone); EventsOn("chat:error", onError);
     await loadModels(); await refreshConvs();
-    try {
-      kProjects = await ListClaudeProjects();
-      if (kProjects.length) kProject = kProjects[0].slug;
-    } catch (e) { console.error("load kProjects", e); }
     if ($conversations.length) await openConv($conversations[0].id);
     note("输入消息开始对话，或 /help 看命令。命中项目知识会自动注入。");
     inputEl?.focus();
@@ -186,9 +181,7 @@
       <input type="checkbox" bind:checked={useKnowledge} />
       注入项目知识
     </label>
-    <select class="k-select" bind:value={kProject} disabled={!useKnowledge}>
-      {#each kProjects as p}<option value={p.slug}>{p.path}</option>{/each}
-    </select>
+    <span class="k-cur">当前项目: {curProjectPath || "（未选）"}</span>
     <span class="k-hint">命中知识图谱的实体时，自动把相关背景喂给 AI</span>
   </div>
   <div class="prompt-row">
@@ -250,10 +243,9 @@
     color: var(--text-muted);
   }
   .k-toggle { display: flex; align-items: center; gap: 4px; color: var(--text-primary); }
-  .k-select {
-    background: var(--bg-elevated); color: var(--text-primary);
-    border: 1px solid var(--border); border-radius: var(--radius-control);
-    font-family: var(--font-mono); font-size: 11px; padding: 2px 6px; max-width: 240px;
+  .k-cur {
+    color: var(--text-primary); font-size: 11px;
+    max-width: 240px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   .k-hint { color: var(--text-muted); }
   .prompt-row {

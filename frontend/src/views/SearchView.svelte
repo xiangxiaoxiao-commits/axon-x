@@ -2,12 +2,11 @@
   // Fast keyword search across all Claude Code session content (substring, no
   // LLM). Build the index once, then search is instant.
   import { onMount, onDestroy } from "svelte";
-  import { ListClaudeProjects, SearchSessions, IndexSearch } from "../../wailsjs/go/main/App.js";
+  import { SearchSessions, IndexSearch } from "../../wailsjs/go/main/App.js";
   import { EventsOn, EventsOff } from "../../wailsjs/runtime/runtime.js";
-  import type { search, claudedata } from "../../wailsjs/go/models";
+  import type { search } from "../../wailsjs/go/models";
+  import { currentProject } from "../lib/stores";
 
-  let projects: claudedata.Project[] = [];
-  let projFilter = ""; // empty = all projects
   let keyword = "";
   let hits: search.Hit[] = [];
   let searching = false;
@@ -19,8 +18,7 @@
     return new Date(ms).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
   }
 
-  onMount(async () => {
-    try { projects = await ListClaudeProjects(); } catch (e) { console.error(e); }
+  onMount(() => {
     EventsOn("search:progress", (p: any) => { status = `建立索引中… 已处理 ${p.indexed} 个会话`; });
     EventsOn("search:done", (p: any) => { indexing = false; status = `索引完成：${p.indexed} 个会话已入库`; });
   });
@@ -30,7 +28,7 @@
     const kw = keyword.trim();
     if (!kw) { hits = []; return; }
     searching = true; status = "";
-    try { hits = await SearchSessions(kw, projFilter); status = `${hits.length} 条匹配`; }
+    try { hits = await SearchSessions(kw, $currentProject); status = `${hits.length} 条匹配`; }
     catch (e: any) { status = "搜索失败: " + (e?.message || e); }
     finally { searching = false; }
   }
@@ -69,10 +67,6 @@
       bind:value={keyword}
       on:keydown={(e) => e.key === "Enter" && doSearch()}
     />
-    <select class="proj" bind:value={projFilter}>
-      <option value="">全部项目</option>
-      {#each projects as p}<option value={p.slug}>{p.path}</option>{/each}
-    </select>
     <button class="btn" on:click={doSearch} disabled={searching}>搜索</button>
     <button class="btn ghost" on:click={buildIndex} disabled={indexing} title="首次使用先建索引（之后搜索秒出）">
       {indexing ? "索引中…" : "建索引"}
@@ -112,11 +106,6 @@
     font-family: var(--font-mono); font-size: 13px; padding: 6px 10px; outline: none;
   }
   .kw:focus { border-color: var(--accent); }
-  .proj {
-    background: var(--bg-elevated); color: var(--text-primary);
-    border: 1px solid var(--border); border-radius: var(--radius-control);
-    font-family: var(--font-mono); font-size: 12px; padding: 5px 8px; max-width: 200px;
-  }
   .btn {
     background: var(--accent); color: #fff; border: none;
     border-radius: var(--radius-control); padding: 5px 14px; font-size: 12px; font-family: var(--font-mono);

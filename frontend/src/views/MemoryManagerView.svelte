@@ -2,28 +2,25 @@
   // View and edit what Claude Code remembers: the global CLAUDE.md and each
   // project's memory/*.md files. Edits are saved back to disk; Claude Code
   // loads them on the next session (no MCP needed).
-  import { onMount } from "svelte";
   import {
-    ListClaudeProjects, ListMemoryFiles, WriteMemoryFile, DeleteMemoryFile,
+    ListMemoryFiles, WriteMemoryFile, DeleteMemoryFile,
   } from "../../wailsjs/go/main/App.js";
   import type { claudedata } from "../../wailsjs/go/models";
+  import { currentProject } from "../lib/stores";
 
-  let projects: claudedata.Project[] = [];
-  let curProject = "";
   let files: claudedata.MemoryFile[] = [];
   let selected: claudedata.MemoryFile | null = null;
   let draft = "";
   let dirty = false;
   let status = "";
 
-  onMount(async () => {
-    try { projects = await ListClaudeProjects(); } catch (e) { console.error(e); }
-    await loadFiles(projects.length ? projects[0].slug : "");
-  });
+  // Reload memory files whenever the global project changes.
+  let loadedFor = " ";
+  $: if ($currentProject !== loadedFor) { loadedFor = $currentProject; loadFiles(); }
 
-  async function loadFiles(slug: string) {
-    curProject = slug; selected = null; draft = ""; dirty = false;
-    try { files = await ListMemoryFiles(slug); } catch (e) { console.error(e); files = []; }
+  async function loadFiles() {
+    selected = null; draft = ""; dirty = false;
+    try { files = await ListMemoryFiles($currentProject); } catch (e) { console.error(e); files = []; }
   }
 
   function select(f: claudedata.MemoryFile) {
@@ -43,7 +40,7 @@
     if (!confirm("删除这个记忆文件？")) return;
     try {
       await DeleteMemoryFile(selected.path);
-      await loadFiles(curProject);
+      await loadFiles();
       status = "已删除";
     } catch (e) { status = "删除失败: " + e; }
   }
@@ -51,9 +48,6 @@
 
 <div class="mem">
   <div class="col sidebar">
-    <select class="proj-select" bind:value={curProject} on:change={() => loadFiles(curProject)}>
-      {#each projects as p}<option value={p.slug}>{p.path}</option>{/each}
-    </select>
     <div class="files">
       {#each files as f}
         <button class="item" class:active={selected?.path === f.path} on:click={() => select(f)}>
@@ -86,17 +80,6 @@
 <style>
   .mem { display: flex; height: 100%; font-family: var(--font-mono); }
   .sidebar { flex: 0 0 280px; border-right: 1px solid var(--border); overflow-y: auto; }
-  .proj-select {
-    width: 100%;
-    background: var(--bg-base);
-    color: var(--text-primary);
-    border: none;
-    border-bottom: 1px solid var(--border);
-    font-family: var(--font-mono);
-    font-size: 12px;
-    padding: 8px;
-    outline: none;
-  }
   .item {
     display: flex;
     align-items: center;

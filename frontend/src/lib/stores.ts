@@ -1,12 +1,33 @@
 // Global UI state for Axon. Kept small: which view is active, the conversation
 // list, the current conversation and its messages.
-import { writable } from "svelte/store";
-import type { model } from "../../wailsjs/go/models";
+import { writable, get } from "svelte/store";
+import type { model, claudedata } from "../../wailsjs/go/models";
+import { ListClaudeProjects } from "../../wailsjs/go/main/App.js";
 
 export type View = "hub" | "search" | "sessions" | "graph" | "memory" | "chat" | "terminal" | "settings";
 
 // Active main view (Rail navigation).
 export const activeView = writable<View>("chat");
+
+// --- Global project selection -------------------------------------------
+// One project chosen once, shared by every view. Empty string means "all
+// projects" (used by cross-project search).
+export const currentProject = writable<string>("");
+
+// The Claude Code project list, loaded once on startup.
+export const projects = writable<claudedata.Project[]>([]);
+
+// Load the project list from disk and default the selection to the first
+// project (unless one is already chosen). Safe to call more than once.
+export async function loadProjects(): Promise<void> {
+  try {
+    const list = await ListClaudeProjects();
+    projects.set(list);
+    if (!get(currentProject) && list.length) currentProject.set(list[0].slug);
+  } catch (e) {
+    console.error("load projects", e);
+  }
+}
 
 // All conversations (sidebar), newest activity first.
 export const conversations = writable<model.Conversation[]>([]);
