@@ -5,7 +5,7 @@
   // node color encodes entity type (with a legend). Click a node to re-focus,
   // drag to nudge. The focus node's facts float beside the canvas.
   import { onMount, onDestroy } from "svelte";
-  import { BuildGraph, IndexProject, GenerateArticle } from "../../wailsjs/go/main/App.js";
+  import { BuildGraph, IndexProject, GenerateArticle, BuildGraphFromCode } from "../../wailsjs/go/main/App.js";
   import { EventsOn, EventsOff } from "../../wailsjs/runtime/runtime.js";
   import type { graph } from "../../wailsjs/go/models";
   import { currentProject } from "../lib/stores";
@@ -14,6 +14,11 @@
   let g: graph.Graph | null = null;
   let indexing = false;
   let progress = "";
+
+  // "从代码建图" — scan a repo, extract code skeleton into the graph.
+  let codeBuilding = false;
+  let showRepoInput = false;
+  let repoDir = "";
 
   type Ent = { name: string; type: string; obs: string[] };
   let byName: Record<string, Ent> = {};
@@ -67,11 +72,20 @@
   onMount(() => {
     EventsOn("graph:progress", (p: any) => {
       if (p?.projectSlug !== $currentProject) return;
-      progress = p.error ? `跳过一个会话: ${p.error}` : `建立索引中… ${p.current}/${p.total}`;
+      if (p?.phase === "code") {
+        progress = p.error ? `跳过: ${p.error}` : `正在从代码建图… 文件 ${p.current ?? ""}`;
+      } else {
+        progress = p.error ? `跳过一个会话: ${p.error}` : `建立索引中… ${p.current}/${p.total}`;
+      }
     });
     EventsOn("graph:done", async (p: any) => {
       if (p?.projectSlug !== $currentProject) return;
-      indexing = false; progress = `完成：${p.entities} 个节点`;
+      if (p?.phase === "code") {
+        codeBuilding = false; showRepoInput = false;
+        progress = `代码建图完成：${p.entities} 个节点`;
+      } else {
+        indexing = false; progress = `完成：${p.entities} 个节点`;
+      }
       await load();
     });
   });
@@ -323,6 +337,20 @@
     try { await IndexProject($currentProject); } catch (e: any) { indexing = false; progress = "索引失败: " + (e?.message || e); }
   }
 
+  function toggleRepoInput() {
+    if (!$currentProject) { progress = "先在顶部选一个项目"; return; }
+    showRepoInput = !showRepoInput;
+  }
+  async function buildFromCode() {
+    if (codeBuilding) return;
+    if (!$currentProject) { progress = "先在顶部选一个项目"; return; }
+    const dir = repoDir.trim();
+    if (!dir) { progress = "请填写仓库绝对路径"; return; }
+    codeBuilding = true; progress = "正在从代码建图（首次较慢）…";
+    try { await BuildGraphFromCode(dir, $currentProject); }
+    catch (e: any) { codeBuilding = false; progress = "代码建图失败: " + (e?.message || e); }
+  }
+
   let term = "";
   function jump() {
     const t = term.trim().toLowerCase();
@@ -347,6 +375,12 @@
       on:keydown={(e) => e.key === "Enter" && jump()} />
     <button class="b" on:click={jump}>跳转</button>
     <button class="b ghost" on:click={indexProject} disabled={indexing}>{indexing ? "索引中…" : "建索引"}</button>
+    <button class="b ghost" on:click={toggleRepoInput} disabled={codeBuilding}>{codeBuilding ? "建图中…" : "🧬 从代码建图"}</button>
+    {#if showRepoInput}
+      <input class="term repo" placeholder="仓库绝对路径，如 /Users/me/project" bind:value={repoDir}
+        on:keydown={(e) => e.key === "Enter" && buildFromCode()} />
+      <button class="b" on:click={buildFromCode} disabled={codeBuilding}>{codeBuilding ? "…" : "开始扫描"}</button>
+    {/if}
     <button class="b" on:click={genArticle} disabled={articleLoading || !g?.entities?.length}>{articleLoading ? "生成中…" : "📖 阅读文章"}</button>
     {#if mode === "graph"}
       <span class="depth">
@@ -432,6 +466,7 @@
     border: 1px solid var(--border); border-radius: var(--radius-control);
     font-family: var(--font-mono); font-size: 12px; padding: 3px 8px; width: 200px;
   }
+  .term.repo { width: 280px; }
   .b { background: #FBBF24; color: #1c1206; border: none; border-radius: var(--radius-control); padding: 4px 12px; font-size: 12px; font-family: var(--font-mono); font-weight: 600; }
   .b.ghost { background: transparent; border: 1px solid var(--border); color: var(--text-muted); font-weight: 400; }
   .depth { display: inline-flex; align-items: center; gap: 4px; color: var(--text-muted); }

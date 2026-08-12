@@ -555,6 +555,12 @@ func resolveSessionTitles(projectSlug string, ids []string) []string {
 	}
 	out := make([]string, 0, len(ids))
 	for _, id := range ids {
+		// Code-sourced provenance ("code:<path>") is not a session id; render it
+		// as "代码 <path>" so the UI shows it came from the repository, not a chat.
+		if strings.HasPrefix(id, "code:") {
+			out = append(out, "代码 "+strings.TrimPrefix(id, "code:"))
+			continue
+		}
 		if t := strings.TrimSpace(titleByID[id]); t != "" {
 			out = append(out, t)
 		} else {

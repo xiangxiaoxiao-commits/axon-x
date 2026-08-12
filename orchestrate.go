@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"path/filepath"
 	"strings"
 
 	"axon/internal/provider"
@@ -192,7 +193,10 @@ func (a *App) runEnrich(ctx context.Context, t task.Task) {
 	var background string
 	var injected, sources []string
 	if strings.TrimSpace(t.ProjectSlug) != "" {
-		if km, mErr := a.MatchKnowledge(t.ProjectSlug, t.Input); mErr == nil {
+		// Recall query: the rough input, plus any scope paths/modules already on
+		// the spec (present on a re-enrich) so code-sourced entities get recalled.
+		// On a first enrich the spec has no scope yet, so this degrades to input.
+		if km, mErr := a.MatchKnowledge(t.ProjectSlug, enrichQuery(t)); mErr == nil {
 			background = km.Context
 			injected = km.Names
 			sources = km.Sources
@@ -242,6 +246,33 @@ func (a *App) runEnrich(ctx context.Context, t task.Task) {
 	}
 	a.emit(EventTaskSpec, taskSpecEvent{TaskID: t.ID, Spec: spec})
 	a.emit(EventTaskStatus, taskStatusEvent{TaskID: t.ID, Status: string(fresh.Status)})
+}
+
+// enrichQuery builds the knowledge-recall query for enrichment: the rough input
+// plus, when a spec already carries a scope (re-enrich), its files/modules and
+// their base names — so code-sourced file/function entities are recalled just
+// like buildKnowledgeQuery does for commit diffs. Falls back to input alone.
+func enrichQuery(t task.Task) string {
+	scope := t.Spec.Scope
+	if len(scope) == 0 {
+		return t.Input
+	}
+	var b strings.Builder
+	b.WriteString(t.Input)
+	for _, s := range scope {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue
+		}
+		b.WriteString(" ")
+		b.WriteString(s)
+		if strings.Contains(s, "/") {
+			base := s[strings.LastIndex(s, "/")+1:]
+			b.WriteString(" ")
+			b.WriteString(strings.TrimSuffix(base, filepath.Ext(base)))
+		}
+	}
+	return b.String()
 }
 
 // failEnrich marks a task failed at the enrich stage and emits task:error.

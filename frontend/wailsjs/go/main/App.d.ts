@@ -13,6 +13,8 @@ export function BuildGraph(arg1:string):Promise<graph.Graph>;
 
 export function BuildGraphFocused(arg1:string,arg2:string):Promise<graph.Graph>;
 
+export function BuildGraphFromCode(arg1:string,arg2:string):Promise<void>;
+
 export function CancelTask(arg1:string):Promise<void>;
 
 export function CreateTask(arg1:string,arg2:string,arg3:string,arg4:string):Promise<task.Task>;
