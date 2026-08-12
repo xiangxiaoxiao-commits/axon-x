@@ -18,8 +18,16 @@ export function DeleteMemoryFile(arg1) {
   return window['go']['main']['App']['DeleteMemoryFile'](arg1);
 }
 
+export function DoCommit(arg1, arg2, arg3) {
+  return window['go']['main']['App']['DoCommit'](arg1, arg2, arg3);
+}
+
 export function GenerateArticle(arg1, arg2) {
   return window['go']['main']['App']['GenerateArticle'](arg1, arg2);
+}
+
+export function GenerateCommit(arg1, arg2, arg3, arg4, arg5, arg6) {
+  return window['go']['main']['App']['GenerateCommit'](arg1, arg2, arg3, arg4, arg5, arg6);
 }
 
 export function GetGraph(arg1) {
@@ -76,6 +84,10 @@ export function ReadClaudeSession(arg1, arg2) {
 
 export function RenameConversation(arg1, arg2) {
   return window['go']['main']['App']['RenameConversation'](arg1, arg2);
+}
+
+export function RepoStatus(arg1) {
+  return window['go']['main']['App']['RepoStatus'](arg1);
 }
 
 export function SaveProvider(arg1, arg2) {

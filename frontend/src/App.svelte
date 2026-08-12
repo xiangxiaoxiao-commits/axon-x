@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { activeView, currentProject, projects, loadProjects, type View } from "./lib/stores";
   import NeuralHub from "./views/NeuralHub.svelte";
+  import CommitView from "./views/CommitView.svelte";
   import SearchView from "./views/SearchView.svelte";
   import SessionsView from "./views/SessionsView.svelte";
   import GraphView from "./views/GraphView.svelte";
@@ -17,7 +18,8 @@
   $: if ($activeView === "terminal") terminalOpened = true;
 
   let ready = false;
-  onMount(async () => { $activeView = "hub"; ready = true; await loadProjects(); });
+  // Commit is the first entry: land here on launch, not the neural hub.
+  onMount(async () => { $activeView = "commit"; ready = true; await loadProjects(); });
   function refreshProviders() {}
 
   // Views that get the shared top bar (project picker + back). Hub is
@@ -53,7 +55,9 @@
           </div>
         {/if}
         <div class="view" class:with-topbar={showTopbar}>
-          {#if $activeView === "search"}
+          {#if $activeView === "commit"}
+            <CommitView />
+          {:else if $activeView === "search"}
             <SearchView />
           {:else if $activeView === "sessions"}
             <SessionsView />

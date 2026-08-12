@@ -4,10 +4,10 @@ import { writable, get } from "svelte/store";
 import type { model, claudedata } from "../../wailsjs/go/models";
 import { ListClaudeProjects } from "../../wailsjs/go/main/App.js";
 
-export type View = "hub" | "search" | "sessions" | "graph" | "memory" | "chat" | "terminal" | "settings";
+export type View = "commit" | "hub" | "search" | "sessions" | "graph" | "memory" | "chat" | "terminal" | "settings";
 
-// Active main view (Rail navigation).
-export const activeView = writable<View>("chat");
+// Active main view. Commit is the primary entry; hub is a secondary launcher.
+export const activeView = writable<View>("commit");
 
 // --- Global project selection -------------------------------------------
 // One project chosen once, shared by every view. Empty string means "all

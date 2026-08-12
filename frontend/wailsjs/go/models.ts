@@ -75,6 +75,67 @@ export namespace claudedata {
 
 }
 
+export namespace gitx {
+	
+	export class FileChange {
+	    path: string;
+	    status: string;
+	    staged: boolean;
+	    unstaged: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new FileChange(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.path = source["path"];
+	        this.status = source["status"];
+	        this.staged = source["staged"];
+	        this.unstaged = source["unstaged"];
+	    }
+	}
+	export class RepoStatus {
+	    isRepo: boolean;
+	    root: string;
+	    branch: string;
+	    changes: FileChange[];
+	    hasStaged: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new RepoStatus(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.isRepo = source["isRepo"];
+	        this.root = source["root"];
+	        this.branch = source["branch"];
+	        this.changes = this.convertValues(source["changes"], FileChange);
+	        this.hasStaged = source["hasStaged"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+
+}
+
 export namespace graph {
 	
 	export class Entity {
@@ -158,6 +219,30 @@ export namespace graph {
 
 export namespace main {
 	
+	export class CommitDraft {
+	    message: string;
+	    prTitle: string;
+	    prBody: string;
+	    usedKnowledge: string[];
+	    knowledgeSources: string[];
+	    truncated: boolean;
+	    warnings?: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new CommitDraft(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.message = source["message"];
+	        this.prTitle = source["prTitle"];
+	        this.prBody = source["prBody"];
+	        this.usedKnowledge = source["usedKnowledge"];
+	        this.knowledgeSources = source["knowledgeSources"];
+	        this.truncated = source["truncated"];
+	        this.warnings = source["warnings"];
+	    }
+	}
 	export class KnowledgeMatch {
 	    names: string[];
 	    context: string;

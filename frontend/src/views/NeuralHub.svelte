@@ -11,7 +11,10 @@
   import { createEventDispatcher, onMount } from "svelte";
   const dispatch = createEventDispatcher<{ go: View }>();
 
+  // Commit is the product's main act: it takes the apical shaft (index 0, the
+  // thickest, longest, most prominent trunk). The rest stay as secondary nodes.
   const features: [View, string, string][] = [
+    ["commit", "提交", "读改动 + 懂业务，生成 commit"],
     ["search", "搜索", "关键词搜所有历史对话"],
     ["sessions", "会话", "浏览过往会话，永不丢失"],
     ["graph", "知识", "突触式探索项目知识"],
@@ -223,7 +226,7 @@
   // explodes into a dense bifurcating tuft; others are thinner with broken symmetry.
   function growTrunk(view: View, label: string, hint: string, i: number): Feat {
     const apical = i === APICAL;
-    const base = -90 + i * 60;
+    const base = -90 + i * (360 / features.length);
     const jitter = apical ? 6 : 15;                          // A3 asymmetry
     const ang = (base + (rand() - 0.5) * jitter) * DEG;
     exitAngles.push(ang);
