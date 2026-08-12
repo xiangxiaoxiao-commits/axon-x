@@ -280,6 +280,7 @@ export namespace main {
 	    method?: string;
 	    semanticSeeds?: string[];
 	    keywordHits?: string[];
+	    local?: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new KnowledgeMatch(source);
@@ -295,6 +296,7 @@ export namespace main {
 	        this.method = source["method"];
 	        this.semanticSeeds = source["semanticSeeds"];
 	        this.keywordHits = source["keywordHits"];
+	        this.local = source["local"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -488,6 +490,7 @@ export namespace task {
 	    injectedKnowledge: string[];
 	    knowledgeSources: string[];
 	    recallMethod?: string;
+	    recallLocal?: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new Spec(source);
@@ -505,6 +508,7 @@ export namespace task {
 	        this.injectedKnowledge = source["injectedKnowledge"];
 	        this.knowledgeSources = source["knowledgeSources"];
 	        this.recallMethod = source["recallMethod"];
+	        this.recallLocal = source["recallLocal"];
 	    }
 	}
 	export class Task {

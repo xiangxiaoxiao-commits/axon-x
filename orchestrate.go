@@ -136,6 +136,7 @@ func (a *App) UpdateSpec(taskID string, spec task.Spec) error {
 	spec.InjectedKnowledge = t.Spec.InjectedKnowledge
 	spec.KnowledgeSources = t.Spec.KnowledgeSources
 	spec.RecallMethod = t.Spec.RecallMethod
+	spec.RecallLocal = t.Spec.RecallLocal
 	t.Spec = spec
 	t.Status = task.StatusReviewSpec
 	t.FailedStage = ""
@@ -194,6 +195,7 @@ func (a *App) runEnrich(ctx context.Context, t task.Task) {
 	var background string
 	var injected, sources []string
 	var recallMethod string
+	var recallLocal bool
 	if strings.TrimSpace(t.ProjectSlug) != "" {
 		// Recall query: the rough input, plus any scope paths/modules already on
 		// the spec (present on a re-enrich) so code-sourced entities get recalled.
@@ -203,6 +205,7 @@ func (a *App) runEnrich(ctx context.Context, t task.Task) {
 			injected = km.Names
 			sources = km.Sources
 			recallMethod = km.Method
+			recallLocal = km.Local
 		}
 	}
 
@@ -229,6 +232,7 @@ func (a *App) runEnrich(ctx context.Context, t task.Task) {
 	spec.InjectedKnowledge = injected
 	spec.KnowledgeSources = sources
 	spec.RecallMethod = recallMethod
+	spec.RecallLocal = recallLocal
 
 	fresh, err := a.taskStore.GetTask(t.ID)
 	if err != nil {

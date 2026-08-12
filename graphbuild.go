@@ -505,6 +505,11 @@ type KnowledgeMatch struct {
 	// by literal substring on name/alias. Both optional, for a detailed breakdown.
 	SemanticSeeds []string `json:"semanticSeeds,omitempty"`
 	KeywordHits   []string `json:"keywordHits,omitempty"`
+	// Local reports that the query was embedded by the pure-Go local fallback
+	// (no cloud embedding configured). When true, any semantic recall is lexical
+	// (fuzzy character/word overlap), not neural — the UI should temper trust
+	// accordingly ("本地语义召回，精度有限") rather than claim full semantics.
+	Local bool `json:"local,omitempty"`
 }
 
 // MatchKnowledge finds the knowledge relevant to the user's message using two
@@ -539,8 +544,12 @@ func (a *App) MatchKnowledge(projectSlug, text string) (KnowledgeMatch, error) {
 	}
 
 	// Embed the query once (best-effort) and reuse the vector for both channels.
+	// localEmb tracks whether the vector came from the local fallback, so the UI
+	// can distinguish full-semantic recall from lexical local recall.
 	var qv []float32
+	var localEmb bool
 	if emb, embErr := a.newEmbedder(); embErr == nil {
+		localEmb = emb.Model() == embed.LocalModelID
 		if v, eErr := emb.Embed(a.ctx, text); eErr == nil {
 			qv = v
 		} else {
@@ -598,6 +607,9 @@ func (a *App) MatchKnowledge(projectSlug, text string) (KnowledgeMatch, error) {
 		Method:        recallMethod(len(semanticSeeds) > 0 || len(chunkRanked) > 0, len(keywordHits) > 0),
 		SemanticSeeds: semanticSeeds,
 		KeywordHits:   keywordHits,
+		// Only flag local when the vector actually contributed a semantic hit;
+		// pure keyword matches aren't "local semantic" and shouldn't be tempered.
+		Local: localEmb && (len(semanticSeeds) > 0 || len(chunkRanked) > 0),
 	}, nil
 }
 

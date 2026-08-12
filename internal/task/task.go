@@ -44,6 +44,10 @@ type Spec struct {
 	// so users can trust whether the AI "understood" the business via real
 	// semantics or merely literal matching.
 	RecallMethod string `json:"recallMethod,omitempty"`
+	// RecallLocal is true when the semantic recall used the local, dependency-free
+	// embedding fallback (no cloud embedder configured). The recall is lexical, not
+	// neural, so the UI should temper trust ("本地语义召回，精度有限").
+	RecallLocal bool `json:"recallLocal,omitempty"`
 }
 
 // Run is one execution attempt. Append-only: reject-and-iterate adds a new Run

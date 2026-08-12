@@ -378,7 +378,12 @@
             </div>
             <!-- Recall method: shows whether the AI recalled via true semantics
                  (vectors) or degraded to literal keyword matching. Builds trust. -->
-            {#if selected.spec?.recallMethod === "semantic" || selected.spec?.recallMethod === "hybrid"}
+            {#if (selected.spec?.recallMethod === "semantic" || selected.spec?.recallMethod === "hybrid") && selected.spec?.recallLocal}
+              <div class="kb-method kb-method-local">
+                🟡 本地语义召回（未配云端 embedding，精度有限）
+                <span class="kb-method-hint">去「设置」配置 embedding 可启用满血语义检索</span>
+              </div>
+            {:else if selected.spec?.recallMethod === "semantic" || selected.spec?.recallMethod === "hybrid"}
               <div class="kb-method kb-method-semantic">🔵 语义向量召回（可信度高）</div>
             {:else if selected.spec?.recallMethod === "keyword"}
               <div class="kb-method kb-method-keyword">
@@ -593,6 +598,7 @@
   }
   .kb-method-semantic { color: #22c55e; }
   .kb-method-keyword { color: #eab308; }
+  .kb-method-local { color: #eab308; }
   .kb-method-hint { font-weight: 400; color: var(--text-muted); }
   .kb-empty {
     border-left-color: var(--border); color: var(--text-muted);
