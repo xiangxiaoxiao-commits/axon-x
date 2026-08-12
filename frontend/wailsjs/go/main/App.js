@@ -10,6 +10,14 @@ export function BuildGraphFocused(arg1, arg2) {
   return window['go']['main']['App']['BuildGraphFocused'](arg1, arg2);
 }
 
+export function CancelTask(arg1) {
+  return window['go']['main']['App']['CancelTask'](arg1);
+}
+
+export function CreateTask(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['CreateTask'](arg1, arg2, arg3, arg4);
+}
+
 export function DeleteConversation(arg1) {
   return window['go']['main']['App']['DeleteConversation'](arg1);
 }
@@ -18,8 +26,16 @@ export function DeleteMemoryFile(arg1) {
   return window['go']['main']['App']['DeleteMemoryFile'](arg1);
 }
 
+export function DeleteTask(arg1) {
+  return window['go']['main']['App']['DeleteTask'](arg1);
+}
+
 export function DoCommit(arg1, arg2, arg3) {
   return window['go']['main']['App']['DoCommit'](arg1, arg2, arg3);
+}
+
+export function EnrichTask(arg1) {
+  return window['go']['main']['App']['EnrichTask'](arg1);
 }
 
 export function GenerateArticle(arg1, arg2) {
@@ -32,6 +48,10 @@ export function GenerateCommit(arg1, arg2, arg3, arg4, arg5, arg6) {
 
 export function GetGraph(arg1) {
   return window['go']['main']['App']['GetGraph'](arg1);
+}
+
+export function GetTask(arg1) {
+  return window['go']['main']['App']['GetTask'](arg1);
 }
 
 export function IndexProject(arg1) {
@@ -70,6 +90,14 @@ export function ListProviders() {
   return window['go']['main']['App']['ListProviders']();
 }
 
+export function ListTaskRuns(arg1) {
+  return window['go']['main']['App']['ListTaskRuns'](arg1);
+}
+
+export function ListTasks() {
+  return window['go']['main']['App']['ListTasks']();
+}
+
 export function MatchKnowledge(arg1, arg2) {
   return window['go']['main']['App']['MatchKnowledge'](arg1, arg2);
 }
@@ -88,6 +116,14 @@ export function RenameConversation(arg1, arg2) {
 
 export function RepoStatus(arg1) {
   return window['go']['main']['App']['RepoStatus'](arg1);
+}
+
+export function ReviewTask(arg1, arg2, arg3) {
+  return window['go']['main']['App']['ReviewTask'](arg1, arg2, arg3);
+}
+
+export function RunTask(arg1) {
+  return window['go']['main']['App']['RunTask'](arg1);
 }
 
 export function SaveProvider(arg1, arg2) {
@@ -124,6 +160,10 @@ export function TermStop() {
 
 export function TermWrite(arg1) {
   return window['go']['main']['App']['TermWrite'](arg1);
+}
+
+export function UpdateSpec(arg1, arg2) {
+  return window['go']['main']['App']['UpdateSpec'](arg1, arg2);
 }
 
 export function WriteMemoryFile(arg1, arg2) {

@@ -387,3 +387,114 @@ export namespace search {
 
 }
 
+export namespace task {
+	
+	export class Run {
+	    id: number;
+	    taskId: string;
+	    seq: number;
+	    provider: string;
+	    model: string;
+	    feedback: string;
+	    result: string;
+	    status: string;
+	    error?: string;
+	    createdAt: number;
+	    updatedAt: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new Run(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.taskId = source["taskId"];
+	        this.seq = source["seq"];
+	        this.provider = source["provider"];
+	        this.model = source["model"];
+	        this.feedback = source["feedback"];
+	        this.result = source["result"];
+	        this.status = source["status"];
+	        this.error = source["error"];
+	        this.createdAt = source["createdAt"];
+	        this.updatedAt = source["updatedAt"];
+	    }
+	}
+	export class Spec {
+	    goal: string;
+	    background: string;
+	    constraints: string[];
+	    scope: string[];
+	    acceptCriteria: string[];
+	    missedPoints: string[];
+	    steps: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new Spec(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.goal = source["goal"];
+	        this.background = source["background"];
+	        this.constraints = source["constraints"];
+	        this.scope = source["scope"];
+	        this.acceptCriteria = source["acceptCriteria"];
+	        this.missedPoints = source["missedPoints"];
+	        this.steps = source["steps"];
+	    }
+	}
+	export class Task {
+	    id: string;
+	    title: string;
+	    input: string;
+	    spec: Spec;
+	    status: string;
+	    failedStage?: string;
+	    provider: string;
+	    model: string;
+	    projectSlug: string;
+	    createdAt: number;
+	    updatedAt: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new Task(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.title = source["title"];
+	        this.input = source["input"];
+	        this.spec = this.convertValues(source["spec"], Spec);
+	        this.status = source["status"];
+	        this.failedStage = source["failedStage"];
+	        this.provider = source["provider"];
+	        this.model = source["model"];
+	        this.projectSlug = source["projectSlug"];
+	        this.createdAt = source["createdAt"];
+	        this.updatedAt = source["updatedAt"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+
+}
+

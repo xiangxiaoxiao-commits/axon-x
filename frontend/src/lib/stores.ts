@@ -4,10 +4,11 @@ import { writable, get } from "svelte/store";
 import type { model, claudedata } from "../../wailsjs/go/models";
 import { ListClaudeProjects } from "../../wailsjs/go/main/App.js";
 
-export type View = "commit" | "hub" | "search" | "sessions" | "graph" | "memory" | "chat" | "terminal" | "settings";
+export type View = "tasks" | "commit" | "hub" | "search" | "sessions" | "graph" | "memory" | "chat" | "terminal" | "settings";
 
-// Active main view. Commit is the primary entry; hub is a secondary launcher.
-export const activeView = writable<View>("commit");
+// Active main view. Task orchestration is the primary entry (the product's main
+// job); everything else is a secondary tool reachable from the sidebar.
+export const activeView = writable<View>("tasks");
 
 // --- Global project selection -------------------------------------------
 // One project chosen once, shared by every view. Empty string means "all

@@ -16,6 +16,7 @@ import (
 	"axon/internal/secret"
 	"axon/internal/store"
 	"axon/internal/store/sqlite"
+	"axon/internal/task"
 
 	wruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -56,12 +57,21 @@ type App struct {
 
 	// term is the embedded PTY shell session (Terminal tab).
 	term termState
+
+	// Task orchestration: persistence, a concurrency semaphore (buffered =
+	// max parallel executions) and per-task cancel funcs guarded by taskMu.
+	taskStore   task.Store
+	taskSem     chan struct{}
+	taskMu      sync.Mutex
+	taskCancels map[string]context.CancelFunc
 }
 
 // NewApp creates a new App application struct.
 func NewApp() *App {
 	return &App{
-		cancels: make(map[string]context.CancelFunc),
+		cancels:     make(map[string]context.CancelFunc),
+		taskSem:     make(chan struct{}, defaultTaskConcurrency),
+		taskCancels: make(map[string]context.CancelFunc),
 	}
 }
 
@@ -84,6 +94,8 @@ func (a *App) startup(ctx context.Context) {
 		log.Fatalf("open database: %v", err)
 	}
 	a.store = sqlite.New(sqlDB)
+	a.taskStore = sqlite.NewTaskStore(sqlDB)
+	a.recoverStaleTasks() // reset tasks left mid-flight by a crash/quit
 
 	cfg, err := config.Load(dataDir)
 	if err != nil {
