@@ -22,6 +22,9 @@ type toolHandler struct {
 	dataDir string
 	cfg     *config.Manager
 	secrets secret.Store
+	// probe memoizes cloud-embedder availability so recall doesn't re-probe the
+	// network on every call.
+	probe *embed.ProbeCache
 }
 
 // toolDef is one entry in the tools/list response.
@@ -166,16 +169,14 @@ func (h *toolHandler) searchKnowledge(raw json.RawMessage) (*toolResult, error) 
 
 	// Embed the query (best-effort): cloud if configured, else local fallback.
 	var qv []float32
-	local := false
-	if emb, embErr := newEmbedder(h.cfg, h.secrets); embErr == nil {
-		local = emb.Model() == embed.LocalModelID
-		if v, e := emb.Embed(h.ctx, a.Query); e == nil {
-			qv = v
-		}
+	emb := newEmbedder(h.ctx, h.cfg, h.secrets, h.probe)
+	local := emb.Model() == embed.LocalModelID
+	if v, e := emb.Embed(h.ctx, a.Query); e == nil {
+		qv = v
 	}
 
 	chunks := retrieve.LoadChunks(h.dataDir, a.Project)
-	res := retrieve.Recall(g, chunks, qv, a.Query)
+	res := retrieve.RecallWithOpts(g, chunks, qv, a.Query, retrieve.RecallOptsFor(local))
 	if len(res.Hit) == 0 && len(res.Chunks) == 0 {
 		return textResult(fmt.Sprintf("在项目 `%s` 里没有查到和「%s」相关的知识。", a.Project, a.Query)), nil
 	}

@@ -11,6 +11,7 @@ import (
 
 	"axon/internal/config"
 	"axon/internal/db"
+	"axon/internal/embed"
 	"axon/internal/model"
 	"axon/internal/provider"
 	"axon/internal/secret"
@@ -70,6 +71,11 @@ type App struct {
 	// file-level (atomic rename), so this is a best-effort guard for this
 	// process's own edit paths.
 	graphMu sync.Mutex
+
+	// embedProbe memoizes whether a configured cloud embedding endpoint can
+	// actually embed, so recall paths fall back to local without re-probing the
+	// network on every call. Lazily created via embedProbeCache.
+	embedProbe *embed.ProbeCache
 }
 
 // NewApp creates a new App application struct.
@@ -78,6 +84,7 @@ func NewApp() *App {
 		cancels:     make(map[string]context.CancelFunc),
 		taskSem:     make(chan struct{}, defaultTaskConcurrency),
 		taskCancels: make(map[string]context.CancelFunc),
+		embedProbe:  embed.NewProbeCache(),
 	}
 }
 
@@ -219,13 +226,19 @@ func (a *App) SetEmbeddingConfig(providerName, model string) error {
 }
 
 // TestEmbedding verifies the current embedding configuration by issuing one
-// embed call, returning an error the UI can surface. It uses the same selection
-// logic as knowledge features (newEmbedder), so success here means semantic
-// memory will work.
+// embed call, returning an error the UI can surface. Unlike newEmbedder (the
+// recall path, which silently falls back to local so recall never breaks), this
+// explicit entry point reports misconfiguration and cloud-embedding failures so
+// the user can actively discover a bad setup. When no cloud embedding is
+// configured it confirms the local fallback works.
 func (a *App) TestEmbedding() error {
-	emb, err := a.newEmbedder()
+	cloud, _, err := a.buildCloudEmbedder()
 	if err != nil {
 		return err
+	}
+	emb := cloud
+	if cloud == nil {
+		emb = embed.NewLocal()
 	}
 	ctx, cancel := context.WithTimeout(a.ctx, 20*time.Second)
 	defer cancel()

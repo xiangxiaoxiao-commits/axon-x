@@ -20,6 +20,7 @@ import (
 
 	"axon/internal/config"
 	"axon/internal/db"
+	"axon/internal/embed"
 	"axon/internal/secret"
 )
 
@@ -43,6 +44,7 @@ func main() {
 		dataDir: dataDir,
 		cfg:     cfg,
 		secrets: secret.NewKeychainStore(),
+		probe:   embed.NewProbeCache(),
 	}
 	s := &server{
 		w:    bufio.NewWriter(os.Stdout),

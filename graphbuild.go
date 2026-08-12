@@ -543,7 +543,7 @@ func (a *App) MatchKnowledge(projectSlug, text string) (KnowledgeMatch, error) {
 
 	// Run the shared two-channel recall (structure + raw context). The App only
 	// adds provenance rendering and the UI trust signals on top of this.
-	res := retrieve.Recall(g, a.loadChunks(dataDir, projectSlug), qv, text)
+	res := retrieve.RecallWithOpts(g, a.loadChunks(dataDir, projectSlug), qv, text, retrieve.RecallOptsFor(localEmb))
 	semanticSeeds := res.SemanticSeeds
 	keywordHits := res.KeywordHits
 	hit := res.Hit

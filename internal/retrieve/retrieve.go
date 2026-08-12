@@ -17,22 +17,55 @@ import (
 // HybridRAG tuning. Kept next to the algorithm so both callers share one set of
 // knobs.
 const (
-	// seedMinScore is the cosine floor for an entity to be picked as a semantic
-	// seed; seedTopK caps how many seeds are taken; expandHops is how far to walk
-	// relations out from the seeds.
+	// seedMinScore is the cloud-embedding cosine floor for an entity to be picked
+	// as a semantic seed; seedTopK caps how many seeds are taken; expandHops is
+	// how far to walk relations out from the seeds.
 	seedMinScore = 0.30
 	seedTopK     = 8
 	expandHops   = 1
 
 	// chunkRecallCandidates caps vector candidates before fusion; chunkInjectTopN
-	// caps chunks after fusion; chunkMinScore is the cosine floor for a chunk.
+	// caps chunks after fusion; chunkMinScore is the cloud-embedding cosine floor
+	// for a chunk.
 	chunkRecallCandidates = 30
 	chunkInjectTopN       = 5
 	chunkMinScore         = 0.30
 
+	// LocalSeedMinScore / LocalChunkMinScore are the cosine floors used when the
+	// query was embedded by the local lexical fallback (LocalEmbedder). Its
+	// character-n-gram/hashing vectors sit on a naturally lower cosine scale than
+	// cloud neural embeddings — relevant content lands around 0.20 rather than
+	// 0.40+ — so the standard 0.30 floors would silently filter every real hit.
+	// Lower floors let those lexical matches through without touching cloud recall.
+	LocalSeedMinScore  = 0.12
+	LocalChunkMinScore = 0.12
+
 	// rrfK is the Reciprocal Rank Fusion smoothing constant (industry-standard 60).
 	rrfK = 60
 )
+
+// RecallOpts carries the embedder-dependent cosine floors for a recall run.
+// SeedMinScore gates semantic entity seeds; ChunkMinScore gates raw chunks.
+type RecallOpts struct {
+	SeedMinScore  float32
+	ChunkMinScore float32
+}
+
+// DefaultRecallOpts are the cloud-embedding floors (0.30 / 0.30), matching the
+// original behavior.
+func DefaultRecallOpts() RecallOpts {
+	return RecallOpts{SeedMinScore: seedMinScore, ChunkMinScore: chunkMinScore}
+}
+
+// RecallOptsFor returns the cosine floors appropriate for the embedder that
+// produced the query vector: the local lexical fallback uses the lower
+// Local*MinScore floors, while cloud embeddings keep the standard 0.30 floors.
+func RecallOptsFor(local bool) RecallOpts {
+	if local {
+		return RecallOpts{SeedMinScore: LocalSeedMinScore, ChunkMinScore: LocalChunkMinScore}
+	}
+	return DefaultRecallOpts()
+}
 
 // Result is the raw outcome of recall, before any caller-specific rendering.
 // Hit is the fused, relation-expanded set of matched entity names (lowercased,
@@ -52,9 +85,16 @@ type Result struct {
 // is the raw query, used for the keyword channels. chunks are the project's
 // embedded verbatim fragments (pass nil to skip the raw-context channel).
 func Recall(g *graph.Graph, chunks []graph.Chunk, qv []float32, text string) Result {
+	return RecallWithOpts(g, chunks, qv, text, DefaultRecallOpts())
+}
+
+// RecallWithOpts is Recall with caller-supplied cosine floors so the thresholds
+// can adapt to the embedder that produced qv (see RecallOptsFor). Recall keeps
+// the original signature and calls this with the cloud defaults.
+func RecallWithOpts(g *graph.Graph, chunks []graph.Chunk, qv []float32, text string, opts RecallOpts) Result {
 	// --- Structure channel: semantic seeds + substring hits, RRF-fused, then
 	// expanded one hop along relations. ---
-	semanticSeeds := semanticSeeds(qv, g)
+	semanticSeeds := semanticSeeds(qv, g, opts.SeedMinScore)
 	keywordHits := EntityKeywordHits(g, text)
 	hit := map[string]bool{}
 	for _, id := range RRFFuse(lowerAll(semanticSeeds), lowerAll(keywordHits)) {
@@ -68,7 +108,7 @@ func Recall(g *graph.Graph, chunks []graph.Chunk, qv []float32, text string) Res
 	// when the query embedded (otherwise there is no vector to rank chunks by). ---
 	var chunkRanked []graph.Chunk
 	if len(qv) > 0 {
-		candidates := rankChunks(qv, chunks)
+		candidates := rankChunks(qv, chunks, opts.ChunkMinScore)
 		kwChunks := chunkKeywordHits(chunks, text)
 		chunkRanked = fuseChunks(candidates, kwChunks)
 	}
@@ -117,10 +157,10 @@ func LoadChunks(dataDir, projectSlug string) []graph.Chunk {
 }
 
 // semanticSeeds returns the names of the top-K entities whose embedding is most
-// similar to the query vector qv (cosine >= seedMinScore), best first. Returns
+// similar to the query vector qv (cosine >= minScore), best first. Returns
 // nil when qv is empty or no entity carries a vector, so the caller falls back
 // to substring matching without erroring.
-func semanticSeeds(qv []float32, g *graph.Graph) []string {
+func semanticSeeds(qv []float32, g *graph.Graph, minScore float32) []string {
 	if len(qv) == 0 {
 		return nil
 	}
@@ -134,7 +174,7 @@ func semanticSeeds(qv []float32, g *graph.Graph) []string {
 			continue
 		}
 		score := embed.Cosine(qv, e.Embedding)
-		if score < seedMinScore {
+		if score < minScore {
 			continue
 		}
 		cands = append(cands, scored{name: e.Name, score: score})
@@ -205,10 +245,10 @@ func expandAlongRelations(g *graph.Graph, hit map[string]bool, hops int) {
 	}
 }
 
-// rankChunks returns candidate chunks whose cosine >= chunkMinScore, sorted
+// rankChunks returns candidate chunks whose cosine >= minScore, sorted
 // best-first and capped at chunkRecallCandidates. Returns nil when the query
 // can't be embedded or nothing clears the floor.
-func rankChunks(qv []float32, chunks []graph.Chunk) []graph.Chunk {
+func rankChunks(qv []float32, chunks []graph.Chunk, minScore float32) []graph.Chunk {
 	if len(qv) == 0 || len(chunks) == 0 {
 		return nil
 	}
@@ -219,7 +259,7 @@ func rankChunks(qv []float32, chunks []graph.Chunk) []graph.Chunk {
 	var cands []scored
 	for _, ch := range chunks {
 		s := embed.Cosine(qv, ch.Embedding)
-		if s < chunkMinScore {
+		if s < minScore {
 			continue
 		}
 		cands = append(cands, scored{ch: ch, score: s})
