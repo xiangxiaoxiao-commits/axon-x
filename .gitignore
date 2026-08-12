@@ -1,5 +1,7 @@
 # Wails / build artifacts
 build/bin
+# Compiled binary (produced by build, never commit)
+/axon
 
 # Frontend
 node_modules
