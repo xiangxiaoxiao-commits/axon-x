@@ -8,6 +8,9 @@
     ListProviders,
     SaveProvider,
     SetDefaults,
+    GetEmbeddingConfig,
+    SetEmbeddingConfig,
+    TestEmbedding,
   } from "../../wailsjs/go/main/App.js";
   import type { main, provider } from "../../wailsjs/go/models";
   import ProviderCard from "../lib/settings/ProviderCard.svelte";
@@ -30,6 +33,23 @@
   let defaultModel = "";
   let defaultsMsg = "";
   let savingDefaults = false;
+
+  // Embedding (semantic memory) selection. Empty provider = fall back to the
+  // first OpenAI-compatible provider (backward compatible).
+  let embedProvider = "";
+  let embedModel = "";
+  let embedMsg = "";
+  let savingEmbed = false;
+  let testingEmbed = false;
+  let embedTestMsg = "";
+  let embedTestOk = false;
+  // Common embedding models across vendors (datalist suggestions; free-typed OK).
+  const EMBED_MODELS = [
+    "text-embedding-3-small",
+    "text-embedding-3-large",
+    "embedding-3",
+    "BAAI/bge-m3",
+  ];
 
   // --- One-click provider presets (add flow only) ---------------------------
   // Each preset prefills protocol + baseURL so the user only pastes a key.
@@ -161,6 +181,10 @@
   $: needsSetup = configured.length === 0;
   // Semantic memory needs an OpenAI-compatible provider for embeddings.
   $: hasOpenAI = providers.some((p) => p.protocol === "openai" && p.hasKey);
+  // Embeddings must go over an OpenAI-compatible endpoint.
+  $: embedProviders = providers.filter(
+    (p) => p.protocol === "openai" && p.hasKey,
+  );
 
   onMount(load);
 
@@ -172,6 +196,9 @@
       if (!defaultProvider && configured.length) {
         defaultProvider = configured[0].name;
       }
+      const embed = await GetEmbeddingConfig();
+      embedProvider = embed.provider;
+      embedModel = embed.model;
     } catch (e) {
       loadError = `加载 Providers 失败:${String(e)}`;
     }
@@ -220,6 +247,38 @@
       defaultsMsg = `保存失败:${String(e)}`;
     }
     savingDefaults = false;
+  }
+
+  async function saveEmbedding() {
+    embedMsg = "";
+    embedTestMsg = "";
+    savingEmbed = true;
+    try {
+      await SetEmbeddingConfig(embedProvider, embedModel.trim());
+      embedMsg = embedProvider
+        ? "已保存 Embedding 配置"
+        : "已清除,语义检索回退为默认 Provider";
+    } catch (e) {
+      embedMsg = `保存失败:${String(e)}`;
+    }
+    savingEmbed = false;
+  }
+
+  async function testEmbedding() {
+    embedTestMsg = "";
+    embedMsg = "";
+    testingEmbed = true;
+    try {
+      // Persist current selection first so the test uses what the user sees.
+      await SetEmbeddingConfig(embedProvider, embedModel.trim());
+      await TestEmbedding();
+      embedTestOk = true;
+      embedTestMsg = "连接成功,Embedding 可用";
+    } catch (e) {
+      embedTestOk = false;
+      embedTestMsg = `测试失败:${String(e)}`;
+    }
+    testingEmbed = false;
   }
 </script>
 
@@ -415,18 +474,73 @@
         </div>
       </section>
 
-      <!-- Embedding note -->
+      <!-- Embedding (semantic memory) config -->
       <section>
-        <h2>语义记忆(Embedding)</h2>
+        <h2>Embedding(语义检索)</h2>
         <div class="note" class:warn={!hasOpenAI}>
-          语义记忆检索使用 OpenAI-compatible Provider 的
-          <code>text-embedding-3-small</code> 生成向量。
-          {#if hasOpenAI}
-            已检测到可用的 openai 协议 Provider。
-          {:else}
-            当前尚未配置 openai 协议的 Provider,语义记忆将不可用。请添加一个 protocol 为 openai 的 Provider。
-          {/if}
+          语义检索(按意思召回业务知识)需要一个支持 embedding 的服务。智谱 GLM 用
+          <code>embedding-3</code>,OpenAI 用 <code>text-embedding-3-small</code>。
+          未配置时语义检索会降级为关键词匹配。Embedding 走 OpenAI 兼容接口,只能选
+          openai 协议的 Provider。
         </div>
+
+        {#if embedProviders.length === 0}
+          <div class="note warn">
+            当前尚未配置 openai 协议的 Provider,无法启用语义检索。请先在上方添加一个
+            protocol 为 openai 的 Provider。
+          </div>
+        {:else}
+          <div class="defaults">
+            <div class="row">
+              <label for="embed-prov">Embedding Provider</label>
+              <select id="embed-prov" class="field" bind:value={embedProvider}>
+                <option value="">(默认:第一个 openai Provider)</option>
+                {#each embedProviders as p (p.name)}
+                  <option value={p.name}>{p.name}</option>
+                {/each}
+              </select>
+            </div>
+            <div class="row">
+              <label for="embed-model">Embedding 模型</label>
+              <input
+                id="embed-model"
+                class="field mono"
+                placeholder="text-embedding-3-small"
+                list="embed-model-suggestions"
+                bind:value={embedModel}
+              />
+              <datalist id="embed-model-suggestions">
+                {#each EMBED_MODELS as m (m)}
+                  <option value={m}></option>
+                {/each}
+              </datalist>
+            </div>
+            <div class="row actions-row">
+              <button
+                class="btn primary"
+                type="button"
+                on:click={saveEmbedding}
+                disabled={savingEmbed}
+              >
+                {savingEmbed ? "保存中…" : "保存 Embedding 配置"}
+              </button>
+              <button
+                class="btn"
+                type="button"
+                on:click={testEmbedding}
+                disabled={testingEmbed}
+              >
+                {testingEmbed ? "测试中…" : "测试连接"}
+              </button>
+              {#if embedMsg}<span class="muted">{embedMsg}</span>{/if}
+              {#if embedTestMsg}
+                <span class:ok={embedTestOk} class:err={!embedTestOk}>
+                  {embedTestMsg}
+                </span>
+              {/if}
+            </div>
+          </div>
+        {/if}
       </section>
 
     {/if}
@@ -475,6 +589,14 @@
   }
   .muted {
     color: var(--text-muted);
+    font-size: 13px;
+  }
+  .ok {
+    color: var(--accent);
+    font-size: 13px;
+  }
+  .err {
+    color: var(--danger);
     font-size: 13px;
   }
   .banner {

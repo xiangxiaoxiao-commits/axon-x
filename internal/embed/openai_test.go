@@ -60,6 +60,52 @@ func TestOpenAIEmbedder_Embed(t *testing.T) {
 	}
 }
 
+func TestOpenAIEmbedder_EmbedBatch(t *testing.T) {
+	// Return embeddings out of index order to verify the client re-orders them.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body openaiBatchRequest
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode batch request: %v", err)
+		}
+		if len(body.Input) != 3 {
+			t.Errorf("input len = %d, want 3", len(body.Input))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, `{"data":[
+			{"index":2,"embedding":[0.3]},
+			{"index":0,"embedding":[0.1]},
+			{"index":1,"embedding":[0.2]}
+		]}`)
+	}))
+	defer srv.Close()
+
+	e := NewOpenAI(srv.URL, "sk-key", "")
+	got, err := e.EmbedBatch(context.Background(), []string{"a", "b", "c"})
+	if err != nil {
+		t.Fatalf("EmbedBatch: %v", err)
+	}
+	want := []float32{0.1, 0.2, 0.3}
+	if len(got) != 3 {
+		t.Fatalf("len = %d, want 3", len(got))
+	}
+	for i := range want {
+		if len(got[i]) != 1 || got[i][0] != want[i] {
+			t.Errorf("got[%d] = %v, want [%v] (order not restored by index)", i, got[i], want[i])
+		}
+	}
+}
+
+func TestOpenAIEmbedder_EmbedBatchEmpty(t *testing.T) {
+	e := NewOpenAI("http://unused", "sk-key", "")
+	got, err := e.EmbedBatch(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("EmbedBatch(nil): %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("len = %d, want 0", len(got))
+	}
+}
+
 func TestOpenAIEmbedder_AuthErrorHidesKey(t *testing.T) {
 	const secretKey = "sk-super-secret-key-value"
 

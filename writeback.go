@@ -67,9 +67,14 @@ func (a *App) writeBackTaskKnowledge(t task.Task, result string) {
 	source := "task:" + t.ID
 	stampObsSources(ex.Entities, source)
 
-	// Make the new entities semantically searchable (best-effort, same as index).
+	// Raw-context channel: chunk the task transcript so its verbatim decisions and
+	// result are recallable alongside the distilled entities.
+	chunks := chunkTaskTranscript(t.ID, transcript)
+
+	// Make the new entities and chunks semantically searchable (best-effort).
 	if emb, embErr := a.newEmbedder(); embErr == nil {
 		a.embedEntities(emb, ex.Entities)
+		a.embedChunks(emb, chunks)
 	}
 
 	dataDir, err := db.AppDataDir()
@@ -89,8 +94,10 @@ func (a *App) writeBackTaskKnowledge(t task.Task, result string) {
 	if err := graph.SaveCache(dataDir, slug, &graph.SessionCache{
 		SessionID: source,
 		Mtime:     time.Now().UnixMilli(),
+		Schema:    graph.CacheSchema,
 		Entities:  ex.Entities,
 		Relations: ex.Relations,
+		Chunks:    chunks,
 	}); err != nil {
 		log.Printf("axon: writeback save cache task %s: %v", t.ID, err)
 		return

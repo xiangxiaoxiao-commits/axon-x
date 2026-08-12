@@ -135,6 +135,7 @@ func (a *App) UpdateSpec(taskID string, spec task.Spec) error {
 	// part of the user-editable form, so a spec save must not drop it.
 	spec.InjectedKnowledge = t.Spec.InjectedKnowledge
 	spec.KnowledgeSources = t.Spec.KnowledgeSources
+	spec.RecallMethod = t.Spec.RecallMethod
 	t.Spec = spec
 	t.Status = task.StatusReviewSpec
 	t.FailedStage = ""
@@ -192,6 +193,7 @@ func (a *App) runEnrich(ctx context.Context, t task.Task) {
 	// the user can see exactly what business knowledge the AI referenced.
 	var background string
 	var injected, sources []string
+	var recallMethod string
 	if strings.TrimSpace(t.ProjectSlug) != "" {
 		// Recall query: the rough input, plus any scope paths/modules already on
 		// the spec (present on a re-enrich) so code-sourced entities get recalled.
@@ -200,6 +202,7 @@ func (a *App) runEnrich(ctx context.Context, t task.Task) {
 			background = km.Context
 			injected = km.Names
 			sources = km.Sources
+			recallMethod = km.Method
 		}
 	}
 
@@ -225,6 +228,7 @@ func (a *App) runEnrich(ctx context.Context, t task.Task) {
 	// spec and the frontend can show provenance even after a manual re-edit.
 	spec.InjectedKnowledge = injected
 	spec.KnowledgeSources = sources
+	spec.RecallMethod = recallMethod
 
 	fresh, err := a.taskStore.GetTask(t.ID)
 	if err != nil {

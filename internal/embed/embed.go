@@ -14,6 +14,12 @@ type Embedder interface {
 	// Embed returns the embedding for a single text.
 	Embed(ctx context.Context, text string) ([]float32, error)
 
+	// EmbedBatch returns embeddings for many texts in one (or a few) request(s),
+	// preserving input order. Implementations are expected to internally split
+	// the input into vendor-friendly batches. Chunk indexing produces far more
+	// vectors than entity distillation, so batching is required to keep it usable.
+	EmbedBatch(ctx context.Context, texts []string) ([][]float32, error)
+
 	// Model reports the embedding model id (stored alongside vectors so a model
 	// change can be detected and old vectors re-embedded).
 	Model() string

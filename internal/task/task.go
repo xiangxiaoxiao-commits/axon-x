@@ -38,6 +38,12 @@ type Spec struct {
 	// AI actually referenced.
 	InjectedKnowledge []string `json:"injectedKnowledge"` // matched business entity names
 	KnowledgeSources  []string `json:"knowledgeSources"`  // source session titles
+	// RecallMethod records how the knowledge was recalled: "semantic"/"hybrid"
+	// (true vector recall), "keyword" (degraded substring matching — embedder
+	// unavailable or graph carried no vectors), or "none". The UI surfaces this
+	// so users can trust whether the AI "understood" the business via real
+	// semantics or merely literal matching.
+	RecallMethod string `json:"recallMethod,omitempty"`
 }
 
 // Run is one execution attempt. Append-only: reject-and-iterate adds a new Run

@@ -58,6 +58,10 @@ export function GenerateCommit(arg1, arg2, arg3, arg4, arg5, arg6) {
   return window['go']['main']['App']['GenerateCommit'](arg1, arg2, arg3, arg4, arg5, arg6);
 }
 
+export function GetEmbeddingConfig() {
+  return window['go']['main']['App']['GetEmbeddingConfig']();
+}
+
 export function GetGraph(arg1) {
   return window['go']['main']['App']['GetGraph'](arg1);
 }
@@ -158,6 +162,10 @@ export function SetDefaults(arg1, arg2) {
   return window['go']['main']['App']['SetDefaults'](arg1, arg2);
 }
 
+export function SetEmbeddingConfig(arg1, arg2) {
+  return window['go']['main']['App']['SetEmbeddingConfig'](arg1, arg2);
+}
+
 export function StopGeneration(arg1) {
   return window['go']['main']['App']['StopGeneration'](arg1);
 }
@@ -176,6 +184,10 @@ export function TermStop() {
 
 export function TermWrite(arg1) {
   return window['go']['main']['App']['TermWrite'](arg1);
+}
+
+export function TestEmbedding() {
+  return window['go']['main']['App']['TestEmbedding']();
 }
 
 export function UpdateEntityObservations(arg1, arg2, arg3) {

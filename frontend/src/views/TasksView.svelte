@@ -376,6 +376,16 @@
                 {#each selected.spec.injectedKnowledge as name}<span class="kb-tag">{name}</span>{/each}
               </span>
             </div>
+            <!-- Recall method: shows whether the AI recalled via true semantics
+                 (vectors) or degraded to literal keyword matching. Builds trust. -->
+            {#if selected.spec?.recallMethod === "semantic" || selected.spec?.recallMethod === "hybrid"}
+              <div class="kb-method kb-method-semantic">🔵 语义向量召回（可信度高）</div>
+            {:else if selected.spec?.recallMethod === "keyword"}
+              <div class="kb-method kb-method-keyword">
+                🔤 关键词匹配（降级 —— 未配置 embedding，语义检索未生效）
+                <span class="kb-method-hint">去「设置」配置 embedding 可启用语义检索</span>
+              </div>
+            {/if}
             {#if selected.spec?.knowledgeSources?.length}
               <div class="kb-src">来源：{selected.spec.knowledgeSources.join("、")}</div>
             {/if}
@@ -383,7 +393,9 @@
         {:else}
           <div class="kb-bar kb-empty">
             <span class="kb-icon">💡</span>
-            本次未注入业务知识 —— 绑定一个知识项目可让 AI 更懂你的业务
+            {selected.spec?.recallMethod === "none"
+              ? "未召回到相关知识"
+              : "本次未注入业务知识 —— 绑定一个知识项目可让 AI 更懂你的业务"}
           </div>
         {/if}
 
@@ -575,6 +587,13 @@
     border: 1px solid var(--accent); color: var(--accent);
   }
   .kb-src { color: var(--text-muted); font-size: 11.5px; margin-top: 6px; }
+  .kb-method {
+    margin-top: 7px; font-size: 11.5px; font-weight: 600;
+    display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  }
+  .kb-method-semantic { color: #22c55e; }
+  .kb-method-keyword { color: #eab308; }
+  .kb-method-hint { font-weight: 400; color: var(--text-muted); }
   .kb-empty {
     border-left-color: var(--border); color: var(--text-muted);
     display: flex; align-items: center; gap: 8px;

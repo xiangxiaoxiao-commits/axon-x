@@ -24,6 +24,13 @@ type Config struct {
 	DefaultProvider string `json:"defaultProvider"`
 	// DefaultModel is the model id used when a request omits one.
 	DefaultModel string `json:"defaultModel"`
+	// EmbeddingProvider is the Name of the (OpenAI-protocol) provider used to
+	// generate embeddings for semantic memory. Empty falls back to the first
+	// OpenAI-compatible provider, preserving pre-configuration behavior.
+	EmbeddingProvider string `json:"embeddingProvider"`
+	// EmbeddingModel is the embedding model id (e.g. text-embedding-3-small,
+	// embedding-3, BAAI/bge-m3). Empty falls back to the embedder default.
+	EmbeddingModel string `json:"embeddingModel"`
 }
 
 // Manager loads and saves Config, guarding concurrent access.
@@ -100,6 +107,15 @@ func (m *Manager) SetDefaults(providerName, modelID string) error {
 	defer m.mu.Unlock()
 	m.cfg.DefaultProvider = providerName
 	m.cfg.DefaultModel = modelID
+	return m.saveLocked()
+}
+
+// SetEmbedding updates the embedding provider/model and persists.
+func (m *Manager) SetEmbedding(providerName, model string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.cfg.EmbeddingProvider = providerName
+	m.cfg.EmbeddingModel = model
 	return m.saveLocked()
 }
 

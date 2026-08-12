@@ -84,9 +84,29 @@ func (a *App) BuildGraphFromCode(repoDir, projectSlug string) error {
 		}
 	}
 
+	// Raw-context channel: chunk every source file along declaration boundaries
+	// so the repository's final-state code is recallable verbatim (not just the
+	// distilled skeleton). Repo code is settled, so it is not noise-filtered.
+	var codeChunks []graph.Chunk
+	for _, f := range files {
+		codeChunks = append(codeChunks, chunkCodeFile(f, codegraph.ReadFile(repoDir, f))...)
+	}
+
 	// Embeddings for HybridRAG recall (best-effort; skipped when no embedder).
 	if emb, embErr := a.newEmbedder(); embErr == nil {
 		a.embedEntities(emb, ents)
+		a.embedChunks(emb, codeChunks)
+	}
+
+	// Persist code chunks in a dedicated cache so loadChunks picks them up on
+	// recall. Keyed "code:chunks" (not a session id), rebuilt in full on each code
+	// build. Entities/relations stay empty here — they are merged into graph.json
+	// directly below, as before.
+	if len(codeChunks) > 0 {
+		_ = graph.SaveCache(dataDir, projectSlug, &graph.SessionCache{
+			SessionID: "code:chunks", Mtime: time.Now().UnixMilli(),
+			Schema: graph.CacheSchema, Chunks: codeChunks,
+		})
 	}
 
 	// Phase D: merge into the existing (conversation-sourced) graph and save.

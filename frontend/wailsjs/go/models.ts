@@ -243,10 +243,43 @@ export namespace main {
 	        this.warnings = source["warnings"];
 	    }
 	}
+	export class EmbeddingConfig {
+	    provider: string;
+	    model: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new EmbeddingConfig(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.provider = source["provider"];
+	        this.model = source["model"];
+	    }
+	}
+	export class InjectedChunk {
+	    text: string;
+	    source: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new InjectedChunk(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.text = source["text"];
+	        this.source = source["source"];
+	    }
+	}
 	export class KnowledgeMatch {
 	    names: string[];
 	    context: string;
+	    chunks?: InjectedChunk[];
+	    chunkHits?: number;
 	    sources?: string[];
+	    method?: string;
+	    semanticSeeds?: string[];
+	    keywordHits?: string[];
 	
 	    static createFrom(source: any = {}) {
 	        return new KnowledgeMatch(source);
@@ -256,8 +289,31 @@ export namespace main {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.names = source["names"];
 	        this.context = source["context"];
+	        this.chunks = this.convertValues(source["chunks"], InjectedChunk);
+	        this.chunkHits = source["chunkHits"];
 	        this.sources = source["sources"];
+	        this.method = source["method"];
+	        this.semanticSeeds = source["semanticSeeds"];
+	        this.keywordHits = source["keywordHits"];
 	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class ProviderInfo {
 	    name: string;
@@ -431,6 +487,7 @@ export namespace task {
 	    steps: string[];
 	    injectedKnowledge: string[];
 	    knowledgeSources: string[];
+	    recallMethod?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Spec(source);
@@ -447,6 +504,7 @@ export namespace task {
 	        this.steps = source["steps"];
 	        this.injectedKnowledge = source["injectedKnowledge"];
 	        this.knowledgeSources = source["knowledgeSources"];
+	        this.recallMethod = source["recallMethod"];
 	    }
 	}
 	export class Task {

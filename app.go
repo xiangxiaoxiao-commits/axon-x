@@ -186,6 +186,55 @@ func (a *App) SetDefaults(providerName, modelID string) error {
 	return a.cfg.SetDefaults(providerName, modelID)
 }
 
+// EmbeddingConfig is the current semantic-memory embedding selection for the UI.
+type EmbeddingConfig struct {
+	Provider string `json:"provider"`
+	Model    string `json:"model"`
+}
+
+// GetEmbeddingConfig returns the configured embedding provider/model so the
+// settings UI can prefill its embedding section.
+func (a *App) GetEmbeddingConfig() EmbeddingConfig {
+	cfg := a.cfg.Get()
+	return EmbeddingConfig{Provider: cfg.EmbeddingProvider, Model: cfg.EmbeddingModel}
+}
+
+// SetEmbeddingConfig persists the provider/model used for semantic-memory
+// embeddings. An empty providerName clears the explicit selection and restores
+// the fallback (first OpenAI-compatible provider). A non-empty provider must be
+// configured and use the openai protocol.
+func (a *App) SetEmbeddingConfig(providerName, model string) error {
+	providerName = strings.TrimSpace(providerName)
+	model = strings.TrimSpace(model)
+	if providerName != "" {
+		pc, ok := a.cfg.Provider(providerName)
+		if !ok {
+			return fmt.Errorf("provider %q not configured", providerName)
+		}
+		if pc.Protocol != "openai" {
+			return fmt.Errorf("embedding provider must use the openai protocol; %q is %q", providerName, pc.Protocol)
+		}
+	}
+	return a.cfg.SetEmbedding(providerName, model)
+}
+
+// TestEmbedding verifies the current embedding configuration by issuing one
+// embed call, returning an error the UI can surface. It uses the same selection
+// logic as knowledge features (newEmbedder), so success here means semantic
+// memory will work.
+func (a *App) TestEmbedding() error {
+	emb, err := a.newEmbedder()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(a.ctx, 20*time.Second)
+	defer cancel()
+	if _, err := emb.Embed(ctx, "axon embedding connectivity test"); err != nil {
+		return err
+	}
+	return nil
+}
+
 // newProvider builds a live Provider for the given config, resolving its key
 // from the Keychain at call time (never persisted elsewhere).
 func (a *App) newProvider(pc provider.Config) (provider.Provider, error) {

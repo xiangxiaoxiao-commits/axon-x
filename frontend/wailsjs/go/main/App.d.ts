@@ -37,6 +37,8 @@ export function GenerateArticle(arg1:string,arg2:string):Promise<string>;
 
 export function GenerateCommit(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:boolean):Promise<main.CommitDraft>;
 
+export function GetEmbeddingConfig():Promise<main.EmbeddingConfig>;
+
 export function GetGraph(arg1:string):Promise<graph.Graph>;
 
 export function GetTask(arg1:string):Promise<task.Task>;
@@ -87,6 +89,8 @@ export function SendMessage(arg1:string,arg2:string,arg3:string,arg4:string,arg5
 
 export function SetDefaults(arg1:string,arg2:string):Promise<void>;
 
+export function SetEmbeddingConfig(arg1:string,arg2:string):Promise<void>;
+
 export function StopGeneration(arg1:string):Promise<void>;
 
 export function TermResize(arg1:number,arg2:number):Promise<void>;
@@ -96,6 +100,8 @@ export function TermStart():Promise<void>;
 export function TermStop():Promise<void>;
 
 export function TermWrite(arg1:string):Promise<void>;
+
+export function TestEmbedding():Promise<void>;
 
 export function UpdateEntityObservations(arg1:string,arg2:string,arg3:Array<string>):Promise<void>;
 

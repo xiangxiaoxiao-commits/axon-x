@@ -25,10 +25,12 @@ const graphModel = "gpt-5.6-sol"
 const (
 	// knowledgeSeedMinScore is the cosine-similarity floor for an entity to be
 	// picked as a semantic seed. Below it the entity is considered unrelated.
-	knowledgeSeedMinScore = 0.35
+	// Lowered from 0.35: Chinese + second-hand summaries run cosine low, so 0.35
+	// was over-strict (see docs/CRITIQUE_CONTEXT_ENGINE.md §2).
+	knowledgeSeedMinScore = 0.30
 	// knowledgeSeedTopK caps how many semantic seed entities are taken (the
 	// closest ones), before relation expansion.
-	knowledgeSeedTopK = 5
+	knowledgeSeedTopK = 8
 	// knowledgeExpandHops is how many relation hops to walk out from the seeds
 	// (undirected). 1 keeps the injected context tight; bump to 2 for wider recall.
 	knowledgeExpandHops = 1
@@ -117,7 +119,9 @@ func parseExtracted(reply string) extracted {
 }
 
 // maxTranscriptChars bounds how much of one session is sent per extraction,
-// keeping token cost predictable (newest content matters most for knowledge).
+// keeping token cost predictable. When a session exceeds it we keep the NEWEST
+// content (later turns usually carry the settled decisions), matching the intent
+// that "newest content matters most for knowledge".
 const maxTranscriptChars = 16000
 
 // IndexProject builds the per-session distillation cache: for each session,
@@ -151,10 +155,19 @@ func (a *App) IndexProject(projectSlug string) error {
 		emb = nil
 	}
 
+	if emb == nil {
+		// No embedder: chunk recall can't work, and the frontend should know the
+		// index is being built in the degraded (keyword-only) mode.
+		a.emit(EventGraphProgress, map[string]any{
+			"projectSlug": projectSlug, "phase": "index",
+			"warning": "未配置 embedding provider：本次不生成向量与原文块，召回将退回关键词匹配",
+		})
+	}
+
 	newly := 0
 	for i, s := range sessions {
 		if _, ok := graph.LoadCache(dataDir, projectSlug, s.ID, s.UpdatedAt); ok {
-			continue // fresh cache, skip
+			continue // fresh cache at current schema, skip entirely
 		}
 		a.emit(EventGraphProgress, map[string]any{
 			"projectSlug": projectSlug, "current": i + 1, "total": len(sessions),
@@ -164,6 +177,22 @@ func (a *App) IndexProject(projectSlug string) error {
 		if err != nil {
 			continue
 		}
+
+		// Incremental back-fill: if a same-mtime cache already exists but is only
+		// stale due to a schema bump, reuse its distilled entities/relations (skip
+		// the LLM) and just add the new chunk field. This makes upgrades cost only
+		// embedding calls, never re-distillation.
+		if prev, ok := graph.LoadCacheRaw(dataDir, projectSlug, s.ID); ok && prev.Mtime == s.UpdatedAt {
+			chunks := chunkTranscript(s.ID, msgs)
+			a.embedChunks(emb, chunks)
+			_ = graph.SaveCache(dataDir, projectSlug, &graph.SessionCache{
+				SessionID: s.ID, Mtime: s.UpdatedAt, Schema: graph.CacheSchema,
+				Entities: prev.Entities, Relations: prev.Relations, Chunks: chunks,
+			})
+			newly++
+			continue
+		}
+
 		ex := extracted{}
 		transcript := buildTranscript(msgs)
 		if strings.TrimSpace(transcript) != "" {
@@ -179,12 +208,18 @@ func (a *App) IndexProject(projectSlug string) error {
 		// Stamp provenance: every observation distilled from this session is
 		// sourced to this session id, so merged knowledge stays traceable.
 		stampObsSources(ex.Entities, s.ID)
-		// Attach embeddings so this session's entities are semantically searchable.
+		// Raw-context channel: chunk the FULL session (not the bounded transcript)
+		// and embed the blocks so they are semantically recallable alongside
+		// entities.
+		chunks := chunkTranscript(s.ID, msgs)
+		// Attach embeddings so this session's entities and chunks are searchable.
 		if emb != nil {
 			a.embedEntities(emb, ex.Entities)
+			a.embedChunks(emb, chunks)
 		}
 		_ = graph.SaveCache(dataDir, projectSlug, &graph.SessionCache{
-			SessionID: s.ID, Mtime: s.UpdatedAt, Entities: ex.Entities, Relations: ex.Relations,
+			SessionID: s.ID, Mtime: s.UpdatedAt, Schema: graph.CacheSchema,
+			Entities: ex.Entities, Relations: ex.Relations, Chunks: chunks,
 		})
 		newly++
 	}
@@ -263,17 +298,30 @@ func (a *App) assembleGraph(projectSlug, term string) (*graph.Graph, error) {
 	return g, nil
 }
 
-// buildTranscript joins user/assistant text into a bounded transcript.
+// buildTranscript joins user/assistant text into a transcript bounded to
+// maxTranscriptChars. When the session is longer than the cap it keeps the
+// NEWEST turns: it walks messages from the end, accumulating until the budget is
+// hit, then emits them back in chronological order. (The previous version broke
+// out of a forward loop and thus kept the OLDEST content — the opposite of the
+// documented intent that recent turns matter most.)
 func buildTranscript(msgs []claudedata.SessionMessage) string {
-	var b strings.Builder
-	for _, m := range msgs {
-		b.WriteString(m.Role)
-		b.WriteString(": ")
-		b.WriteString(m.Text)
-		b.WriteString("\n\n")
-		if b.Len() > maxTranscriptChars {
-			break
+	// Render each message once, then select a newest-first suffix within budget.
+	rendered := make([]string, len(msgs))
+	for i, m := range msgs {
+		rendered[i] = m.Role + ": " + m.Text + "\n\n"
+	}
+	total := 0
+	start := len(rendered) // index of the first kept message
+	for i := len(rendered) - 1; i >= 0; i-- {
+		if total+len(rendered[i]) > maxTranscriptChars && start != len(rendered) {
+			break // keep at least one message even if it alone exceeds the cap
 		}
+		total += len(rendered[i])
+		start = i
+	}
+	var b strings.Builder
+	for i := start; i < len(rendered); i++ {
+		b.WriteString(rendered[i])
 	}
 	return b.String()
 }
@@ -410,66 +458,155 @@ func (a *App) GenerateArticle(projectSlug, term string) (string, error) {
 	})
 }
 
+// Recall method values reported on KnowledgeMatch.Method: which retrieval path
+// actually produced the match, so the UI can show whether the AI recalled
+// business knowledge by true semantics or degraded to literal matching.
+const (
+	RecallSemantic = "semantic" // vector seeds found (embedder + entity vectors present)
+	RecallKeyword  = "keyword"  // only substring hits (no embedder, or graph has no vectors)
+	RecallHybrid   = "hybrid"   // both semantic seeds and substring hits contributed
+	RecallNone     = "none"     // nothing recalled
+)
+
+// InjectedChunk is one verbatim source fragment that was injected, exposed so
+// the UI can show a trustworthy "original record" citation next to the answer.
+type InjectedChunk struct {
+	Text   string `json:"text"`
+	Source string `json:"source"` // rendered provenance (session title / 代码 <path> / 任务 <id>)
+}
+
 // KnowledgeMatch is what the chat injects: the entities whose names appear in
 // the user's message, a readable context block, and the matched names for the
 // UI to show ("injected: X, Y").
 type KnowledgeMatch struct {
 	Names   []string `json:"names"`
 	Context string   `json:"context"`
+	// Chunks are the verbatim source fragments injected into the raw-context
+	// section, with rendered provenance, so the UI can surface original-record
+	// citations. Empty when no chunk was recalled (or no embedder).
+	Chunks []InjectedChunk `json:"chunks,omitempty"`
+	// ChunkHits is how many chunks were recalled by vector similarity (before the
+	// injection cap), a signal that the raw-context channel actually fired.
+	ChunkHits int `json:"chunkHits,omitempty"`
 	// Sources are the distinct session titles the injected observations came
 	// from, so the UI can show "这条知识来自 xxx 会话". Best-effort: empty when
 	// the graph carries no provenance yet (older caches) or titles can't be
 	// resolved. Session ids that have no known title fall back to the raw id.
 	Sources []string `json:"sources,omitempty"`
+	// Method reports which retrieval path produced this match — one of
+	// RecallSemantic / RecallKeyword / RecallHybrid / RecallNone — so the UI can
+	// surface whether recall used real semantics (vectors) or degraded to literal
+	// keyword matching. This is the trust signal: "keyword" means the embedder
+	// was unavailable or the graph carried no vectors, so recall fell back to
+	// substring matching only.
+	Method string `json:"method,omitempty"`
+	// SemanticSeeds are the entity names recalled by vector similarity (the
+	// closest seeds, before relation expansion); KeywordHits are the names matched
+	// by literal substring on name/alias. Both optional, for a detailed breakdown.
+	SemanticSeeds []string `json:"semanticSeeds,omitempty"`
+	KeywordHits   []string `json:"keywordHits,omitempty"`
 }
 
-// MatchKnowledge finds the graph knowledge relevant to the user's message using
-// HybridRAG and builds an injectable context block. Retrieval combines:
-//  1. semantic seeds — entities whose embedding is closest to the message
-//     (cosine >= threshold, top-K), when an embedder and entity vectors exist;
-//  2. relation expansion — neighbors of the seeds walked out a few hops
-//     (undirected), so linked knowledge comes along;
-//  3. substring fallback — entities whose name literally appears in the message
-//     (the original behavior), always applied and merged in.
+// MatchKnowledge finds the knowledge relevant to the user's message using two
+// parallel channels and fuses them with Reciprocal Rank Fusion (RRF):
 //
-// When no embedder is configured (e.g. no OpenAI provider) or the graph has no
-// vectors yet, it degrades gracefully to pure substring matching. Assembled from
-// cache (instant). Empty match => Names is empty and Context "".
+//	Structure channel (entities/relations):
+//	  1. semantic seeds — entities whose embedding is closest to the query;
+//	  2. substring hits — entities whose name/alias literally appears in the query;
+//	     RRF-fused into a ranked entity set, then expanded 1 hop along relations.
+//	Raw-context channel (verbatim chunks):
+//	  3. vector recall — chunks whose embedding is closest to the query;
+//	  4. substring hits — chunks whose text contains a query term;
+//	     RRF-fused into a ranked chunk set.
+//
+// Injection is two-stage with independent budgets: a "structure" section
+// (entities+relations, ~800 tokens) followed by a "raw record" section (top
+// chunks, ~2000 tokens, each labelled with its source). When no embedder is
+// configured, both vector paths go dark and it degrades to pure substring
+// matching over entities (the original behavior). Empty match => Names empty,
+// Context "".
 func (a *App) MatchKnowledge(projectSlug, text string) (KnowledgeMatch, error) {
 	if strings.TrimSpace(text) == "" || strings.TrimSpace(projectSlug) == "" {
-		return KnowledgeMatch{Names: []string{}}, nil
+		return KnowledgeMatch{Names: []string{}, Method: RecallNone}, nil
+	}
+	dataDir, err := db.AppDataDir()
+	if err != nil {
+		return KnowledgeMatch{Names: []string{}, Method: RecallNone}, err
 	}
 	g, err := a.assembleGraph(projectSlug, "")
 	if err != nil {
-		return KnowledgeMatch{Names: []string{}}, err
+		return KnowledgeMatch{Names: []string{}, Method: RecallNone}, err
 	}
 
-	// Index entities by normalized name for O(1) lookup during expansion.
-	byName := make(map[string]graph.Entity, len(g.Entities))
-	for _, e := range g.Entities {
-		if n := strings.ToLower(strings.TrimSpace(e.Name)); n != "" {
-			byName[n] = e
-		}
-	}
-
-	hit := map[string]bool{} // normalized name -> in the hit set
-
-	// (1) Semantic seeds via embeddings, then (2) expand along relations.
+	// Embed the query once (best-effort) and reuse the vector for both channels.
+	var qv []float32
 	if emb, embErr := a.newEmbedder(); embErr == nil {
-		seeds := a.semanticSeeds(emb, g, text)
-		for _, s := range seeds {
-			hit[strings.ToLower(s)] = true
-		}
-		if len(seeds) > 0 {
-			expandAlongRelations(g, hit, knowledgeExpandHops)
+		if v, eErr := emb.Embed(a.ctx, text); eErr == nil {
+			qv = v
+		} else {
+			log.Printf("axon: knowledge query embed failed: %v", eErr)
 		}
 	}
 
-	// (3) Substring fallback: any entity whose name — or any of its aliases —
-	// appears in the message. Always applied and merged, so this both complements
-	// the vector seeds and preserves the original behavior when embeddings are
-	// unavailable. Matching an alias hits the entity under its canonical name.
+	// --- Structure channel ---
+	semanticSeeds := a.semanticSeeds(qv, g) // best-first, may be empty
+	keywordHits := entityKeywordHits(g, text)
+	// RRF-fuse the two entity rankings, then expand along relations.
+	hit := map[string]bool{}
+	for _, id := range rrfFuse(lowerAll(semanticSeeds), lowerAll(keywordHits)) {
+		hit[id] = true
+	}
+	if len(semanticSeeds) > 0 {
+		expandAlongRelations(g, hit, knowledgeExpandHops)
+	}
+
+	// --- Raw-context channel ---
+	var chunkRanked []graph.Chunk
+	if len(qv) > 0 {
+		allChunks := a.loadChunks(dataDir, projectSlug)
+		candidates := rankChunks(qv, allChunks) // best-first vector recall
+		kwChunks := chunkKeywordHits(allChunks, text)
+		chunkRanked = fuseChunks(candidates, kwChunks)
+	}
+
+	if len(hit) == 0 && len(chunkRanked) == 0 {
+		return KnowledgeMatch{Names: []string{}, Method: RecallNone}, nil
+	}
+
+	// --- Assemble two-stage injection ---
+	names, structText, srcIDs := buildStructureSection(g, hit)
+	chunkText, injChunks, chunkSrcIDs := buildRawSection(projectSlug, chunkRanked)
+
+	var b strings.Builder
+	b.WriteString("以下是该项目的相关背景知识（来自你以往的对话/代码/任务，供参考）：\n")
+	if structText != "" {
+		b.WriteString("\n## 结构（实体与关系）\n")
+		b.WriteString(structText)
+	}
+	if chunkText != "" {
+		b.WriteString("\n## 相关原文片段（细节以原文为准，优先据此判断）\n")
+		b.WriteString(chunkText)
+	}
+
+	srcIDs = append(srcIDs, chunkSrcIDs...)
+	return KnowledgeMatch{
+		Names:         names,
+		Context:       b.String(),
+		Chunks:        injChunks,
+		ChunkHits:     len(chunkRanked),
+		Sources:       resolveSessionTitles(projectSlug, dedupStrings(srcIDs)),
+		Method:        recallMethod(len(semanticSeeds) > 0 || len(chunkRanked) > 0, len(keywordHits) > 0),
+		SemanticSeeds: semanticSeeds,
+		KeywordHits:   keywordHits,
+	}, nil
+}
+
+// entityKeywordHits returns the canonical names of entities whose name or any
+// alias appears literally in the text (case-insensitive substring), in graph
+// order.
+func entityKeywordHits(g *graph.Graph, text string) []string {
 	lt := strings.ToLower(text)
+	var hits []string
 	for _, e := range g.Entities {
 		n := strings.TrimSpace(e.Name)
 		if n == "" {
@@ -486,24 +623,84 @@ func (a *App) MatchKnowledge(projectSlug, text string) (KnowledgeMatch, error) {
 			}
 		}
 		if matched {
-			hit[strings.ToLower(n)] = true
+			hits = append(hits, e.Name)
 		}
 	}
+	return hits
+}
 
-	if len(hit) == 0 {
-		return KnowledgeMatch{Names: []string{}}, nil
+// chunkKeywordHits returns chunks whose text contains a query term, preserving
+// their input order. Query terms are whitespace-split tokens of length >= 2, so
+// dense recall queries (paths, symbols) still hit even without vectors.
+func chunkKeywordHits(chunks []graph.Chunk, text string) []graph.Chunk {
+	terms := queryTerms(text)
+	if len(terms) == 0 {
+		return nil
 	}
+	var out []graph.Chunk
+	for _, ch := range chunks {
+		lc := strings.ToLower(ch.Text)
+		for _, t := range terms {
+			if strings.Contains(lc, t) {
+				out = append(out, ch)
+				break
+			}
+		}
+	}
+	return out
+}
 
-	// Collect matched entities in the graph's original order for stable output.
-	// srcSeen tracks the distinct session ids the injected observations came from.
-	names := make([]string, 0, len(hit))
+// queryTerms lowercases and splits a query into de-duplicated tokens >= 2 chars.
+func queryTerms(text string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, f := range strings.Fields(strings.ToLower(text)) {
+		f = strings.Trim(f, ".,;:!?()[]{}\"'`")
+		if len([]rune(f)) < 2 || seen[f] {
+			continue
+		}
+		seen[f] = true
+		out = append(out, f)
+	}
+	return out
+}
+
+// fuseChunks RRF-fuses the vector-recall ranking with the keyword-hit ranking by
+// chunk ID, then returns the top chunks (capped at chunkInjectTopN) in fused
+// order. De-dupes by ID across the two lists.
+func fuseChunks(vectorRanked, keywordRanked []graph.Chunk) []graph.Chunk {
+	byID := map[string]graph.Chunk{}
+	ids := func(chunks []graph.Chunk) []string {
+		out := make([]string, 0, len(chunks))
+		for _, c := range chunks {
+			byID[c.ID] = c
+			out = append(out, c.ID)
+		}
+		return out
+	}
+	fused := rrfFuse(ids(vectorRanked), ids(keywordRanked))
+	var out []graph.Chunk
+	for _, id := range fused {
+		out = append(out, byID[id])
+		if len(out) >= chunkInjectTopN {
+			break
+		}
+	}
+	return out
+}
+
+// buildStructureSection renders the entity/relation section within its char
+// budget, returning the matched names (graph order), the rendered text, and the
+// distinct session ids the observations came from.
+func buildStructureSection(g *graph.Graph, hit map[string]bool) (names []string, text string, srcIDs []string) {
 	srcSeen := map[string]bool{}
-	var srcIDs []string
 	var b strings.Builder
-	b.WriteString("以下是该项目的相关背景知识（来自你以往的对话，供参考）：\n")
 	for _, e := range g.Entities {
 		if !hit[strings.ToLower(strings.TrimSpace(e.Name))] {
 			continue
+		}
+		if b.Len() >= injectStructBudgetChars {
+			break
 		}
 		names = append(names, e.Name)
 		fmt.Fprintf(&b, "\n【%s】\n", e.Name)
@@ -528,7 +725,77 @@ func (a *App) MatchKnowledge(projectSlug, text string) (KnowledgeMatch, error) {
 			b.WriteString("- " + r + "\n")
 		}
 	}
-	return KnowledgeMatch{Names: names, Context: b.String(), Sources: resolveSessionTitles(projectSlug, srcIDs)}, nil
+	return names, b.String(), srcIDs
+}
+
+// buildRawSection renders the verbatim-chunk section within its char budget,
+// each block tagged with its rendered provenance and separated by a divider.
+// Returns the rendered text, the injected chunks (for UI citations), and the
+// distinct chunk source ids.
+func buildRawSection(projectSlug string, chunks []graph.Chunk) (text string, injected []InjectedChunk, srcIDs []string) {
+	if len(chunks) == 0 {
+		return "", nil, nil
+	}
+	var b strings.Builder
+	budget := injectChunkBudgetChars
+	for _, ch := range chunks {
+		if budget-len(ch.Text) < 0 && len(injected) > 0 {
+			break // keep at least one; otherwise stop when budget is spent
+		}
+		src := renderChunkSource(projectSlug, ch.Source)
+		fmt.Fprintf(&b, "\n〔来源：%s〕\n%s\n───\n", src, ch.Text)
+		injected = append(injected, InjectedChunk{Text: ch.Text, Source: src})
+		srcIDs = append(srcIDs, ch.Source)
+		budget -= len(ch.Text)
+	}
+	return b.String(), injected, srcIDs
+}
+
+// renderChunkSource resolves one chunk source id to a display label, reusing the
+// session/code/task rendering used for observation provenance.
+func renderChunkSource(projectSlug, source string) string {
+	if titles := resolveSessionTitles(projectSlug, []string{source}); len(titles) > 0 {
+		return titles[0]
+	}
+	return source
+}
+
+// lowerAll lowercases every element of a slice (used to normalize entity names
+// into RRF ids).
+func lowerAll(in []string) []string {
+	out := make([]string, len(in))
+	for i, s := range in {
+		out[i] = strings.ToLower(s)
+	}
+	return out
+}
+
+// dedupStrings returns xs with duplicates removed, preserving first-seen order.
+func dedupStrings(xs []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, x := range xs {
+		if !seen[x] {
+			seen[x] = true
+			out = append(out, x)
+		}
+	}
+	return out
+}
+
+// recallMethod classifies which retrieval path produced the match: both paths
+// contributing is "hybrid", vector seeds alone is "semantic", substring alone
+// (the degraded path — no embedder or no vectors) is "keyword". Callers only
+// reach here with at least one hit, so "none" is handled by the empty-hit guard.
+func recallMethod(hasSemantic, hasKeyword bool) string {
+	switch {
+	case hasSemantic && hasKeyword:
+		return RecallHybrid
+	case hasSemantic:
+		return RecallSemantic
+	default:
+		return RecallKeyword
+	}
 }
 
 // obsSourceAt returns src[i] or "" when i is out of range, guarding the
@@ -577,14 +844,12 @@ func resolveSessionTitles(projectSlug string, ids []string) []string {
 	return out
 }
 
-// semanticSeeds embeds the message and returns the names of the top-K entities
-// whose embedding is most similar (cosine >= knowledgeSeedMinScore). Returns nil
-// when the message can't be embedded or no entity carries a vector, so the
-// caller falls back to substring matching without erroring.
-func (a *App) semanticSeeds(emb embed.Embedder, g *graph.Graph, text string) []string {
-	qv, err := emb.Embed(a.ctx, text)
-	if err != nil {
-		log.Printf("axon: knowledge query embed failed: %v", err)
+// semanticSeeds returns the names of the top-K entities whose embedding is most
+// similar to the query vector qv (cosine >= knowledgeSeedMinScore), best first.
+// Returns nil when qv is empty or no entity carries a vector, so the caller falls
+// back to substring matching without erroring.
+func (a *App) semanticSeeds(qv []float32, g *graph.Graph) []string {
+	if len(qv) == 0 {
 		return nil
 	}
 

@@ -7,14 +7,35 @@ import (
 	"path/filepath"
 )
 
+// CacheSchema is the current on-disk SessionCache layout version. Bump it when a
+// new field must be back-filled into already-cached sessions. LoadCache treats a
+// cache whose Schema is older than this as stale, forcing IndexProject to
+// reprocess it (which, for the chunk field, only re-runs local chunking + embed,
+// never the LLM — see IndexProject).
+const CacheSchema = 2
+
+// Chunk is one recall unit of verbatim source text plus its vector. It is the
+// core store of the "raw context" channel: unlike distilled entities (a lossy
+// summary), a Chunk carries the original words so the model can read details and
+// reasoning first-hand.
+type Chunk struct {
+	ID        string    `json:"id"`             // "<sessionID>#<seq>" / "code:<path>#<seq>" / "task:<id>#<seq>"
+	Text      string    `json:"text"`           // verbatim source fragment (conversation turn / code / task output)
+	Source    string    `json:"source"`         // provenance tag: sessionID / "code:<path>" / "task:<id>"
+	Kind      string    `json:"kind,omitempty"` // "chat" | "code" | "task"
+	Embedding []float32 `json:"embedding,omitempty"`
+}
+
 // SessionCache is the distilled knowledge of one session, cached so focus/full
 // builds can be assembled locally without re-calling the model. Mtime guards
 // staleness: if the session file changed, the cache is re-extracted.
 type SessionCache struct {
 	SessionID string     `json:"sessionId"`
-	Mtime     int64      `json:"mtime"` // source .jsonl mtime, unix millis
+	Mtime     int64      `json:"mtime"`            // source .jsonl mtime, unix millis
+	Schema    int        `json:"schema,omitempty"` // cache layout version; 0 on pre-chunk caches
 	Entities  []Entity   `json:"entities"`
 	Relations []Relation `json:"relations"`
+	Chunks    []Chunk    `json:"chunks,omitempty"` // verbatim source blocks for the raw-context channel
 }
 
 // cacheDir is <dataDir>/graphcache/<slug>.
@@ -23,7 +44,28 @@ func cacheDir(dataDir, slug string) string {
 }
 
 // LoadCache returns the cache for a session, or (nil, false) if absent/stale.
+// A cache is stale when the source .jsonl changed (mtime mismatch) OR its Schema
+// is older than CacheSchema — the latter forces a rebuild so new fields (e.g.
+// Chunks) get back-filled into caches written by an older version.
 func LoadCache(dataDir, slug, sessionID string, mtime int64) (*SessionCache, bool) {
+	c, ok := LoadCacheRaw(dataDir, slug, sessionID)
+	if !ok {
+		return nil, false
+	}
+	if c.Mtime != mtime {
+		return nil, false // source changed since caching
+	}
+	if c.Schema < CacheSchema {
+		return nil, false // older layout: force reprocess to back-fill new fields
+	}
+	return c, true
+}
+
+// LoadCacheRaw returns the cached session as-is (ignoring freshness), or
+// (nil, false) if absent/unreadable. Used by incremental back-fill: even when a
+// cache is stale only because of a Schema bump, its already-distilled entities
+// can be reused so only the new (cheap, LLM-free) fields are recomputed.
+func LoadCacheRaw(dataDir, slug, sessionID string) (*SessionCache, bool) {
 	p := filepath.Join(cacheDir(dataDir, slug), sessionID+".json")
 	data, err := os.ReadFile(p)
 	if err != nil {
@@ -33,13 +75,12 @@ func LoadCache(dataDir, slug, sessionID string, mtime int64) (*SessionCache, boo
 	if json.Unmarshal(data, &c) != nil {
 		return nil, false
 	}
-	if c.Mtime != mtime {
-		return nil, false // source changed since caching
-	}
 	return &c, true
 }
 
-// SaveCache writes a session's distilled cache.
+// SaveCache writes a session's distilled cache atomically (temp file + rename)
+// so a crash mid-write can't leave a half-written, unparseable cache — important
+// now that caches carry large chunk vectors.
 func SaveCache(dataDir, slug string, c *SessionCache) error {
 	dir := cacheDir(dataDir, slug)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -50,7 +91,11 @@ func SaveCache(dataDir, slug string, c *SessionCache) error {
 		return err
 	}
 	p := filepath.Join(dir, c.SessionID+".json")
-	return os.WriteFile(p, data, 0o644)
+	tmp := p + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+		return fmt.Errorf("write cache: %w", err)
+	}
+	return os.Rename(tmp, p)
 }
 
 // LoadAllCache returns every cached session for a project.
