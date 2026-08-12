@@ -847,6 +847,12 @@ func resolveSessionTitles(projectSlug string, ids []string) []string {
 			out = append(out, "任务 "+strings.TrimPrefix(id, "task:"))
 			continue
 		}
+		// Obsidian-sourced provenance ("obsidian:<note>") comes from a vault note;
+		// render it as "笔记 <名>" so the UI shows the knowledge came from a note.
+		if strings.HasPrefix(id, "obsidian:") {
+			out = append(out, "笔记 "+strings.TrimPrefix(id, "obsidian:"))
+			continue
+		}
 		if t := strings.TrimSpace(titleByID[id]); t != "" {
 			out = append(out, t)
 		} else {

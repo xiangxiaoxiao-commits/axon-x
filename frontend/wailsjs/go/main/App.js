@@ -14,6 +14,10 @@ export function BuildGraphFromCode(arg1, arg2) {
   return window['go']['main']['App']['BuildGraphFromCode'](arg1, arg2);
 }
 
+export function BuildGraphFromObsidian(arg1, arg2) {
+  return window['go']['main']['App']['BuildGraphFromObsidian'](arg1, arg2);
+}
+
 export function CancelTask(arg1) {
   return window['go']['main']['App']['CancelTask'](arg1);
 }

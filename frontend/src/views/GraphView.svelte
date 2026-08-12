@@ -5,7 +5,7 @@
   // node color encodes entity type (with a legend). Click a node to re-focus,
   // drag to nudge. The focus node's facts float beside the canvas.
   import { onMount, onDestroy } from "svelte";
-  import { BuildGraph, GetGraph, IndexProject, GenerateArticle, BuildGraphFromCode, DeleteEntity, UpdateEntityObservations } from "../../wailsjs/go/main/App.js";
+  import { BuildGraph, GetGraph, IndexProject, GenerateArticle, BuildGraphFromCode, BuildGraphFromObsidian, DeleteEntity, UpdateEntityObservations } from "../../wailsjs/go/main/App.js";
   import { EventsOn, EventsOff } from "../../wailsjs/runtime/runtime.js";
   import type { graph } from "../../wailsjs/go/models";
   import { currentProject } from "../lib/stores";
@@ -19,6 +19,12 @@
   let codeBuilding = false;
   let showRepoInput = false;
   let repoDir = "";
+
+  // "吸收 Obsidian" — scan an Obsidian vault, chunk + embed notes and parse
+  // [[wikilink]]s into the graph.
+  let obsBuilding = false;
+  let showVaultInput = false;
+  let vaultDir = "";
 
   type Ent = { name: string; type: string; obs: string[]; sources: string[] };
   let byName: Record<string, Ent> = {};
@@ -74,6 +80,8 @@
       if (p?.projectSlug !== $currentProject) return;
       if (p?.phase === "code") {
         progress = p.error ? `跳过: ${p.error}` : `正在从代码建图… 文件 ${p.current ?? ""}`;
+      } else if (p?.phase === "obsidian") {
+        progress = p.error ? `跳过: ${p.error}` : `正在吸收 Obsidian 笔记… ${p.current ?? ""}`;
       } else {
         progress = p.error ? `跳过一个会话: ${p.error}` : `建立索引中… ${p.current}/${p.total}`;
       }
@@ -83,6 +91,9 @@
       if (p?.phase === "code") {
         codeBuilding = false; showRepoInput = false;
         progress = `代码建图完成：${p.entities} 个节点`;
+      } else if (p?.phase === "obsidian") {
+        obsBuilding = false; showVaultInput = false;
+        progress = `吸收完成：${p.entities} 个节点`;
       } else {
         indexing = false; progress = `完成：${p.entities} 个节点`;
       }
@@ -358,6 +369,20 @@
     catch (e: any) { codeBuilding = false; progress = "代码建图失败: " + (e?.message || e); }
   }
 
+  function toggleVaultInput() {
+    if (!$currentProject) { progress = "先在顶部选一个项目"; return; }
+    showVaultInput = !showVaultInput;
+  }
+  async function buildFromObsidian() {
+    if (obsBuilding) return;
+    if (!$currentProject) { progress = "先在顶部选一个项目"; return; }
+    const dir = vaultDir.trim();
+    if (!dir) { progress = "请填写 Obsidian vault 绝对路径"; return; }
+    obsBuilding = true; progress = "正在吸收 Obsidian 笔记（首次较慢）…";
+    try { await BuildGraphFromObsidian(dir, $currentProject); }
+    catch (e: any) { obsBuilding = false; progress = "吸收 Obsidian 失败: " + (e?.message || e); }
+  }
+
   let term = "";
   function jump() {
     const t = term.trim().toLowerCase();
@@ -438,6 +463,12 @@
       <input class="term repo" placeholder="仓库绝对路径，如 /Users/me/project" bind:value={repoDir}
         on:keydown={(e) => e.key === "Enter" && buildFromCode()} />
       <button class="b" on:click={buildFromCode} disabled={codeBuilding}>{codeBuilding ? "…" : "开始扫描"}</button>
+    {/if}
+    <button class="b ghost" on:click={toggleVaultInput} disabled={obsBuilding}>{obsBuilding ? "吸收中…" : "📓 吸收 Obsidian"}</button>
+    {#if showVaultInput}
+      <input class="term repo" placeholder="Obsidian vault 绝对路径，如 /Users/xiangxiao/Documents/Obsidian Vault" bind:value={vaultDir}
+        on:keydown={(e) => e.key === "Enter" && buildFromObsidian()} />
+      <button class="b" on:click={buildFromObsidian} disabled={obsBuilding}>{obsBuilding ? "…" : "开始"}</button>
     {/if}
     <button class="b" on:click={genArticle} disabled={articleLoading || !g?.entities?.length}>{articleLoading ? "生成中…" : "📖 阅读文章"}</button>
     {#if mode === "graph"}

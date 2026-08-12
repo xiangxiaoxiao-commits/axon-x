@@ -19,6 +19,13 @@ const maxLLMFiles = 40
 // denser than prose, so this is smaller than the conversation transcript cap.
 const maxCodeChars = 8000
 
+// codeCacheID is the dedicated SessionCache key for code-sourced knowledge. Code
+// entities, relations and raw chunks are stored under this single key (not a
+// session id) and rebuilt in full on each code build, so assembleGraph folds them
+// into the project graph exactly like conversation/obsidian caches instead of the
+// old direct graph.json write (which assembleGraph would later clobber).
+const codeCacheID = "code:graph"
+
 // codeBizPrompt asks the model to add ONLY business meaning to already-extracted
 // code symbols: a responsibility observation and business aliases (Chinese/short
 // names), never restating syntax. Output is strict JSON so it merges onto the
@@ -40,8 +47,11 @@ const codeBizPrompt = `你是代码理解器。下面给你一个源码文件的
 //
 // Pipeline: static skeleton (free, full) -> LLM business enrichment on the
 // top-N key files (budgeted; skipped entirely when no OpenAI provider is
-// configured, degrading to skeleton-only, no error) -> embeddings -> merge into
-// the existing graph and save. Code-sourced observations are stamped "code:"+path
+// configured, degrading to skeleton-only, no error) -> raw code chunks ->
+// embeddings -> persist entities+relations+chunks into a dedicated cache and
+// reassemble the graph (so code knowledge fuses with conversation/obsidian
+// knowledge via alias normalization, and the raw-context channel can recall the
+// code verbatim). Code-sourced observations and chunks are stamped "code:"+path
 // so provenance stays distinguishable from session ids.
 func (a *App) BuildGraphFromCode(repoDir, projectSlug string) error {
 	if strings.TrimSpace(repoDir) == "" || strings.TrimSpace(projectSlug) == "" {
@@ -93,31 +103,29 @@ func (a *App) BuildGraphFromCode(repoDir, projectSlug string) error {
 	}
 
 	// Embeddings for HybridRAG recall (best-effort; skipped when no embedder).
+	// newEmbedder falls back to a local embedder, so this normally always fires.
 	if emb, embErr := a.newEmbedder(); embErr == nil {
 		a.embedEntities(emb, ents)
 		a.embedChunks(emb, codeChunks)
 	}
 
-	// Persist code chunks in a dedicated cache so loadChunks picks them up on
-	// recall. Keyed "code:chunks" (not a session id), rebuilt in full on each code
-	// build. Entities/relations stay empty here — they are merged into graph.json
-	// directly below, as before.
-	if len(codeChunks) > 0 {
-		_ = graph.SaveCache(dataDir, projectSlug, &graph.SessionCache{
-			SessionID: "code:chunks", Mtime: time.Now().UnixMilli(),
-			Schema: graph.CacheSchema, Chunks: codeChunks,
-		})
-	}
-
-	// Phase D: merge into the existing (conversation-sourced) graph and save.
-	// Alias normalization fuses code entities with conversation entities.
-	g, err := graph.Load(dataDir, projectSlug)
-	if err != nil {
+	// Persist entities, relations and raw chunks together under a single dedicated
+	// cache key (not a session id), rebuilt in full on each code build. Going
+	// through the cache (rather than writing graph.json directly) means the next
+	// assembleGraph keeps the code knowledge instead of clobbering it, and both the
+	// structure channel (entities/relations) and the raw-context channel (chunks)
+	// stay populated for MatchKnowledge.
+	if err := graph.SaveCache(dataDir, projectSlug, &graph.SessionCache{
+		SessionID: codeCacheID, Mtime: time.Now().UnixMilli(),
+		Schema: graph.CacheSchema, Entities: ents, Relations: rels, Chunks: codeChunks,
+	}); err != nil {
 		return err
 	}
-	g.Merge(ents, rels)
-	g.UpdatedAt = time.Now().UnixMilli()
-	if err := graph.Save(dataDir, g); err != nil {
+
+	// Phase D: reassemble the project graph from all caches (conversation, code,
+	// obsidian). Alias normalization fuses code entities with conversation/obsidian
+	// entities so "支付服务"/"PaymentService" collapse into one node across sources.
+	if _, err := a.assembleGraph(projectSlug, ""); err != nil {
 		return err
 	}
 
