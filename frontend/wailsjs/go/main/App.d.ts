@@ -21,7 +21,11 @@ export function CreateTask(arg1:string,arg2:string,arg3:string,arg4:string):Prom
 
 export function DeleteConversation(arg1:string):Promise<void>;
 
+export function DeleteEntity(arg1:string,arg2:string):Promise<void>;
+
 export function DeleteMemoryFile(arg1:string):Promise<void>;
+
+export function DeleteRelation(arg1:string,arg2:string,arg3:string,arg4:string):Promise<void>;
 
 export function DeleteTask(arg1:string):Promise<void>;
 
@@ -67,6 +71,8 @@ export function ReadClaudeSession(arg1:string,arg2:string):Promise<Array<clauded
 
 export function RenameConversation(arg1:string,arg2:string):Promise<void>;
 
+export function RenameEntity(arg1:string,arg2:string,arg3:string):Promise<void>;
+
 export function RepoStatus(arg1:string):Promise<gitx.RepoStatus>;
 
 export function ReviewTask(arg1:string,arg2:string,arg3:string):Promise<void>;
@@ -90,6 +96,8 @@ export function TermStart():Promise<void>;
 export function TermStop():Promise<void>;
 
 export function TermWrite(arg1:string):Promise<void>;
+
+export function UpdateEntityObservations(arg1:string,arg2:string,arg3:Array<string>):Promise<void>;
 
 export function UpdateSpec(arg1:string,arg2:task.Spec):Promise<void>;
 

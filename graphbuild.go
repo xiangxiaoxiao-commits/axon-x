@@ -561,6 +561,13 @@ func resolveSessionTitles(projectSlug string, ids []string) []string {
 			out = append(out, "代码 "+strings.TrimPrefix(id, "code:"))
 			continue
 		}
+		// Task-sourced provenance ("task:<taskID>") comes from an accepted task's
+		// writeback; render it as "任务 <id>" so the UI shows the fact was learned
+		// from a task, not a chat session.
+		if strings.HasPrefix(id, "task:") {
+			out = append(out, "任务 "+strings.TrimPrefix(id, "task:"))
+			continue
+		}
 		if t := strings.TrimSpace(titleByID[id]); t != "" {
 			out = append(out, t)
 		} else {

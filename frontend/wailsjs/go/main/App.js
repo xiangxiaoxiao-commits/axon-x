@@ -26,8 +26,16 @@ export function DeleteConversation(arg1) {
   return window['go']['main']['App']['DeleteConversation'](arg1);
 }
 
+export function DeleteEntity(arg1, arg2) {
+  return window['go']['main']['App']['DeleteEntity'](arg1, arg2);
+}
+
 export function DeleteMemoryFile(arg1) {
   return window['go']['main']['App']['DeleteMemoryFile'](arg1);
+}
+
+export function DeleteRelation(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['DeleteRelation'](arg1, arg2, arg3, arg4);
 }
 
 export function DeleteTask(arg1) {
@@ -118,6 +126,10 @@ export function RenameConversation(arg1, arg2) {
   return window['go']['main']['App']['RenameConversation'](arg1, arg2);
 }
 
+export function RenameEntity(arg1, arg2, arg3) {
+  return window['go']['main']['App']['RenameEntity'](arg1, arg2, arg3);
+}
+
 export function RepoStatus(arg1) {
   return window['go']['main']['App']['RepoStatus'](arg1);
 }
@@ -164,6 +176,10 @@ export function TermStop() {
 
 export function TermWrite(arg1) {
   return window['go']['main']['App']['TermWrite'](arg1);
+}
+
+export function UpdateEntityObservations(arg1, arg2, arg3) {
+  return window['go']['main']['App']['UpdateEntityObservations'](arg1, arg2, arg3);
 }
 
 export function UpdateSpec(arg1, arg2) {

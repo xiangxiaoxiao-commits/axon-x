@@ -320,6 +320,14 @@ func (a *App) ReviewTask(taskID, decision, feedback string) error {
 			return err
 		}
 		a.emit(EventTaskStatus, taskStatusEvent{TaskID: taskID, Status: string(t.Status)})
+
+		// Writeback: fold the business knowledge learned from this accepted task
+		// into the project's knowledge graph, so it grows with use. Async and
+		// best-effort — acceptance already succeeded and must not depend on it.
+		if strings.TrimSpace(t.ProjectSlug) != "" {
+			result := latestRunResult(a.taskStore, taskID)
+			go a.writeBackTaskKnowledge(t, result)
+		}
 		return nil
 	case "reject":
 		return a.submitRun(taskID, feedback)

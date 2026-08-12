@@ -64,6 +64,12 @@ type App struct {
 	taskSem     chan struct{}
 	taskMu      sync.Mutex
 	taskCancels map[string]context.CancelFunc
+
+	// graphMu serializes manual knowledge-graph edits (load→modify→save) so
+	// concurrent edits can't clobber each other's writes. Graph persistence is
+	// file-level (atomic rename), so this is a best-effort guard for this
+	// process's own edit paths.
+	graphMu sync.Mutex
 }
 
 // NewApp creates a new App application struct.

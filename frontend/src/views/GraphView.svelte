@@ -5,7 +5,7 @@
   // node color encodes entity type (with a legend). Click a node to re-focus,
   // drag to nudge. The focus node's facts float beside the canvas.
   import { onMount, onDestroy } from "svelte";
-  import { BuildGraph, IndexProject, GenerateArticle, BuildGraphFromCode } from "../../wailsjs/go/main/App.js";
+  import { BuildGraph, GetGraph, IndexProject, GenerateArticle, BuildGraphFromCode, DeleteEntity, UpdateEntityObservations } from "../../wailsjs/go/main/App.js";
   import { EventsOn, EventsOff } from "../../wailsjs/runtime/runtime.js";
   import type { graph } from "../../wailsjs/go/models";
   import { currentProject } from "../lib/stores";
@@ -20,7 +20,7 @@
   let showRepoInput = false;
   let repoDir = "";
 
-  type Ent = { name: string; type: string; obs: string[] };
+  type Ent = { name: string; type: string; obs: string[]; sources: string[] };
   let byName: Record<string, Ent> = {};
 
   // Degree (connection count) per entity — drives node radius.
@@ -100,11 +100,16 @@
   let loadedFor = " ";
   $: if ($currentProject !== loadedFor) { loadedFor = $currentProject; focus = ""; progress = ""; load(); }
 
-  async function load() {
-    try { g = await BuildGraph($currentProject); } catch (e) { console.error(e); g = null; }
+  // load(false) assembles from the session cache (BuildGraph); load(true) reads
+  // the saved graph.json (GetGraph) so manual edits aren't overwritten by a
+  // re-assembly. Used to refresh after delete/edit.
+  async function load(fromStore = false) {
+    const prevFocus = focus;
+    try { g = fromStore ? await GetGraph($currentProject) : await BuildGraph($currentProject); }
+    catch (e) { console.error(e); g = null; }
     byName = {}; deg = {}; adj = new Map(); maxDeg = 0; colorOf = {};
     if (!g?.entities?.length) { focus = ""; nodes = []; edges = []; return; }
-    for (const e of g.entities) byName[e.name.toLowerCase()] = { name: e.name, type: e.type, obs: e.observations || [] };
+    for (const e of g.entities) byName[e.name.toLowerCase()] = { name: e.name, type: e.type, obs: e.observations || [], sources: e.obsSources || [] };
     // Degree + adjacency in one pass over relations.
     const touch = (n: string) => { if (!adj.has(n)) adj.set(n, new Set()); };
     for (const r of g.relations || []) {
@@ -120,7 +125,9 @@
       if (colorOf[t]) continue;
       colorOf[t] = TYPE_COLORS[t] || PALETTE[pi++ % PALETTE.length];
     }
-    // Start at the hub (most-connected node).
+    // Keep the current focus across a refresh when it still exists; otherwise
+    // start at the hub (most-connected node).
+    if (prevFocus && byName[prevFocus.toLowerCase()]) { setFocus(prevFocus); return; }
     let best = g.entities[0].name, bd = -1;
     for (const e of g.entities) { const d = deg[e.name] || 0; if (d > bd) { bd = d; best = e.name; } }
     setFocus(best);
@@ -367,6 +374,57 @@
     catch (e: any) { article = "生成失败: " + (e?.message || e); }
     finally { articleLoading = false; }
   }
+
+  // --- Manual editing: correct / denoise the graph ------------------------
+  // The facts panel toggles between read-only and an editable draft of the
+  // focused entity's observations. Saving writes back via the backend, then we
+  // refresh from graph.json (GetGraph) so edits aren't clobbered by re-assembly.
+  let editing = false;
+  let draft: string[] = [];
+  let saving = false;
+  let editErr = "";
+
+  // Turn an observation's raw source into a short provenance label. Session ids
+  // and code paths come from the backend; "manual" marks hand edits; empty means
+  // the source is unknown (older caches).
+  function sourceLabel(src: string): string {
+    if (!src) return "";
+    if (src === "manual") return "手动";
+    if (src.startsWith("code:")) return "代码";
+    if (src.startsWith("task:")) return "任务";
+    return "会话";
+  }
+
+  function startEdit() {
+    if (!focusEnt) return;
+    draft = [...focusEnt.obs];
+    editErr = ""; editing = true;
+  }
+  function cancelEdit() { editing = false; draft = []; editErr = ""; }
+  function removeDraft(i: number) { draft = draft.filter((_, j) => j !== i); }
+  function addDraft() { draft = [...draft, ""]; }
+
+  async function saveObs() {
+    if (saving || !focusEnt) return;
+    saving = true; editErr = "";
+    try {
+      await UpdateEntityObservations($currentProject, focusEnt.name, draft.map((o) => o.trim()).filter(Boolean));
+      editing = false; draft = [];
+      await load(true); // refresh from the saved graph, keeping other edits
+    } catch (e: any) { editErr = "保存失败: " + (e?.message || e); }
+    finally { saving = false; }
+  }
+
+  async function removeEntity() {
+    if (!focusEnt) return;
+    if (!confirm(`删除实体「${focusEnt.name}」及其所有关系？此操作不可撤销。`)) return;
+    saving = true; editErr = "";
+    try {
+      await DeleteEntity($currentProject, focusEnt.name);
+      editing = false; draft = []; focus = "";
+      await load(true); // deleted node is gone; focus falls back to the hub
+    } catch (e: any) { editErr = "删除失败: " + (e?.message || e); saving = false; }
+  }
 </script>
 
 <div class="wrap neural-bg">
@@ -444,10 +502,43 @@
             <span class="f-type" style="border-color:{nodeColor(focusEnt.type)}; color:{nodeColor(focusEnt.type)}">{focusEnt.type}</span>
           </div>
           <div class="f-meta">度数 {deg[focusEnt.name] || 0} · {depth} 跳邻域</div>
-          <ul>
-            {#each focusEnt.obs as o}<li class="selectable">{o}</li>{/each}
-            {#if focusEnt.obs.length === 0}<li class="muted">（这个神经元还没有记录的事实）</li>{/if}
-          </ul>
+
+          {#if editing}
+            <ul class="edit">
+              {#each draft as o, i}
+                <li>
+                  <textarea class="obs-edit" rows="2" bind:value={draft[i]}></textarea>
+                  <button class="x" title="删除这条" on:click={() => removeDraft(i)}>×</button>
+                </li>
+              {/each}
+              {#if draft.length === 0}<li class="muted">（还没有事实，点下面「+ 添加一条」）</li>{/if}
+            </ul>
+            <div class="edit-actions">
+              <button class="b sm ghost" on:click={addDraft}>+ 添加一条</button>
+              <span class="spacer"></span>
+              <button class="b sm ghost" on:click={cancelEdit} disabled={saving}>取消</button>
+              <button class="b sm" on:click={saveObs} disabled={saving}>{saving ? "保存中…" : "保存"}</button>
+            </div>
+          {:else}
+            <ul>
+              {#each focusEnt.obs as o, i}
+                <li class="selectable">
+                  {o}
+                  {#if sourceLabel(focusEnt.sources[i] || "")}
+                    <span class="src" class:manual={focusEnt.sources[i] === "manual"}>{sourceLabel(focusEnt.sources[i] || "")}</span>
+                  {/if}
+                </li>
+              {/each}
+              {#if focusEnt.obs.length === 0}<li class="muted">（这个神经元还没有记录的事实）</li>{/if}
+            </ul>
+            <div class="edit-actions">
+              <button class="b sm ghost" on:click={startEdit}>✏️ 编辑事实</button>
+              <span class="spacer"></span>
+              <button class="b sm danger" on:click={removeEntity} disabled={saving}>🗑 删除此实体</button>
+            </div>
+          {/if}
+
+          {#if editErr}<div class="edit-err">{editErr}</div>{/if}
           <div class="f-hint">点节点重新聚焦，拖动可微调布局 →</div>
         </div>
       {/if}
@@ -514,6 +605,26 @@
   .facts li { font-size: 12.5px; line-height: 1.55; margin-bottom: 5px; }
   .facts li.muted { color: var(--text-muted); list-style: none; }
   .f-hint { margin-top: 10px; font-size: 11px; color: var(--text-muted); }
+
+  /* Provenance tag on each fact. */
+  .src { font-size: 9px; color: var(--text-muted); border: 1px solid var(--border); border-radius: 3px; padding: 0 4px; margin-left: 6px; white-space: nowrap; }
+  .src.manual { color: #FBBF24; border-color: #FBBF24; }
+
+  /* Inline editing of facts. */
+  .facts ul.edit { list-style: none; padding-left: 0; }
+  .facts ul.edit li { display: flex; gap: 6px; align-items: flex-start; margin-bottom: 6px; }
+  .obs-edit {
+    flex: 1; background: var(--bg-elevated); color: var(--text-primary);
+    border: 1px solid var(--border); border-radius: var(--radius-control);
+    font-family: var(--font-mono); font-size: 12px; padding: 4px 6px; resize: vertical;
+  }
+  .x { background: transparent; border: 1px solid var(--border); color: var(--text-muted); border-radius: var(--radius-control); width: 22px; height: 22px; font-size: 14px; line-height: 1; cursor: pointer; flex: none; }
+  .x:hover { color: #F87171; border-color: #F87171; }
+  .edit-actions { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
+  .b.sm { padding: 3px 10px; font-size: 11px; }
+  .b.danger { background: transparent; border: 1px solid #F87171; color: #F87171; font-weight: 400; }
+  .b.danger:hover:not(:disabled) { background: #F87171; color: #1c1206; }
+  .edit-err { margin-top: 8px; font-size: 11px; color: #F87171; }
 
   .article { flex: 1; overflow-y: auto; padding: 24px 32px; max-width: 820px; margin: 0 auto; line-height: 1.7; font-family: var(--font-ui); font-size: 14px; position: relative; z-index: 1; }
   .article :global(h2) { border-bottom: 1px solid var(--border); padding-bottom: 4px; margin: 20px 0 8px; }
