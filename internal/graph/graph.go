@@ -17,6 +17,15 @@ type Entity struct {
 	Name         string   `json:"name"`         // unique key within a graph
 	Type         string   `json:"type"`         // module | service | concept | decision | ...
 	Observations []string `json:"observations"` // durable facts about it
+	// Aliases are other names for the same thing (full/short forms, Chinese/
+	// English names). Used to normalize entities so "支付服务"/"PaymentService"/
+	// "payment" collapse into one node. Optional: empty on older caches.
+	Aliases []string `json:"aliases,omitempty"`
+	// ObsSources runs parallel to Observations: ObsSources[i] is the session id
+	// that produced Observations[i], enabling provenance ("this fact came from
+	// session X"). Optional and best-effort: empty or shorter than Observations
+	// on older caches, in which case the source is simply unknown.
+	ObsSources []string `json:"obsSources,omitempty"`
 	// Embedding is the dense vector of name+observations, used for semantic
 	// (HybridRAG) retrieval. Optional: empty when no embedder was available at
 	// index time, in which case matching falls back to substring lookup.

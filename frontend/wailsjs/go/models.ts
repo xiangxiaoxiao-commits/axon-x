@@ -81,6 +81,8 @@ export namespace graph {
 	    name: string;
 	    type: string;
 	    observations: string[];
+	    aliases?: string[];
+	    obsSources?: string[];
 	    embedding?: number[];
 	
 	    static createFrom(source: any = {}) {
@@ -92,6 +94,8 @@ export namespace graph {
 	        this.name = source["name"];
 	        this.type = source["type"];
 	        this.observations = source["observations"];
+	        this.aliases = source["aliases"];
+	        this.obsSources = source["obsSources"];
 	        this.embedding = source["embedding"];
 	    }
 	}
@@ -157,6 +161,7 @@ export namespace main {
 	export class KnowledgeMatch {
 	    names: string[];
 	    context: string;
+	    sources?: string[];
 	
 	    static createFrom(source: any = {}) {
 	        return new KnowledgeMatch(source);
@@ -166,6 +171,7 @@ export namespace main {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.names = source["names"];
 	        this.context = source["context"];
+	        this.sources = source["sources"];
 	    }
 	}
 	export class ProviderInfo {

@@ -59,8 +59,14 @@ const extractPrompt = `你是一个知识提炼器。从下面的对话中，只
 
 宁可少而准，不要多而杂。若这段对话没有值得入图的知识，返回空数组。
 
+【实体别名】
+- 为每个实体给出 aliases：同一事物的其他叫法（全称/简称/中英文名）。
+- 例如「支付服务」的 aliases 可能是 ["PaymentService","payment"]。
+- 目的是让同一事物在图谱里只保留一个节点，不要因为叫法不同而拆成多个。
+- 没有别名就给空数组 []。
+
 只输出如下 JSON，不要任何解释：
-{"entities":[{"name":"实体名","type":"module|service|concept|decision|constraint","observations":["关于它的事实"]}],"relations":[{"from":"实体A","to":"实体B","label":"关系"}]}`
+{"entities":[{"name":"实体名","type":"module|service|concept|decision|constraint","aliases":["别名"],"observations":["关于它的事实"]}],"relations":[{"from":"实体A","to":"实体B","label":"关系"}]}`
 
 // GetGraph returns the stored knowledge graph for a project.
 func (a *App) GetGraph(projectSlug string) (*graph.Graph, error) {
@@ -170,6 +176,9 @@ func (a *App) IndexProject(projectSlug string) error {
 				continue // skip; will retry next index run
 			}
 		}
+		// Stamp provenance: every observation distilled from this session is
+		// sourced to this session id, so merged knowledge stays traceable.
+		stampObsSources(ex.Entities, s.ID)
 		// Attach embeddings so this session's entities are semantically searchable.
 		if emb != nil {
 			a.embedEntities(emb, ex.Entities)
@@ -183,6 +192,19 @@ func (a *App) IndexProject(projectSlug string) error {
 		"projectSlug": projectSlug, "processed": newly, "phase": "index",
 	})
 	return nil
+}
+
+// stampObsSources sets each entity's ObsSources parallel to its Observations,
+// marking every fact as originating from sessionID. Best-effort provenance for
+// later traceability; the array stays aligned one-to-one with Observations.
+func stampObsSources(entities []graph.Entity, sessionID string) {
+	for i := range entities {
+		src := make([]string, len(entities[i].Observations))
+		for j := range src {
+			src[j] = sessionID
+		}
+		entities[i].ObsSources = src
+	}
 }
 
 // entityEmbedText builds the text embedded for an entity: its name plus its
@@ -394,6 +416,11 @@ func (a *App) GenerateArticle(projectSlug, term string) (string, error) {
 type KnowledgeMatch struct {
 	Names   []string `json:"names"`
 	Context string   `json:"context"`
+	// Sources are the distinct session titles the injected observations came
+	// from, so the UI can show "这条知识来自 xxx 会话". Best-effort: empty when
+	// the graph carries no provenance yet (older caches) or titles can't be
+	// resolved. Session ids that have no known title fall back to the raw id.
+	Sources []string `json:"sources,omitempty"`
 }
 
 // MatchKnowledge finds the graph knowledge relevant to the user's message using
@@ -438,16 +465,27 @@ func (a *App) MatchKnowledge(projectSlug, text string) (KnowledgeMatch, error) {
 		}
 	}
 
-	// (3) Substring fallback: any entity whose name appears in the message.
-	// Always applied and merged, so this both complements the vector seeds and
-	// preserves the original behavior when embeddings are unavailable.
+	// (3) Substring fallback: any entity whose name — or any of its aliases —
+	// appears in the message. Always applied and merged, so this both complements
+	// the vector seeds and preserves the original behavior when embeddings are
+	// unavailable. Matching an alias hits the entity under its canonical name.
 	lt := strings.ToLower(text)
 	for _, e := range g.Entities {
 		n := strings.TrimSpace(e.Name)
 		if n == "" {
 			continue
 		}
-		if strings.Contains(lt, strings.ToLower(n)) {
+		matched := strings.Contains(lt, strings.ToLower(n))
+		if !matched {
+			for _, al := range e.Aliases {
+				al = strings.TrimSpace(al)
+				if al != "" && strings.Contains(lt, strings.ToLower(al)) {
+					matched = true
+					break
+				}
+			}
+		}
+		if matched {
 			hit[strings.ToLower(n)] = true
 		}
 	}
@@ -457,7 +495,10 @@ func (a *App) MatchKnowledge(projectSlug, text string) (KnowledgeMatch, error) {
 	}
 
 	// Collect matched entities in the graph's original order for stable output.
+	// srcSeen tracks the distinct session ids the injected observations came from.
 	names := make([]string, 0, len(hit))
+	srcSeen := map[string]bool{}
+	var srcIDs []string
 	var b strings.Builder
 	b.WriteString("以下是该项目的相关背景知识（来自你以往的对话，供参考）：\n")
 	for _, e := range g.Entities {
@@ -466,8 +507,12 @@ func (a *App) MatchKnowledge(projectSlug, text string) (KnowledgeMatch, error) {
 		}
 		names = append(names, e.Name)
 		fmt.Fprintf(&b, "\n【%s】\n", e.Name)
-		for _, o := range e.Observations {
+		for i, o := range e.Observations {
 			fmt.Fprintf(&b, "- %s\n", o)
+			if sid := obsSourceAt(e.ObsSources, i); sid != "" && !srcSeen[sid] {
+				srcSeen[sid] = true
+				srcIDs = append(srcIDs, sid)
+			}
 		}
 	}
 	// Relations among matched entities add useful structure.
@@ -483,7 +528,40 @@ func (a *App) MatchKnowledge(projectSlug, text string) (KnowledgeMatch, error) {
 			b.WriteString("- " + r + "\n")
 		}
 	}
-	return KnowledgeMatch{Names: names, Context: b.String()}, nil
+	return KnowledgeMatch{Names: names, Context: b.String(), Sources: resolveSessionTitles(projectSlug, srcIDs)}, nil
+}
+
+// obsSourceAt returns src[i] or "" when i is out of range, guarding the
+// observation/source parallel arrays (older caches may carry no sources).
+func obsSourceAt(src []string, i int) string {
+	if i < len(src) {
+		return src[i]
+	}
+	return ""
+}
+
+// resolveSessionTitles maps session ids to their human-readable titles for the
+// UI. Best-effort: on any error (or a missing id) it falls back to the raw id
+// so provenance is never lost, just less pretty. Returns nil for no ids.
+func resolveSessionTitles(projectSlug string, ids []string) []string {
+	if len(ids) == 0 {
+		return nil
+	}
+	titleByID := map[string]string{}
+	if sessions, err := claudedata.ListSessions(projectSlug); err == nil {
+		for _, s := range sessions {
+			titleByID[s.ID] = s.Title
+		}
+	}
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if t := strings.TrimSpace(titleByID[id]); t != "" {
+			out = append(out, t)
+		} else {
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 // semanticSeeds embeds the message and returns the names of the top-K entities
