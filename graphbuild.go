@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"sort"
 	"strings"
 	"time"
 
@@ -14,27 +13,12 @@ import (
 	"axon/internal/embed"
 	"axon/internal/graph"
 	"axon/internal/provider"
+	"axon/internal/retrieve"
 )
 
 // graphModel is the model used to distill knowledge. gpt-5.6-sol has the
 // strongest comprehension on the user's gateway; extraction needs judgement.
 const graphModel = "gpt-5.6-sol"
-
-// HybridRAG retrieval tuning for MatchKnowledge. Named so they are easy to
-// adjust as the graph grows.
-const (
-	// knowledgeSeedMinScore is the cosine-similarity floor for an entity to be
-	// picked as a semantic seed. Below it the entity is considered unrelated.
-	// Lowered from 0.35: Chinese + second-hand summaries run cosine low, so 0.35
-	// was over-strict (see docs/CRITIQUE_CONTEXT_ENGINE.md §2).
-	knowledgeSeedMinScore = 0.30
-	// knowledgeSeedTopK caps how many semantic seed entities are taken (the
-	// closest ones), before relation expansion.
-	knowledgeSeedTopK = 8
-	// knowledgeExpandHops is how many relation hops to walk out from the seeds
-	// (undirected). 1 keeps the injected context tight; bump to 2 for wider recall.
-	knowledgeExpandHops = 1
-)
 
 // Graph build events for the frontend.
 const (
@@ -557,26 +541,13 @@ func (a *App) MatchKnowledge(projectSlug, text string) (KnowledgeMatch, error) {
 		}
 	}
 
-	// --- Structure channel ---
-	semanticSeeds := a.semanticSeeds(qv, g) // best-first, may be empty
-	keywordHits := entityKeywordHits(g, text)
-	// RRF-fuse the two entity rankings, then expand along relations.
-	hit := map[string]bool{}
-	for _, id := range rrfFuse(lowerAll(semanticSeeds), lowerAll(keywordHits)) {
-		hit[id] = true
-	}
-	if len(semanticSeeds) > 0 {
-		expandAlongRelations(g, hit, knowledgeExpandHops)
-	}
-
-	// --- Raw-context channel ---
-	var chunkRanked []graph.Chunk
-	if len(qv) > 0 {
-		allChunks := a.loadChunks(dataDir, projectSlug)
-		candidates := rankChunks(qv, allChunks) // best-first vector recall
-		kwChunks := chunkKeywordHits(allChunks, text)
-		chunkRanked = fuseChunks(candidates, kwChunks)
-	}
+	// Run the shared two-channel recall (structure + raw context). The App only
+	// adds provenance rendering and the UI trust signals on top of this.
+	res := retrieve.Recall(g, a.loadChunks(dataDir, projectSlug), qv, text)
+	semanticSeeds := res.SemanticSeeds
+	keywordHits := res.KeywordHits
+	hit := res.Hit
+	chunkRanked := res.Chunks
 
 	if len(hit) == 0 && len(chunkRanked) == 0 {
 		return KnowledgeMatch{Names: []string{}, Method: RecallNone}, nil
@@ -613,93 +584,9 @@ func (a *App) MatchKnowledge(projectSlug, text string) (KnowledgeMatch, error) {
 	}, nil
 }
 
-// entityKeywordHits returns the canonical names of entities whose name or any
-// alias appears literally in the text (case-insensitive substring), in graph
-// order.
-func entityKeywordHits(g *graph.Graph, text string) []string {
-	lt := strings.ToLower(text)
-	var hits []string
-	for _, e := range g.Entities {
-		n := strings.TrimSpace(e.Name)
-		if n == "" {
-			continue
-		}
-		matched := strings.Contains(lt, strings.ToLower(n))
-		if !matched {
-			for _, al := range e.Aliases {
-				al = strings.TrimSpace(al)
-				if al != "" && strings.Contains(lt, strings.ToLower(al)) {
-					matched = true
-					break
-				}
-			}
-		}
-		if matched {
-			hits = append(hits, e.Name)
-		}
-	}
-	return hits
-}
-
-// chunkKeywordHits returns chunks whose text contains a query term, preserving
-// their input order. Query terms are whitespace-split tokens of length >= 2, so
-// dense recall queries (paths, symbols) still hit even without vectors.
-func chunkKeywordHits(chunks []graph.Chunk, text string) []graph.Chunk {
-	terms := queryTerms(text)
-	if len(terms) == 0 {
-		return nil
-	}
-	var out []graph.Chunk
-	for _, ch := range chunks {
-		lc := strings.ToLower(ch.Text)
-		for _, t := range terms {
-			if strings.Contains(lc, t) {
-				out = append(out, ch)
-				break
-			}
-		}
-	}
-	return out
-}
-
-// queryTerms lowercases and splits a query into de-duplicated tokens >= 2 chars.
-func queryTerms(text string) []string {
-	seen := map[string]bool{}
-	var out []string
-	for _, f := range strings.Fields(strings.ToLower(text)) {
-		f = strings.Trim(f, ".,;:!?()[]{}\"'`")
-		if len([]rune(f)) < 2 || seen[f] {
-			continue
-		}
-		seen[f] = true
-		out = append(out, f)
-	}
-	return out
-}
-
-// fuseChunks RRF-fuses the vector-recall ranking with the keyword-hit ranking by
-// chunk ID, then returns the top chunks (capped at chunkInjectTopN) in fused
-// order. De-dupes by ID across the two lists.
-func fuseChunks(vectorRanked, keywordRanked []graph.Chunk) []graph.Chunk {
-	byID := map[string]graph.Chunk{}
-	ids := func(chunks []graph.Chunk) []string {
-		out := make([]string, 0, len(chunks))
-		for _, c := range chunks {
-			byID[c.ID] = c
-			out = append(out, c.ID)
-		}
-		return out
-	}
-	fused := rrfFuse(ids(vectorRanked), ids(keywordRanked))
-	var out []graph.Chunk
-	for _, id := range fused {
-		out = append(out, byID[id])
-		if len(out) >= chunkInjectTopN {
-			break
-		}
-	}
-	return out
-}
+// queryTerms delegates to the shared implementation; kept as a thin wrapper so
+// existing package tests continue to exercise it here.
+func queryTerms(text string) []string { return retrieve.QueryTerms(text) }
 
 // buildStructureSection renders the entity/relation section within its char
 // budget, returning the matched names (graph order), the rendered text, and the
@@ -770,16 +657,6 @@ func renderChunkSource(projectSlug, source string) string {
 		return titles[0]
 	}
 	return source
-}
-
-// lowerAll lowercases every element of a slice (used to normalize entity names
-// into RRF ids).
-func lowerAll(in []string) []string {
-	out := make([]string, len(in))
-	for i, s := range in {
-		out[i] = strings.ToLower(s)
-	}
-	return out
 }
 
 // dedupStrings returns xs with duplicates removed, preserving first-seen order.
@@ -860,67 +737,4 @@ func resolveSessionTitles(projectSlug string, ids []string) []string {
 		}
 	}
 	return out
-}
-
-// semanticSeeds returns the names of the top-K entities whose embedding is most
-// similar to the query vector qv (cosine >= knowledgeSeedMinScore), best first.
-// Returns nil when qv is empty or no entity carries a vector, so the caller falls
-// back to substring matching without erroring.
-func (a *App) semanticSeeds(qv []float32, g *graph.Graph) []string {
-	if len(qv) == 0 {
-		return nil
-	}
-
-	type scored struct {
-		name  string
-		score float32
-	}
-	var cands []scored
-	for _, e := range g.Entities {
-		if len(e.Embedding) == 0 {
-			continue
-		}
-		score := embed.Cosine(qv, e.Embedding)
-		if score < knowledgeSeedMinScore {
-			continue
-		}
-		cands = append(cands, scored{name: e.Name, score: score})
-	}
-	if len(cands) == 0 {
-		return nil
-	}
-	sort.Slice(cands, func(i, j int) bool { return cands[i].score > cands[j].score })
-	if len(cands) > knowledgeSeedTopK {
-		cands = cands[:knowledgeSeedTopK]
-	}
-	out := make([]string, len(cands))
-	for i, c := range cands {
-		out[i] = c.name
-	}
-	return out
-}
-
-// expandAlongRelations grows the hit set by walking `hops` relation edges out
-// from the currently-hit entities, treating relations as undirected so both
-// upstream and downstream neighbors are pulled in. Only names present in the
-// graph are added.
-func expandAlongRelations(g *graph.Graph, hit map[string]bool, hops int) {
-	for h := 0; h < hops; h++ {
-		frontier := map[string]bool{}
-		for _, r := range g.Relations {
-			from, to := strings.ToLower(r.From), strings.ToLower(r.To)
-			if hit[from] && !hit[to] {
-				frontier[to] = true
-			}
-			if hit[to] && !hit[from] {
-				frontier[from] = true
-			}
-		}
-		if len(frontier) == 0 {
-			break // nothing new to add
-		}
-		for n := range frontier {
-			hit[n] = true
-		}
-	}
 }

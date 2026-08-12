@@ -3,12 +3,12 @@ package main
 import (
 	"fmt"
 	"log"
-	"sort"
 	"strings"
 
 	"axon/internal/claudedata"
 	"axon/internal/embed"
 	"axon/internal/graph"
+	"axon/internal/retrieve"
 )
 
 // Chunking + raw-context retrieval tuning. These govern the "raw context"
@@ -24,19 +24,6 @@ const (
 	// codeChunkTargetChars bounds a code chunk; code is denser than prose so a
 	// single oversized function is split near this size at blank-line boundaries.
 	codeChunkTargetChars = 1600
-
-	// chunkRecallCandidates caps how many chunks the vector search keeps before
-	// fusion.
-	chunkRecallCandidates = 30
-	// chunkInjectTopN caps how many chunks are injected after fusion.
-	chunkInjectTopN = 5
-	// chunkMinScore is the cosine floor for a chunk to be a recall candidate.
-	// Slightly below the entity floor: chunks are longer, so cosine runs lower.
-	chunkMinScore = 0.30
-
-	// rrfK is the Reciprocal Rank Fusion smoothing constant. k=60 is the
-	// industry-standard, near-optimal, insensitivity-proven value.
-	rrfK = 60
 
 	// injectStructBudgetChars bounds the structure section (~800 tokens).
 	injectStructBudgetChars = 1600
@@ -291,66 +278,6 @@ func (a *App) loadChunks(dataDir, projectSlug string) []graph.Chunk {
 	return out
 }
 
-// rankChunks embeds the query and returns candidate chunks whose cosine >=
-// chunkMinScore, sorted best-first and capped at chunkRecallCandidates. Returns
-// nil when the query can't be embedded or nothing clears the floor.
-func rankChunks(qv []float32, chunks []graph.Chunk) []graph.Chunk {
-	if len(qv) == 0 || len(chunks) == 0 {
-		return nil
-	}
-	type scored struct {
-		ch    graph.Chunk
-		score float32
-	}
-	var cands []scored
-	for _, ch := range chunks {
-		s := embed.Cosine(qv, ch.Embedding)
-		if s < chunkMinScore {
-			continue
-		}
-		cands = append(cands, scored{ch: ch, score: s})
-	}
-	if len(cands) == 0 {
-		return nil
-	}
-	sort.Slice(cands, func(i, j int) bool { return cands[i].score > cands[j].score })
-	if len(cands) > chunkRecallCandidates {
-		cands = cands[:chunkRecallCandidates]
-	}
-	out := make([]graph.Chunk, len(cands))
-	for i, c := range cands {
-		out[i] = c.ch
-	}
-	return out
-}
-
-// rrfFuse merges several ranked lists of ids into one order by Reciprocal Rank
-// Fusion: score(id) = Σ 1/(rrfK + rank), rank 1-based within each list. It looks
-// only at ranks, not raw scores, so it fuses channels with incomparable units
-// (cosine vs substring vs graph hops). Ties break by first appearance, keeping
-// output stable.
-func rrfFuse(lists ...[]string) []string {
-	score := map[string]float64{}
-	firstSeen := map[string]int{}
-	order := 0
-	for _, list := range lists {
-		for rank, id := range list {
-			score[id] += 1.0 / float64(rrfK+rank+1)
-			if _, ok := firstSeen[id]; !ok {
-				firstSeen[id] = order
-				order++
-			}
-		}
-	}
-	fused := make([]string, 0, len(score))
-	for id := range score {
-		fused = append(fused, id)
-	}
-	sort.Slice(fused, func(i, j int) bool {
-		if score[fused[i]] != score[fused[j]] {
-			return score[fused[i]] > score[fused[j]]
-		}
-		return firstSeen[fused[i]] < firstSeen[fused[j]]
-	})
-	return fused
-}
+// rrfFuse delegates to the shared implementation; kept as a thin wrapper so
+// existing package tests continue to exercise it here.
+func rrfFuse(lists ...[]string) []string { return retrieve.RRFFuse(lists...) }
