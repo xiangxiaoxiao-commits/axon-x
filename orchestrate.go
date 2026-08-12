@@ -130,6 +130,10 @@ func (a *App) UpdateSpec(taskID string, spec task.Spec) error {
 	if err != nil {
 		return err
 	}
+	// Preserve enrichment provenance: it's metadata recorded at enrich time, not
+	// part of the user-editable form, so a spec save must not drop it.
+	spec.InjectedKnowledge = t.Spec.InjectedKnowledge
+	spec.KnowledgeSources = t.Spec.KnowledgeSources
 	t.Spec = spec
 	t.Status = task.StatusReviewSpec
 	t.FailedStage = ""
@@ -182,11 +186,16 @@ func (a *App) runEnrich(ctx context.Context, t task.Task) {
 	}
 
 	// Optional knowledge-graph background. Empty projectSlug skips recall; any
-	// recall error degrades silently to no background (never fatal).
+	// recall error degrades silently to no background (never fatal). We also keep
+	// the matched entity names and source session titles to record on the spec, so
+	// the user can see exactly what business knowledge the AI referenced.
 	var background string
+	var injected, sources []string
 	if strings.TrimSpace(t.ProjectSlug) != "" {
 		if km, mErr := a.MatchKnowledge(t.ProjectSlug, t.Input); mErr == nil {
 			background = km.Context
+			injected = km.Names
+			sources = km.Sources
 		}
 	}
 
@@ -207,6 +216,11 @@ func (a *App) runEnrich(ctx context.Context, t task.Task) {
 	}
 
 	spec, ok := parseSpec(reply)
+	// Record what business knowledge was injected this enrichment (empty when no
+	// project was bound or the graph recalled nothing), so it persists with the
+	// spec and the frontend can show provenance even after a manual re-edit.
+	spec.InjectedKnowledge = injected
+	spec.KnowledgeSources = sources
 
 	fresh, err := a.taskStore.GetTask(t.ID)
 	if err != nil {

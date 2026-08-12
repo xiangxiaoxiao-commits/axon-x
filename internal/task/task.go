@@ -29,6 +29,15 @@ type Spec struct {
 	AcceptCriteria []string `json:"acceptCriteria"` // 验收标准
 	MissedPoints   []string `json:"missedPoints"`   // 易遗漏点(模型补的)
 	Steps          []string `json:"steps"`          // 建议步骤
+
+	// Enrichment provenance (not user-editable): what business knowledge the
+	// knowledge graph injected into this enrichment and where it came from.
+	// InjectedKnowledge holds the matched entity names, KnowledgeSources the
+	// originating session titles. Both empty when no project was bound or the
+	// graph recalled nothing — the UI surfaces this so users can trust what the
+	// AI actually referenced.
+	InjectedKnowledge []string `json:"injectedKnowledge"` // matched business entity names
+	KnowledgeSources  []string `json:"knowledgeSources"`  // source session titles
 }
 
 // Run is one execution attempt. Append-only: reject-and-iterate adds a new Run

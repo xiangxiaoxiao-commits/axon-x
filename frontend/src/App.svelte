@@ -2,30 +2,17 @@
   import { onMount } from "svelte";
   import { activeView, currentProject, projects, loadProjects, type View } from "./lib/stores";
   import TasksView from "./views/TasksView.svelte";
-  import CommitView from "./views/CommitView.svelte";
-  import SearchView from "./views/SearchView.svelte";
-  import SessionsView from "./views/SessionsView.svelte";
   import GraphView from "./views/GraphView.svelte";
-  import ReplView from "./views/ReplView.svelte";
-  import TerminalView from "./views/TerminalView.svelte";
   import SettingsView from "./views/SettingsView.svelte";
 
   // Navigation is a plain sidebar (VSCode/Linear style): a narrow vertical rail
   // of icon + label entries. Task orchestration is the landing view.
+  // Kept intentionally focused: run tasks, browse business knowledge, configure.
   const NAV: { view: View; label: string; icon: string }[] = [
     { view: "tasks", label: "任务", icon: "◈" },
-    { view: "commit", label: "提交", icon: "⎇" },
-    { view: "search", label: "搜索", icon: "⌕" },
-    { view: "sessions", label: "会话", icon: "❐" },
     { view: "graph", label: "知识", icon: "⊹" },
-    { view: "chat", label: "对话", icon: "❯" },
-    { view: "terminal", label: "终端", icon: "▤" },
     { view: "settings", label: "设置", icon: "⚙" },
   ];
-
-  // Keep the terminal mounted once opened so its shell survives view switches.
-  let terminalOpened = false;
-  $: if ($activeView === "terminal") terminalOpened = true;
 
   let ready = false;
   onMount(async () => { ready = true; await loadProjects(); });
@@ -57,26 +44,12 @@
       </nav>
 
       <main class="view">
-        {#if $activeView === "tasks"}
-          <TasksView />
-        {:else if $activeView === "commit"}
-          <CommitView />
-        {:else if $activeView === "search"}
-          <SearchView />
-        {:else if $activeView === "sessions"}
-          <SessionsView />
-        {:else if $activeView === "graph"}
+        {#if $activeView === "graph"}
           <GraphView />
-        {:else if $activeView === "chat"}
-          <ReplView />
         {:else if $activeView === "settings"}
           <SettingsView onSaved={refreshProviders} />
-        {/if}
-        <!-- Terminal stays mounted once opened; only hidden when inactive. -->
-        {#if terminalOpened}
-          <div class="term-layer" class:hidden={$activeView !== "terminal"}>
-            <TerminalView />
-          </div>
+        {:else}
+          <TasksView />
         {/if}
       </main>
     </div>
@@ -120,6 +93,4 @@
   .proj-pick select:focus { border-color: var(--accent); }
 
   .view { flex: 1; min-width: 0; height: 100vh; position: relative; }
-  .term-layer { position: absolute; inset: 0; background: var(--bg-base); }
-  .term-layer.hidden { display: none; }
 </style>

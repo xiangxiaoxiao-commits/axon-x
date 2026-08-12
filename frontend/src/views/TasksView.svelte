@@ -364,6 +364,29 @@
           <div class="raw-view selectable">{selected.input}</div>
         </details>
 
+        <!-- Knowledge provenance: what business knowledge the graph injected into
+             this enrichment, and where it came from. Builds trust that the AI
+             actually referenced the project's business context. -->
+        {#if selected.spec?.injectedKnowledge?.length}
+          <div class="kb-bar">
+            <div class="kb-line">
+              <span class="kb-icon">🧠</span>
+              <span class="kb-label">已注入业务知识</span>
+              <span class="kb-tags">
+                {#each selected.spec.injectedKnowledge as name}<span class="kb-tag">{name}</span>{/each}
+              </span>
+            </div>
+            {#if selected.spec?.knowledgeSources?.length}
+              <div class="kb-src">来源：{selected.spec.knowledgeSources.join("、")}</div>
+            {/if}
+          </div>
+        {:else}
+          <div class="kb-bar kb-empty">
+            <span class="kb-icon">💡</span>
+            本次未注入业务知识 —— 绑定一个知识项目可让 AI 更懂你的业务
+          </div>
+        {/if}
+
         <label class="fld">
           <span class="lbl">目标</span>
           <textarea bind:value={spec.goal} on:input={touchSpec} rows="2"></textarea>
@@ -535,6 +558,27 @@
   .raw-fold summary { cursor: pointer; color: var(--text-muted); font-size: 12px; margin-bottom: 8px; }
   .meta-line { color: var(--text-muted); font-size: 12px; margin: 0 0 14px; }
   .warn-note { color: var(--warning); font-size: 12.5px; margin: 0 0 14px; }
+
+  /* Knowledge provenance bar (review_spec) */
+  .kb-bar {
+    background: var(--bg-elevated); border: 1px solid var(--border);
+    border-left: 3px solid var(--accent); border-radius: var(--radius-control);
+    padding: 9px 12px; margin: 0 0 16px; font-size: 12.5px;
+  }
+  .kb-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .kb-icon { flex: 0 0 auto; }
+  .kb-label { color: var(--text-primary); font-weight: 600; }
+  .kb-tags { display: inline-flex; gap: 6px; flex-wrap: wrap; }
+  .kb-tag {
+    font-size: 11.5px; padding: 1px 8px; border-radius: 999px;
+    background: rgba(59, 130, 246, 0.12);
+    border: 1px solid var(--accent); color: var(--accent);
+  }
+  .kb-src { color: var(--text-muted); font-size: 11.5px; margin-top: 6px; }
+  .kb-empty {
+    border-left-color: var(--border); color: var(--text-muted);
+    display: flex; align-items: center; gap: 8px;
+  }
 
   /* List-type spec fields */
   .li-row { display: flex; gap: 6px; margin-bottom: 6px; }

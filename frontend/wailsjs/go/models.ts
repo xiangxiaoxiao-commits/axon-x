@@ -429,6 +429,8 @@ export namespace task {
 	    acceptCriteria: string[];
 	    missedPoints: string[];
 	    steps: string[];
+	    injectedKnowledge: string[];
+	    knowledgeSources: string[];
 	
 	    static createFrom(source: any = {}) {
 	        return new Spec(source);
@@ -443,6 +445,8 @@ export namespace task {
 	        this.acceptCriteria = source["acceptCriteria"];
 	        this.missedPoints = source["missedPoints"];
 	        this.steps = source["steps"];
+	        this.injectedKnowledge = source["injectedKnowledge"];
+	        this.knowledgeSources = source["knowledgeSources"];
 	    }
 	}
 	export class Task {
