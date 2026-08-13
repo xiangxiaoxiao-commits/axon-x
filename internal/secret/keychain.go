@@ -1,3 +1,5 @@
+//go:build darwin
+
 package secret
 
 import (
@@ -18,6 +20,11 @@ var _ Store = (*KeychainStore)(nil)
 // NewKeychainStore returns a Store backed by the macOS Keychain.
 func NewKeychainStore() *KeychainStore {
 	return &KeychainStore{}
+}
+
+// New returns the platform's credential-store Store (macOS Keychain).
+func New() Store {
+	return NewKeychainStore()
 }
 
 // newItem builds a Keychain item for ref with the store's fixed accessibility

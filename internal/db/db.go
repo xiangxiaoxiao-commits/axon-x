@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite" // pure-Go driver (no cgo): builds on Windows/macOS/Linux
 )
 
 // migrationFS embeds the versioned SQL migration files. Each file is named
@@ -37,13 +37,14 @@ func Open(dataDir string) (*sql.DB, error) {
 
 	dbPath := filepath.Join(dataDir, dbFileName)
 
-	// PRAGMAs are set via the DSN so every pooled connection inherits them.
+	// PRAGMAs are set via the DSN so every pooled connection inherits them
+	// (modernc.org/sqlite uses the _pragma= query syntax).
 	// journal_mode=WAL: durable append-only writes, readers don't block writer.
 	// foreign_keys=ON: enforce ON DELETE CASCADE from conversations to messages.
 	// busy_timeout: wait instead of failing immediately on a locked database.
-	dsn := fmt.Sprintf("file:%s?_journal_mode=WAL&_foreign_keys=ON&_busy_timeout=5000", dbPath)
+	dsn := fmt.Sprintf("file:%s?_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)&_pragma=busy_timeout(5000)", dbPath)
 
-	sqlDB, err := sql.Open("sqlite3", dsn)
+	sqlDB, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite %q: %w", dbPath, err)
 	}
@@ -62,15 +63,17 @@ func Open(dataDir string) (*sql.DB, error) {
 	return sqlDB, nil
 }
 
-// AppDataDir returns the macOS application data directory
-// (~/Library/Application Support/axon), creating it if it does not exist.
+// AppDataDir returns the per-user application data directory for axon,
+// creating it if it does not exist. It resolves the OS-native config root via
+// os.UserConfigDir: ~/Library/Application Support on macOS, %AppData% on
+// Windows, $XDG_CONFIG_HOME (or ~/.config) on Linux — then appends "axon".
 func AppDataDir() (string, error) {
-	home, err := os.UserHomeDir()
+	base, err := os.UserConfigDir()
 	if err != nil {
-		return "", fmt.Errorf("resolve home dir: %w", err)
+		return "", fmt.Errorf("resolve user config dir: %w", err)
 	}
 
-	dir := filepath.Join(home, "Library", "Application Support", "axon")
+	dir := filepath.Join(base, "axon")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", fmt.Errorf("create app data dir %q: %w", dir, err)
 	}

@@ -1,3 +1,5 @@
+//go:build darwin || windows
+
 package secret
 
 import (
@@ -8,7 +10,7 @@ import (
 )
 
 // randomRef returns a unique, namespaced account name so the test never
-// collides with or clobbers real secrets in the developer's Keychain.
+// collides with or clobbers real secrets in the OS credential store.
 func randomRef(t *testing.T) string {
 	t.Helper()
 	b := make([]byte, 8)
@@ -18,8 +20,8 @@ func randomRef(t *testing.T) string {
 	return "axon-test-" + hex.EncodeToString(b)
 }
 
-func TestKeychainStore_RoundTrip(t *testing.T) {
-	store := NewKeychainStore()
+func TestStore_RoundTrip(t *testing.T) {
+	store := New()
 	ref := randomRef(t)
 	const value = "sk-test-secret-value"
 
@@ -59,8 +61,8 @@ func TestKeychainStore_RoundTrip(t *testing.T) {
 	}
 }
 
-func TestKeychainStore_SetOverwrites(t *testing.T) {
-	store := NewKeychainStore()
+func TestStore_SetOverwrites(t *testing.T) {
+	store := New()
 	ref := randomRef(t)
 	t.Cleanup(func() {
 		_ = store.Delete(ref)
@@ -82,8 +84,8 @@ func TestKeychainStore_SetOverwrites(t *testing.T) {
 	}
 }
 
-func TestKeychainStore_DeleteMissingIsNoError(t *testing.T) {
-	store := NewKeychainStore()
+func TestStore_DeleteMissingIsNoError(t *testing.T) {
+	store := New()
 	if err := store.Delete(randomRef(t)); err != nil {
 		t.Fatalf("Delete of missing ref: got %v, want nil", err)
 	}

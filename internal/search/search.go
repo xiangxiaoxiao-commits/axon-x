@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"path/filepath"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite" // pure-Go driver (no cgo): builds on Windows/macOS/Linux
 )
 
 // Index is the keyword-search index over session messages.
@@ -30,7 +30,7 @@ type Hit struct {
 // Open creates/opens the search index database under dataDir.
 func Open(dataDir string) (*Index, error) {
 	p := filepath.Join(dataDir, "search.db")
-	db, err := sql.Open("sqlite3", fmt.Sprintf("file:%s?_journal_mode=WAL&_busy_timeout=5000", p))
+	db, err := sql.Open("sqlite", fmt.Sprintf("file:%s?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)", p))
 	if err != nil {
 		return nil, fmt.Errorf("open search db: %w", err)
 	}
