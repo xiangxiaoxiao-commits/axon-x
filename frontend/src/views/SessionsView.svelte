@@ -14,11 +14,53 @@
   let curCwd = "";
   let filter = "";
   let loading = false;
+  // Active model filter: "" = all models. Set from the top dropdown.
+  let modelFilter = "";
 
   function fmtTime(ms: number): string {
     if (!ms) return "";
     return new Date(ms).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
   }
+
+  // modelFamily reduces a raw model id (e.g. "claude-opus-4-8",
+  // "claude-3-5-sonnet-20241022") to a short family label for grouping/badges.
+  // Unknown ids fall back to a trimmed form so nothing is silently dropped.
+  function modelFamily(id: string): string {
+    if (!id) return "未知";
+    const s = id.toLowerCase();
+    if (s.includes("opus")) return "Opus";
+    if (s.includes("sonnet")) return "Sonnet";
+    if (s.includes("haiku")) return "Haiku";
+    if (s.includes("gpt")) return "GPT";
+    if (s.includes("gemini")) return "Gemini";
+    return id.replace(/^claude-/, "").slice(0, 12);
+  }
+
+  // Stable accent per family so a badge's color is recognizable at a glance.
+  function modelColor(fam: string): string {
+    switch (fam) {
+      case "Opus": return "#a371f7";
+      case "Sonnet": return "#3fb950";
+      case "Haiku": return "#d29922";
+      case "GPT": return "#2f81f7";
+      case "Gemini": return "#db61a2";
+      default: return "var(--text-muted)";
+    }
+  }
+
+  // Time bucket for grouping: 今天 / 昨天 / 近 7 天 / 更早. Buckets are computed
+  // against local midnight so "今天" means calendar-today, not last-24h.
+  function timeBucket(ms: number): string {
+    if (!ms) return "更早";
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const day = 86400000;
+    if (ms >= startOfToday) return "今天";
+    if (ms >= startOfToday - day) return "昨天";
+    if (ms >= startOfToday - 7 * day) return "近 7 天";
+    return "更早";
+  }
+  const BUCKET_ORDER = ["今天", "昨天", "近 7 天", "更早"];
 
   // Reload the session list whenever the global project changes.
   let loadedFor = " ";
@@ -66,22 +108,60 @@
     return t.length > n ? "…" + t.slice(-n) : t;
   }
 
-  $: shownSessions = filter
-    ? sessions.filter((s) => (s.title || "").toLowerCase().includes(filter.toLowerCase()))
-    : sessions;
+  // Distinct model families present in the current project, for the filter
+  // dropdown (with a count each). Ordered by frequency, most-used first.
+  $: modelOptions = (() => {
+    const counts = new Map<string, number>();
+    for (const s of sessions) {
+      const fam = modelFamily(s.model);
+      counts.set(fam, (counts.get(fam) || 0) + 1);
+    }
+    return [...counts.entries()].sort((a, b) => b[1] - a[1]);
+  })();
+
+  // Apply title search + model filter, then keep newest-first (backend already
+  // sorts by updatedAt desc, so a stable filter preserves that order).
+  $: shownSessions = sessions.filter((s) => {
+    if (filter && !(s.title || "").toLowerCase().includes(filter.toLowerCase())) return false;
+    if (modelFilter && modelFamily(s.model) !== modelFilter) return false;
+    return true;
+  });
+
+  // Group the shown sessions into time buckets, dropping empty buckets. Within a
+  // bucket, newest-first is inherited from shownSessions.
+  $: grouped = BUCKET_ORDER
+    .map((label) => ({ label, items: shownSessions.filter((s) => timeBucket(s.updatedAt) === label) }))
+    .filter((g) => g.items.length > 0);
 </script>
 
 <div class="browser">
   <div class="col sessions">
     <input class="filter" placeholder="搜索会话标题…" bind:value={filter} />
-    {#each shownSessions as s}
-      <div class="item" class:active={s.id === curSession}>
-        <button class="item-main" on:click={() => selectSession(s)}>
-          <div class="item-title">{s.title || "(无标题)"}</div>
-          <div class="item-sub">{s.messageCount} 条 · {fmtTime(s.updatedAt)}</div>
-        </button>
-        <button class="resume" title="在 app 内新终端标签恢复此会话" on:click={(e) => resume(s, e)}>▶ 恢复</button>
+    {#if $currentProject && modelOptions.length > 1}
+      <div class="model-filter">
+        <button class="mf-chip" class:on={modelFilter === ""} on:click={() => (modelFilter = "")}>全部</button>
+        {#each modelOptions as [fam, n]}
+          <button class="mf-chip" class:on={modelFilter === fam}
+            style="--mc:{modelColor(fam)}" on:click={() => (modelFilter = modelFilter === fam ? "" : fam)}>
+            {fam} <span class="mf-n">{n}</span>
+          </button>
+        {/each}
       </div>
+    {/if}
+    {#each grouped as grp (grp.label)}
+      <div class="group-head">{grp.label} <span class="gh-n">{grp.items.length}</span></div>
+      {#each grp.items as s (s.id)}
+        <div class="item" class:active={s.id === curSession}>
+          <button class="item-main" on:click={() => selectSession(s)}>
+            <div class="item-title">{s.title || "(无标题)"}</div>
+            <div class="item-sub">
+              <span class="badge" style="--mc:{modelColor(modelFamily(s.model))}">{modelFamily(s.model)}</span>
+              {s.messageCount} 条 · {fmtTime(s.updatedAt)}
+            </div>
+          </button>
+          <button class="resume" title="在 app 内新终端标签恢复此会话" on:click={(e) => resume(s, e)}>▶ 恢复</button>
+        </div>
+      {/each}
     {/each}
     {#if !$currentProject}<div class="empty">在顶部选择一个项目查看它的会话</div>
     {:else if shownSessions.length === 0}<div class="empty">无会话</div>{/if}
@@ -93,7 +173,7 @@
         <div class="pc-head">
           <span class="pc-label">最后进度</span>
           {#if curCwd}<span class="pc-cwd selectable">{curCwd}</span>{/if}
-          <button class="resume sm" title="在 app 内新终端标签恢复此会话" on:click={(e) => resume(sessions.find((x) => x.id === curSession), e)}>▶ 恢复</button>
+          <button class="resume sm" title="在 app 内新终端标签恢复此会话" on:click={(e) => { const s = sessions.find((x) => x.id === curSession); if (s) resume(s, e); }}>▶ 恢复</button>
         </div>
         {#if resumeErr}<div class="pc-err">恢复失败：{resumeErr}</div>{/if}
         {#if progress.lastUser}
@@ -183,7 +263,62 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  .item-sub { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+  .item-sub {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 3px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .badge {
+    flex: 0 0 auto;
+    font-size: 10px;
+    line-height: 1;
+    padding: 2px 5px;
+    border-radius: var(--radius-control);
+    color: var(--mc);
+    border: 1px solid color-mix(in srgb, var(--mc) 45%, transparent);
+    background: color-mix(in srgb, var(--mc) 12%, transparent);
+  }
+  .model-filter {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--border);
+  }
+  .mf-chip {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: var(--radius-control);
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: all .12s;
+  }
+  .mf-chip:hover { color: var(--text-primary); }
+  .mf-chip.on {
+    color: var(--mc, var(--accent));
+    border-color: color-mix(in srgb, var(--mc, var(--accent)) 55%, transparent);
+    background: color-mix(in srgb, var(--mc, var(--accent)) 14%, transparent);
+  }
+  .mf-n { opacity: .6; }
+  .group-head {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    padding: 6px 12px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: .5px;
+    color: var(--text-muted);
+    background: var(--bg-base);
+    border-bottom: 1px solid var(--border);
+  }
+  .gh-n { opacity: .5; font-weight: 400; }
   .empty { padding: 16px; color: var(--text-muted); font-size: 12px; }
   .progress-card {
     border: 1px solid var(--border);
