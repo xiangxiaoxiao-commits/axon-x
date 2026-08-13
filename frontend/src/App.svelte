@@ -3,6 +3,7 @@
   import { activeView, currentProject, projects, loadProjects, type View } from "./lib/stores";
   import GraphView from "./views/GraphView.svelte";
   import SettingsView from "./views/SettingsView.svelte";
+  import AboutView from "./views/AboutView.svelte";
 
   // Navigation is a plain sidebar (VSCode/Linear style): a narrow vertical rail
   // of icon + label entries. The product is an agent-context enhancer: build a
@@ -15,6 +16,7 @@
   ];
 
   let ready = false;
+  let showAbout = false;
   onMount(async () => { ready = true; await loadProjects(); });
   function refreshProviders() {}
 
@@ -25,7 +27,7 @@
   {#if ready}
     <div class="shell">
       <nav class="sidebar">
-        <div class="brand">axon</div>
+        <button class="brand" on:click={() => (showAbout = true)} title="查看功能与原理">axon<span class="brand-hint">ⓘ</span></button>
         <div class="nav">
           {#each NAV as n}
             <button class="nav-item" class:active={$activeView === n.view} on:click={() => go(n.view)}>
@@ -52,6 +54,10 @@
       </main>
     </div>
   {/if}
+
+  {#if showAbout}
+    <AboutView onClose={() => (showAbout = false)} />
+  {/if}
 </div>
 
 <style>
@@ -63,9 +69,14 @@
     background: var(--bg-surface); border-right: 1px solid var(--border);
   }
   .brand {
+    display: flex; align-items: center; gap: 6px;
     padding: 14px 16px 10px; font-family: var(--font-mono); font-weight: 700;
     font-size: 14px; letter-spacing: 1px; color: var(--accent);
+    background: transparent; border: none; cursor: pointer; text-align: left;
   }
+  .brand:hover { filter: brightness(1.15); }
+  .brand-hint { font-size: 11px; opacity: .55; font-weight: 400; }
+  .brand:hover .brand-hint { opacity: 1; }
   .nav { flex: 1; overflow-y: auto; padding: 4px 8px; }
   .nav-item {
     width: 100%; display: flex; align-items: center; gap: 10px;
