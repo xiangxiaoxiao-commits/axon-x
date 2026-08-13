@@ -43,14 +43,24 @@ func (h *toolHandler) list() map[string]interface{} {
 		"tools": []toolDef{
 			{
 				Name:        "search_knowledge",
-				Description: "查询某个项目沉淀的业务知识图谱：给一段自然语言 query，返回相关的实体+事实(结构)与原文片段(内容)，带来源标注。用于回忆这个项目以前的设计决策、踩过的坑、约束、接口约定等。",
+				Description: "查询某个项目沉淀的业务知识图谱：给一段自然语言 query，返回相关的实体+事实(结构)与原文片段(内容)，带来源标注。用于回忆这个项目以前的设计决策、踩过的坑、约束、接口约定等。project 可省略——省略时自动按当前工作目录定位项目，通常不用先调 list_projects。",
 				InputSchema: map[string]interface{}{
 					"type": "object",
 					"properties": map[string]interface{}{
-						"project": strProp("项目 slug（用 list_projects 获取）"),
+						"project": strProp("项目 slug；省略则自动用当前工作目录定位。跨项目查询才需显式传（用 list_projects 获取）"),
 						"query":   strProp("自然语言查询，例如“支付回调怎么做幂等”"),
 					},
-					"required": []string{"project", "query"},
+					"required": []string{"query"},
+				},
+			},
+			{
+				Name:        "project_overview",
+				Description: "一次拿到当前项目的知识骨架：核心模块/服务、关键设计决策与约束、以及最常被提及的实体。冷启动首选——开工前先调它建立整体认知，再按需 search_knowledge 深挖。project 可省略（自动用当前工作目录定位）。纯本地、不调模型。",
+				InputSchema: map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"project": strProp("项目 slug；省略则自动用当前工作目录定位"),
+					},
 				},
 			},
 			{
@@ -63,25 +73,25 @@ func (h *toolHandler) list() map[string]interface{} {
 			},
 			{
 				Name:        "get_entity",
-				Description: "查看某项目里一个实体的全部信息：observations(事实) + 关系 + 别名。名字支持别名与大小写不敏感匹配。",
+				Description: "查看某项目里一个实体的全部信息：observations(事实) + 关系 + 别名。名字支持别名与大小写不敏感匹配。project 可省略——省略时自动按当前工作目录定位项目。",
 				InputSchema: map[string]interface{}{
 					"type": "object",
 					"properties": map[string]interface{}{
-						"project": strProp("项目 slug"),
+						"project": strProp("项目 slug；省略则自动用当前工作目录定位"),
 						"name":    strProp("实体名或其别名"),
 					},
-					"required": []string{"project", "name"},
+					"required": []string{"name"},
 				},
 			},
 			{
 				Name: "remember_knowledge",
 				Description: "把本次对话里学到的、以后还用得上的持久业务知识写回该项目的知识图谱（让它越用越懂）。" +
 					"只记录持久知识：设计决策及理由、约束/坑、接口约定、模块职责与关系；不要记临时调试、寒暄或一次性操作。" +
-					"通过别名归一，新知识会自动并入已有的同名实体。写入后立即对后续 search_knowledge / get_entity 生效。",
+					"通过别名归一，新知识会自动并入已有的同名实体。写入后立即对后续 search_knowledge / get_entity 生效。project 可省略——省略时自动按当前工作目录定位项目（新项目也会据此自动建图）。",
 				InputSchema: map[string]interface{}{
 					"type": "object",
 					"properties": map[string]interface{}{
-						"project": strProp("项目 slug（用 list_projects 获取）"),
+						"project": strProp("项目 slug；省略则自动用当前工作目录定位/新建"),
 						"entities": map[string]interface{}{
 							"type":        "array",
 							"description": "要记住的实体列表。每个实体：name(实体名) + type(module|service|concept|decision|constraint) + observations(关于它的事实，一句话一条) + 可选 aliases(别名/中英文/简称)。",
@@ -110,7 +120,7 @@ func (h *toolHandler) list() map[string]interface{} {
 							},
 						},
 					},
-					"required": []string{"project", "entities"},
+					"required": []string{"entities"},
 				},
 			},
 		},
@@ -148,6 +158,8 @@ func (h *toolHandler) call(raw json.RawMessage) (*toolResult, error) {
 	switch p.Name {
 	case "search_knowledge":
 		return h.searchKnowledge(p.Arguments)
+	case "project_overview":
+		return h.projectOverview(p.Arguments)
 	case "list_projects":
 		return h.listProjects()
 	case "get_entity":
@@ -166,6 +178,10 @@ func (h *toolHandler) listProjects() (*toolResult, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list projects: %w", err)
 	}
+	// The slug auto-resolved from cwd, so the catalog can flag "← 当前目录" and
+	// the agent knows it can just omit project on subsequent calls.
+	current, _ := h.resolveSlug("")
+
 	var b strings.Builder
 	b.WriteString("已建知识图谱的项目：\n\n")
 	found := 0
@@ -175,7 +191,11 @@ func (h *toolHandler) listProjects() (*toolResult, error) {
 			continue // no cache yet: not queryable, skip
 		}
 		found++
-		fmt.Fprintf(&b, "- slug: `%s`\n  路径: %s\n  实体数: %d\n", p.Slug, p.Path, len(g.Entities))
+		marker := ""
+		if p.Slug == current {
+			marker = "  ← 当前目录（省略 project 即用它）"
+		}
+		fmt.Fprintf(&b, "- slug: `%s`%s\n  路径: %s\n  实体数: %d\n", p.Slug, marker, p.Path, len(g.Entities))
 	}
 	if found == 0 {
 		return textResult("还没有任何已建索引的项目。请先在 axon GUI 里对项目「建索引」。"), nil
@@ -196,17 +216,22 @@ func (h *toolHandler) searchKnowledge(raw json.RawMessage) (*toolResult, error) 
 	if err := json.Unmarshal(raw, &a); err != nil {
 		return nil, fmt.Errorf("parse arguments: %w", err)
 	}
-	a.Project, a.Query = strings.TrimSpace(a.Project), strings.TrimSpace(a.Query)
-	if a.Project == "" || a.Query == "" {
-		return nil, fmt.Errorf("project 和 query 都必填")
+	a.Query = strings.TrimSpace(a.Query)
+	if a.Query == "" {
+		return nil, fmt.Errorf("query 必填")
 	}
+	slug, src := h.resolveSlug(a.Project)
+	if slug == "" {
+		return nil, fmt.Errorf("无法确定项目：请显式传 project，或用 list_projects 查看可用项目")
+	}
+	a.Project = slug
 
 	g, err := retrieve.AssembleGraph(h.dataDir, a.Project)
 	if err != nil {
 		return nil, fmt.Errorf("assemble graph: %w", err)
 	}
 	if len(g.Entities) == 0 {
-		return textResult(fmt.Sprintf("项目 `%s` 还没有知识图谱（未建索引或 slug 不对，用 list_projects 确认）。", a.Project)), nil
+		return textResult(noGraphMsg(a.Project, src)), nil
 	}
 
 	// Embed the query per the configured mode. A nil embedder means semantic
@@ -259,13 +284,21 @@ func (h *toolHandler) getEntity(raw json.RawMessage) (*toolResult, error) {
 	if err := json.Unmarshal(raw, &a); err != nil {
 		return nil, fmt.Errorf("parse arguments: %w", err)
 	}
-	a.Project, a.Name = strings.TrimSpace(a.Project), strings.TrimSpace(a.Name)
-	if a.Project == "" || a.Name == "" {
-		return nil, fmt.Errorf("project 和 name 都必填")
+	a.Name = strings.TrimSpace(a.Name)
+	if a.Name == "" {
+		return nil, fmt.Errorf("name 必填")
 	}
+	slug, src := h.resolveSlug(a.Project)
+	if slug == "" {
+		return nil, fmt.Errorf("无法确定项目：请显式传 project，或用 list_projects 查看可用项目")
+	}
+	a.Project = slug
 	g, err := retrieve.AssembleGraph(h.dataDir, a.Project)
 	if err != nil {
 		return nil, fmt.Errorf("assemble graph: %w", err)
+	}
+	if len(g.Entities) == 0 {
+		return textResult(noGraphMsg(a.Project, src)), nil
 	}
 	e, ok := findEntity(g, a.Name)
 	if !ok {
@@ -296,6 +329,18 @@ func (h *toolHandler) getEntity(raw json.RawMessage) (*toolResult, error) {
 		}
 	}
 	return textResult(b.String()), nil
+}
+
+// noGraphMsg explains an empty-graph result differently by how the slug was
+// resolved: an auto-derived slug that has no cache usually means "this project
+// isn't indexed yet" rather than "you passed the wrong slug".
+func noGraphMsg(slug string, src slugSource) string {
+	switch src {
+	case slugMatched, slugExplicit:
+		return fmt.Sprintf("项目 `%s` 还没有知识图谱（未建索引或 slug 不对，用 list_projects 确认）。", slug)
+	default: // slugDerived: cwd had no matching cache dir
+		return fmt.Sprintf("当前目录还没有建过知识图谱（自动定位到 slug `%s`）。先在 axon GUI 里对本项目「建索引」，或用 list_projects 看有哪些已建项目、再显式传 project。", slug)
+	}
 }
 
 // findEntity looks an entity up by name or alias, case-insensitively.

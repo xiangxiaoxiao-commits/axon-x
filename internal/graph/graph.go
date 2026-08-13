@@ -93,3 +93,7 @@ func Save(dataDir string, g *Graph) error {
 
 // normKey lowercases and trims a name for case-insensitive de-duplication.
 func normKey(s string) string { return strings.ToLower(strings.TrimSpace(s)) }
+
+// NormName exposes the same name normalization Merge uses, so callers outside
+// the package can predict how two names will collide (lowercase + trim).
+func NormName(s string) string { return normKey(s) }

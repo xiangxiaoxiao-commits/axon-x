@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -9,6 +11,7 @@ import (
 
 	"axon/internal/embed"
 	"axon/internal/graph"
+	"axon/internal/retrieve"
 )
 
 // rememberArgs is the remember_knowledge argument shape. It mirrors the same
@@ -44,14 +47,19 @@ func (h *toolHandler) rememberKnowledge(raw json.RawMessage) (*toolResult, error
 	if err := json.Unmarshal(raw, &a); err != nil {
 		return nil, fmt.Errorf("parse arguments: %w", err)
 	}
-	a.Project = strings.TrimSpace(a.Project)
-	if a.Project == "" {
-		return nil, fmt.Errorf("project 必填")
+	slug, _ := h.resolveSlug(a.Project)
+	if slug == "" {
+		return nil, fmt.Errorf("无法确定项目：请显式传 project，或用 list_projects 查看可用项目")
 	}
+	a.Project = slug
 
 	// Build entities, dropping empties and stamping provenance so each fact is
-	// traceable back to "this MCP session learned it".
-	source := fmt.Sprintf("mcp:%d", time.Now().UnixMilli())
+	// traceable back to "this MCP session learned it". The key carries a random
+	// suffix, not just a millisecond timestamp: parallel subagents fanning out
+	// under one Claude Code session can call remember_knowledge in the same
+	// millisecond, and a timestamp-only key would make them collide on the same
+	// cache file (and .tmp) and clobber each other's knowledge.
+	source := fmt.Sprintf("mcp:%d-%s", time.Now().UnixMilli(), randSuffix())
 	var ents []graph.Entity
 	for _, e := range a.Entities {
 		name := strings.TrimSpace(e.Name)
@@ -100,8 +108,23 @@ func (h *toolHandler) rememberKnowledge(raw json.RawMessage) (*toolResult, error
 	// same EmbeddingMode the GUI/recall path uses. A nil embedder (semantic mode
 	// with unusable cloud) means we store without vectors — they still match via
 	// substring/keyword — rather than blocking the write.
-	if emb := newEmbedder(h.ctx, h.cfg, h.secrets, h.probe); emb != nil {
+	emb := newEmbedder(h.ctx, h.cfg, h.secrets, h.probe)
+	if emb != nil {
 		embedEntities(h.ctx, emb, ents)
+	}
+
+	// Write-time entity resolution: only with a real semantic embedder (the local
+	// lexical embedder's surface-overlap vectors add nothing past alias matching).
+	// Relabel near-identical incoming entities onto their existing canonical name
+	// and strip reworded-duplicate observations, so repeated agent writes fold
+	// into one node instead of polluting the graph with near-duplicates.
+	if emb != nil && emb.Model() != embed.LocalModelID {
+		if g, err := retrieve.AssembleGraph(h.dataDir, a.Project); err == nil {
+			ents = resolveEntities(g.Entities, ents)
+		}
+		if len(ents) == 0 {
+			return textResult(fmt.Sprintf("这些知识项目 `%s` 里都已经有了，未新增。", a.Project)), nil
+		}
 	}
 
 	// Persist as a dedicated cache entry. Mtime is "now" and the key is unique
@@ -141,6 +164,18 @@ func embedEntities(ctx context.Context, emb embed.Embedder, ents []graph.Entity)
 			ents[i].Embedding = v
 		}
 	}
+}
+
+// randSuffix returns a short random hex string, disambiguating cache keys written
+// in the same millisecond by concurrent callers. On the astronomically unlikely
+// rand failure it degrades to a fixed marker (the millisecond still separates
+// most writes).
+func randSuffix() string {
+	var b [4]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "x"
+	}
+	return hex.EncodeToString(b[:])
 }
 
 // trimAll trims and drops empty strings from a slice.
