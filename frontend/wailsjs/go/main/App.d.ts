@@ -88,6 +88,8 @@ export function RepoStatus(arg1:string):Promise<gitx.RepoStatus>;
 
 export function ResumeCommand(arg1:string,arg2:string):Promise<string>;
 
+export function ResumeInITerm(arg1:string,arg2:string):Promise<void>;
+
 export function ReviewTask(arg1:string,arg2:string,arg3:string):Promise<void>;
 
 export function RunTask(arg1:string):Promise<void>;

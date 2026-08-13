@@ -19,26 +19,31 @@ func TestShellQuote(t *testing.T) {
 	}
 }
 
-func TestResumeCommand(t *testing.T) {
-	a := &App{}
-
-	got := a.ResumeCommand("/Users/x/xx", "abc-123")
-	want := "cd '/Users/x/xx' && claude --resume 'abc-123'\n"
+func TestResumeShellCommand(t *testing.T) {
+	got := resumeShellCommand("/Users/x/xx", "abc-123")
+	want := "cd '/Users/x/xx' && claude --resume 'abc-123'"
 	if got != want {
 		t.Errorf("with cwd: got %q, want %q", got, want)
 	}
 
 	// No cwd: skip the cd, resume in place.
-	got = a.ResumeCommand("", "abc-123")
-	want = "claude --resume 'abc-123'\n"
+	got = resumeShellCommand("", "abc-123")
+	want = "claude --resume 'abc-123'"
 	if got != want {
 		t.Errorf("no cwd: got %q, want %q", got, want)
 	}
 
 	// A cwd that tries to break out stays a single quoted arg.
-	got = a.ResumeCommand("/tmp'; rm -rf /", "id")
-	want = `cd '/tmp'\''; rm -rf /' && claude --resume 'id'` + "\n"
+	got = resumeShellCommand("/tmp'; rm -rf /", "id")
+	want = `cd '/tmp'\''; rm -rf /' && claude --resume 'id'`
 	if got != want {
 		t.Errorf("injection cwd: got %q, want %q", got, want)
+	}
+}
+
+func TestResumeCommandNewline(t *testing.T) {
+	a := &App{}
+	if got := a.ResumeCommand("/x", "id"); got != "cd '/x' && claude --resume 'id'\n" {
+		t.Errorf("ResumeCommand should append newline, got %q", got)
 	}
 }

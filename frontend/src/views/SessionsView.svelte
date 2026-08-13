@@ -2,10 +2,10 @@
   // Browse Claude Code's saved sessions: projects -> sessions -> transcript.
   // These live on disk under ~/.claude and are never lost when a tab closes.
   import {
-    ListClaudeSessions, ReadClaudeSession, ClaudeSessionProgress, ResumeCommand,
+    ListClaudeSessions, ReadClaudeSession, ClaudeSessionProgress, ResumeInITerm,
   } from "../../wailsjs/go/main/App.js";
   import type { claudedata } from "../../wailsjs/go/models";
-  import { currentProject, activeView, pendingResume } from "../lib/stores";
+  import { currentProject } from "../lib/stores";
 
   let sessions: claudedata.SessionMeta[] = [];
   let messages: claudedata.SessionMessage[] = [];
@@ -41,14 +41,19 @@
     finally { loading = false; }
   }
 
-  // Hand the ready-to-run command to the terminal and switch to it. The
-  // terminal injects it once its shell is ready.
+  let resumeErr = "";
+
+  // Open the session in a NEW iTerm tab (native multi-window, unlike the single
+  // embedded terminal), running `cd <cwd> && claude --resume <id>` there.
   async function resume(s: claudedata.SessionMeta, e: Event) {
     e.stopPropagation(); // don't also trigger selectSession
+    resumeErr = "";
     try {
-      pendingResume.set(await ResumeCommand(s.cwd, s.id));
-      activeView.set("terminal");
-    } catch (err) { console.error(err); }
+      await ResumeInITerm(s.cwd, s.id);
+    } catch (err) {
+      resumeErr = String(err);
+      console.error(err);
+    }
   }
 
   // Tail of the last assistant reply, so the card previews the ending, not a
@@ -72,7 +77,7 @@
           <div class="item-title">{s.title || "(无标题)"}</div>
           <div class="item-sub">{s.messageCount} 条 · {fmtTime(s.updatedAt)}</div>
         </button>
-        <button class="resume" title="在终端恢复此会话" on:click={(e) => resume(s, e)}>▶ 恢复</button>
+        <button class="resume" title="在 iTerm 新标签恢复此会话" on:click={(e) => resume(s, e)}>▶ 恢复</button>
       </div>
     {/each}
     {#if !$currentProject}<div class="empty">在顶部选择一个项目查看它的会话</div>
@@ -85,8 +90,9 @@
         <div class="pc-head">
           <span class="pc-label">最后进度</span>
           {#if curCwd}<span class="pc-cwd selectable">{curCwd}</span>{/if}
-          <button class="resume sm" on:click={(e) => resume(sessions.find((x) => x.id === curSession), e)}>▶ 恢复</button>
+          <button class="resume sm" title="在 iTerm 新标签恢复此会话" on:click={(e) => resume(sessions.find((x) => x.id === curSession), e)}>▶ 恢复</button>
         </div>
+        {#if resumeErr}<div class="pc-err">恢复失败：{resumeErr}</div>{/if}
         {#if progress.lastUser}
           <div class="pc-block"><span class="pc-role user">你</span><div class="pc-text selectable">{progress.lastUser}</div></div>
         {/if}
@@ -186,6 +192,7 @@
   .pc-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
   .pc-label { font-size: 11px; font-weight: 600; color: var(--accent); letter-spacing: .5px; }
   .pc-cwd { flex: 1; min-width: 0; font-size: 11px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .pc-err { font-size: 11.5px; color: #f85149; margin-bottom: 6px; }
   .pc-block { display: flex; gap: 8px; padding: 4px 0; }
   .pc-role { flex: 0 0 22px; font-size: 11px; text-align: center; padding-top: 1px; }
   .pc-role.user { color: var(--accent); }

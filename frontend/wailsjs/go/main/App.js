@@ -158,6 +158,10 @@ export function ResumeCommand(arg1, arg2) {
   return window['go']['main']['App']['ResumeCommand'](arg1, arg2);
 }
 
+export function ResumeInITerm(arg1, arg2) {
+  return window['go']['main']['App']['ResumeInITerm'](arg1, arg2);
+}
+
 export function ReviewTask(arg1, arg2, arg3) {
   return window['go']['main']['App']['ReviewTask'](arg1, arg2, arg3);
 }

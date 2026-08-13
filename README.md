@@ -49,14 +49,17 @@ Axon-x 把这些知识固化下来，让 AI 主动来查，而不是等你手动
 claude mcp add axon-knowledge -s user /path/to/axon-mcp
 ```
 
-接入后，AI 在会话中可调用四个工具：
+接入后，AI 在会话中可调用五个工具：
 
 | 工具 | 作用 |
 | --- | --- |
-| `list_projects` | 列出所有已建图谱的项目（slug + 路径 + 实体数） |
+| `project_overview` | 零参数拿到当前项目的知识骨架（核心模块 / 关键决策 / 约束 / 高频实体）。冷启动首选——尤其适合刚 spawn、上下文为空的 subagent 开工前建立整体认知。纯本地、不调模型 |
 | `search_knowledge` | 给一段自然语言 query，返回相关实体、事实与原文片段，带来源标注 |
 | `get_entity` | 查看某实体的全部 observations（事实）+ 关系 + 别名，支持别名与大小写不敏感匹配 |
 | `remember_knowledge` | 把本次对话学到的持久知识写回图谱（实体/关系），通过别名归一并入已有节点——MCP 模式下"越用越懂"的写入闭环 |
+| `list_projects` | 列出所有已建图谱的项目（slug + 路径 + 实体数），并标出当前工作目录对应的项目 |
+
+> **`project` 自动定位**：`project_overview` / `search_knowledge` / `get_entity` / `remember_knowledge` 的 `project` 参数**可省略**——server 是 Claude Code 在项目目录里拉起的，会自动按当前工作目录（含从子目录向上回溯）定位 slug，无需先调 `list_projects` 或手算。只有跨项目查询时才需显式传 `project`。
 
 `axon-mcp` 是一个独立二进制，不依赖 GUI，直接读 GUI 建好的 `graphs/` 与 `graphcache/`，与 App 共用 `internal/retrieve` 里的召回核心。
 
@@ -98,8 +101,8 @@ claude mcp add axon-knowledge -s user /path/to/axon-mcp
 - **知识图谱**：可视化查看实体 / 关系 / 别名 / 溯源；支持人工确认、修正、去噪（保证图谱质量）。
 - **建索引**：对一个真实仓库跑"从代码建图"；对话与笔记同样并入。
 - **回写闭环**：新学到的业务事实增量合并进图谱，持续长大。
-- **会话浏览与一键恢复**：浏览 Claude Code 存在本地的历史会话（按项目隔离，标签页关了也不丢）；详情页顶部展示「最后进度」（最后一轮你的提问 + AI 回复尾部），一眼看清停在哪；点「▶ 恢复」直接在内置终端里 `cd` 回原工作目录并 `claude --resume`，异常时快速接回。
-- **内置终端**：PTY 驱动的真实 shell，跨标签页常驻（恢复起来的会话切走再切回仍存活）。
+- **会话浏览与一键恢复**：浏览 Claude Code 存在本地的历史会话（按项目隔离，标签页关了也不丢）；详情页顶部展示「最后进度」（最后一轮你的提问 + AI 回复尾部），一眼看清停在哪；点「▶ 恢复」在 **iTerm 新标签**里 `cd` 回原工作目录并 `claude --resume`——原生多标签，可同时接回多个会话。
+- **内置终端**：PTY 驱动的真实 shell，跨标签页常驻，随手看一眼时用。
 - **设置**：配置模型 Provider、embedding，以及一键接入 Claude Code。
 
 ---

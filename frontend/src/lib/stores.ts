@@ -11,13 +11,6 @@ export type View = "tasks" | "commit" | "hub" | "search" | "sessions" | "graph" 
 // is the only other sidebar entry.
 export const activeView = writable<View>("graph");
 
-// --- Resume-in-terminal signal ------------------------------------------
-// SessionsView asks to reopen a Claude session by putting the ready-to-run
-// shell command here and switching activeView to "terminal". TerminalView
-// consumes it once the shell is ready, writes it to the PTY, then clears it.
-// A store (not a prop) because the two views never share a parent.
-export const pendingResume = writable<string>("");
-
 // --- Global project selection -------------------------------------------
 // One project chosen once, shared by every view. Empty string means "all
 // projects" (used by cross-project search).
