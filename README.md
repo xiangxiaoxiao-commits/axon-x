@@ -49,7 +49,7 @@ Axon-x 把这些知识固化下来，让 AI 主动来查，而不是等你手动
 claude mcp add axon-knowledge -s user /path/to/axon-mcp
 ```
 
-接入后，AI 在会话中可调用三个工具：
+接入后，AI 在会话中可调用四个工具：
 
 | 工具 | 作用 |
 | --- | --- |
@@ -59,6 +59,35 @@ claude mcp add axon-knowledge -s user /path/to/axon-mcp
 | `remember_knowledge` | 把本次对话学到的持久知识写回图谱（实体/关系），通过别名归一并入已有节点——MCP 模式下"越用越懂"的写入闭环 |
 
 `axon-mcp` 是一个独立二进制，不依赖 GUI，直接读 GUI 建好的 `graphs/` 与 `graphcache/`，与 App 共用 `internal/retrieve` 里的召回核心。
+
+### 让图谱在 MCP 模式下越用越全
+
+查询（`search_knowledge`）是**只读**的，查再多也不会自动沉淀。让图谱在纯 MCP 使用下持续长大，靠这几条：
+
+1. **让 agent 主动写回（核心）** — 在 `CLAUDE.md` 里写一条指令，让 agent 开工前先查、学到持久知识后调 `remember_knowledge` 写回。这样每次对话的结论**实时**并入图谱（别名归一到已有实体），不用回 GUI。可直接粘贴：
+
+   ```markdown
+   ## 项目知识图谱（axon-knowledge MCP）
+
+   如果当前会话挂载了 axon-knowledge 这个 MCP 工具：
+
+   - 开工前（改代码/做设计/排查前）先用 search_knowledge 查本项目的既有决策、
+     约束、坑、接口约定，不要臆测历史设计。project slug 用 list_projects 拿到，
+     选与当前工作目录匹配的那个（slug = 工作目录绝对路径里的 / 换成 -）。
+   - 敲定一个非显然的持久知识后（设计决策及理由 / 约束与坑 / 接口约定 / 模块职责与关系），
+     调用 remember_knowledge 写回（project 用同一个 slug）：一个实体一个概念，
+     observations 一句话一条，给出别名，能表达关系就带 relations。
+   - 不要写回：临时调试、一次性操作、寒暄、能从代码或 git log 直接看出的事实、
+     被否定的方案。只沉淀“代码里看不出来、忘了会重复踩坑”的东西，宁可少而准。
+   ```
+
+   > 改了 `axon-mcp`（如升级本应用）后，到 **设置 → 接入 Claude Code** 点一次「重新接入 / 更新路径」，并**重启正在运行的 Claude Code 会话**，新工具才会加载。
+
+2. **定期重新「建索引」** — 你用 Claude Code 会不断在本地积累新会话文件，回 Axon 点一次建索引即可**增量**蒸馏进图（旧的跳过，不重复烧 token）。
+
+3. **代码 / 笔记变了就重跑**「🧬 从代码建图」「📓 吸收 Obsidian」，让结构与笔记知识保持最新。
+
+4. **人工校正** — 在知识视图里删噪音、纠错、合并别名。**图谱质量比数量重要。**
 
 ---
 
