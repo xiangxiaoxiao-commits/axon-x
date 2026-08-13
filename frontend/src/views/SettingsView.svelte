@@ -16,8 +16,10 @@
     InstallMCP,
     UninstallMCP,
   } from "../../wailsjs/go/main/App.js";
+  import { GetGraph } from "../../wailsjs/go/main/App.js";
   import { BrowserOpenURL } from "../../wailsjs/runtime/runtime.js";
   import type { main, provider, mcpinstall } from "../../wailsjs/go/models";
+  import { currentProject, activeView, requestIndex } from "../lib/stores";
   import ProviderCard from "../lib/settings/ProviderCard.svelte";
   import ProviderForm from "../lib/settings/ProviderForm.svelte";
   import SecretInput from "../lib/settings/SecretInput.svelte";
@@ -52,6 +54,10 @@
   // (local lexical embedder). Explicit — no silent degradation.
   let embedMode: "semantic" | "keyword" = "keyword";
   let modeMsg = "";
+  // After switching recall mode, if the current project already has a graph its
+  // stored vectors are now stale (built under the other mode), so we prompt a
+  // rebuild. needsRebuild drives that banner.
+  let needsRebuild = false;
   // Common embedding models across vendors (datalist suggestions; free-typed OK).
   const EMBED_MODELS = [
     "text-embedding-3-small",
@@ -341,10 +347,33 @@
         mode === "semantic"
           ? "已切换到语义模型。若云端调用失败，召回不会降级，会直接报错——请用下方「测试连接」确认可用。"
           : "已切换到关键词（本地词面向量），完全离线，不调用云端。";
+      // If the current project already has a graph, its vectors were built under
+      // the old mode and won't match the new query embedder — prompt a rebuild.
+      needsRebuild = await currentProjectHasGraph();
     } catch (e) {
       embedMode = prev; // revert on failure
       modeMsg = `切换失败:${String(e)}`;
     }
+  }
+
+  // currentProjectHasGraph reports whether the selected project already has any
+  // entities (i.e. was indexed before), so switching mode should warn to rebuild.
+  async function currentProjectHasGraph(): Promise<boolean> {
+    const slug = $currentProject;
+    if (!slug) return false;
+    try {
+      const g = await GetGraph(slug);
+      return !!(g?.entities && g.entities.length > 0);
+    } catch {
+      return false;
+    }
+  }
+
+  // Jump to the knowledge view and trigger a rebuild of the current project.
+  function rebuildNow() {
+    needsRebuild = false;
+    requestIndex();
+    $activeView = "graph";
   }
 
   async function saveEmbedding() {
@@ -662,6 +691,15 @@
           </button>
         </div>
         {#if modeMsg}<p class="mode-msg">{modeMsg}</p>{/if}
+        {#if needsRebuild}
+          <div class="rebuild-banner">
+            <span>
+              ⚠️ 当前项目已有图谱，但它的向量是用<strong>旧模式</strong>建的，和新模式<strong>不通用</strong>。
+              需要重新建图，语义/关键词召回才会按新模式生效。
+            </span>
+            <button class="btn primary sm" type="button" on:click={rebuildNow}>去重新建图</button>
+          </div>
+        {/if}
 
         {#if embedMode === "semantic"}
         <h2 class="sub-h2">Embedding 模型配置</h2>
@@ -1158,6 +1196,16 @@
     color: var(--text-muted);
     line-height: 1.6;
   }
+  .rebuild-banner {
+    margin-top: 10px;
+    display: flex; align-items: center; gap: 12px;
+    background: color-mix(in srgb, var(--warning) 12%, transparent);
+    border: 1px solid var(--warning);
+    border-radius: var(--radius-card);
+    padding: 10px 14px; font-size: 12.5px; line-height: 1.6;
+  }
+  .rebuild-banner span { flex: 1; }
+  .btn.sm { padding: 4px 12px; font-size: 12px; white-space: nowrap; }
   .sub-h2 {
     font-size: 14px;
     margin: 20px 0 12px;
