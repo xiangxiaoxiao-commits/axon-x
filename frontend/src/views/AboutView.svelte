@@ -74,6 +74,67 @@
         语义模式存的是云端向量,两者不通用。切换后重跑一次"建索引 / 从代码建图",新模式才完全生效。
       </p>
 
+      <details class="deep">
+        <summary>深入:语义召回链路的完整算法(点击展开)</summary>
+        <div class="deep-body">
+
+          <h4>① 文本 → 向量(embedding)</h4>
+          <p>
+            embedding 模型把一段文本映射成一个<strong>固定维度的稠密向量</strong>。维度<strong>由模型决定,Axon 不做额外压缩或降维</strong>,
+            拿到多少维就原样存(<code>[]float32</code>)。例如 <code>text-embedding-3-small</code> 是 1536 维;你配的
+            <code>text-embedding-v4</code> 按该模型的输出维度。<strong>本地兜底</strong>(关键词模式)则是固定
+            <code>1024</code> 维,由字符 n-gram + 词 token 经哈希技巧(FNV-1a 取模选桶、最高位定正负号)、
+            亚线性 TF 加权、再 L2 归一化得到——它是<strong>词面向量</strong>,不是神经语义。
+          </p>
+          <p>
+            建图时,<strong>每个实体</strong>(名称+observations)和<strong>每段原文 chunk</strong> 都会被 embed 一次,
+            向量随图谱缓存落盘。云端走批量接口:每批最多 <code>96</code> 条,失败对 5xx/429 线性退避重试最多 <code>3</code> 次。
+          </p>
+
+          <h4>② 查询也 embed 成同维向量</h4>
+          <p>
+            召回时把用户那句 query 用<strong>同一个模型</strong>embed 成向量。必须同源——若维度不一致,
+            下面的余弦相似度直接返回 0(见 <code>Cosine</code> 的长度校验),这正是"切模式要重建图"的根本原因。
+          </p>
+
+          <h4>③ 余弦相似度</h4>
+          <p>
+            用<strong>余弦相似度</strong>衡量 query 向量和每个候选向量的接近程度:
+            <code>cos = (a·b) / (‖a‖·‖b‖)</code>,取值 [-1, 1],越大越相关。
+            实现里点积与两个模长都用 <code>float64</code> 累加以减小误差,任一向量为零或长度不等则返回 0。
+            越接近 1 表示语义越接近。
+          </p>
+
+          <h4>④ 两个并行通道 + 各自的 top-k</h4>
+          <p><strong>通道 A — 实体结构</strong>(找相关的知识节点):</p>
+          <ul>
+            <li>对图谱里<strong>每个带向量的实体</strong>算 query 的余弦,过滤掉低于阈值的(云端 <code>0.30</code>,本地词面向量因分布偏低用 <code>0.12</code>)。</li>
+            <li>按分数降序排序,<strong>取 top-<code>8</code></strong> 作为"语义种子"(<code>seedTopK=8</code>)。这就是 top-k:全量打分 → 排序 → 截断前 k 个。</li>
+            <li>再叠加<strong>关键词通道</strong>:实体名/别名在 query 里字面出现即命中。</li>
+            <li>两路用 RRF 融合(见 ⑤),然后<strong>沿关系扩展一跳</strong>(<code>expandHops=1</code>,无向):把种子的直接邻居也拉进来,补上"相关但没被直接命中"的上下游节点。</li>
+          </ul>
+          <p><strong>通道 B — 原文片段</strong>(找可直接引用的原文):</p>
+          <ul>
+            <li>对<strong>每段 chunk</strong> 算余弦,过阈值(同 <code>0.30</code>/<code>0.12</code>),排序后<strong>取候选上限 <code>30</code></strong>(<code>chunkRecallCandidates</code>)。</li>
+            <li>叠加关键词命中(query 拆成 ≥2 字符的 token,子串匹配)。</li>
+            <li>RRF 融合后<strong>最终注入 top-<code>5</code></strong>(<code>chunkInjectTopN</code>)。</li>
+          </ul>
+
+          <h4>⑤ RRF 融合(Reciprocal Rank Fusion)</h4>
+          <p>
+            两个通道的分数量纲不可比(余弦 vs 是否命中),所以<strong>只看排名不看原始分</strong>。
+            每个 id 的融合分 = <code>Σ 1/(k + rank)</code>,rank 从 1 开始,常数 <code>k=60</code>(业界标准值)。
+            在多个列表里都靠前的条目得分最高;并列时按首次出现顺序稳定排序。这样"语义强"和"字面命中"两种信号被公平合并。
+          </p>
+
+          <h4>⑥ 无向量时怎么办</h4>
+          <p>
+            若 query 没能 embed(语义模式云端失败,或本就关键词模式且未建向量),两个向量通道直接熄火,
+            只保留关键词/子串通道——<strong>绝不用本地向量假装成语义结果</strong>。这就是"失败不降级"在算法层的体现。
+          </p>
+        </div>
+      </details>
+
       <hr class="divider" />
 
       <h3>接入 Claude Code(MCP)的原理</h3>
@@ -159,4 +220,20 @@
     color: var(--text-muted); margin-right: 6px;
   }
   .body :global(.divider) { height: 1px; background: var(--border); margin: 20px 0; border: none; }
+
+  .body :global(details.deep) {
+    margin: 12px 0 4px; border: 1px solid var(--border);
+    border-radius: var(--radius-card); background: var(--bg-base);
+  }
+  .body :global(details.deep summary) {
+    cursor: pointer; padding: 12px 14px; font-weight: 600; color: var(--accent);
+    font-size: 13px; user-select: none; list-style-position: inside;
+  }
+  .body :global(details.deep[open] summary) { border-bottom: 1px solid var(--border); }
+  .body :global(.deep-body) { padding: 6px 16px 14px; }
+  .body :global(.deep-body h4) {
+    font-size: 13.5px; margin: 16px 0 6px; color: var(--text-primary);
+    font-family: var(--font-mono);
+  }
+  .body :global(.deep-body h4:first-child) { margin-top: 8px; }
 </style>
