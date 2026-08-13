@@ -43,7 +43,7 @@ func main() {
 		ctx:     context.Background(),
 		dataDir: dataDir,
 		cfg:     cfg,
-		secrets: secret.NewKeychainStore(),
+		secrets: secret.New(),
 		probe:   embed.NewProbeCache(),
 	}
 	s := &server{

@@ -2,7 +2,9 @@
 
 > 让 AI 在动手前，先读懂你这个项目的**业务背景**和**代码结构**。
 
-Axon-x 是一个 macOS 桌面应用，它把散落在历史对话、代码仓库、Obsidian 笔记里的"隐性项目知识"，沉淀成一张**可迭代补全的知识图谱**，再通过 **MCP（Model Context Protocol）** 暴露给 Claude Code 之类的 AI 编码助手。这样 AI 每次干活时，都能自动召回"这个项目以前的设计决策、踩过的坑、接口约定、业务约束"，而不是每次从零开始、需要你反复解释。
+Axon-x 是一个跨平台桌面应用（macOS + Windows），它把散落在历史对话、代码仓库、Obsidian 笔记里的"隐性项目知识"，沉淀成一张**可迭代补全的知识图谱**，再通过 **MCP（Model Context Protocol）** 暴露给 Claude Code 之类的 AI 编码助手。这样 AI 每次干活时，都能自动召回"这个项目以前的设计决策、踩过的坑、接口约定、业务约束"，而不是每次从零开始、需要你反复解释。
+
+它的角色是**给 agent 用的上下文增强器**：你在 GUI 里养一张项目知识图谱，一键接入 Claude Code，agent 就懂你的项目。
 
 一句话：**用得越多越懂你的项目。**
 
@@ -35,15 +37,19 @@ Axon-x 把这些知识固化下来，让 AI 主动来查，而不是等你手动
 
 ---
 
-## MCP 工具
+## 接入 Claude Code（MCP）
 
-把 Axon-x 的 MCP server 注册给 Claude Code：
+在 **设置 → 接入 Claude Code** 里点一下**「一键接入」**即可。Axon-x 会定位随应用分发的 `axon-mcp` 二进制，把 `axon-knowledge` 这个 stdio server 写进 Claude Code 的用户级配置（`~/.claude.json` 的 `mcpServers`），保留其它条目不动。设置页会实时显示「已接入 / 未接入」状态，并可一键移除或更新路径。
+
+> 从 Finder / 资源管理器启动的 GUI 进程往往拿不到完整 PATH，因此一键接入**不依赖** `claude` CLI，而是直接、原子地读写配置文件，macOS 与 Windows 行为一致。
+
+也可以手动用 CLI 注册：
 
 ```bash
-claude mcp add axon-knowledge /path/to/axon-mcp
+claude mcp add axon-knowledge -s user /path/to/axon-mcp
 ```
 
-注册后，AI 在会话中可调用三个工具：
+接入后，AI 在会话中可调用三个工具：
 
 | 工具 | 作用 |
 | --- | --- |
@@ -57,12 +63,12 @@ claude mcp add axon-knowledge /path/to/axon-mcp
 
 ## 桌面端功能
 
-Wails 应用提供图形界面完成"建图 + 管理 + 辅助"：
+界面收敛为两个入口——**知识**与**设置**：
 
 - **知识图谱**：可视化查看实体 / 关系 / 别名 / 溯源；支持人工确认、修正、去噪（保证图谱质量）。
 - **建索引**：对一个真实仓库跑"从代码建图"；对话与笔记同样并入。
-- **回写闭环**：任务 / review 采纳后，把新学到的业务事实增量合并进图谱，持续长大。
-- **辅助工具**：AI 辅助 git commit、多任务并行编排等（服从"懂业务"这一核心目标）。
+- **回写闭环**：新学到的业务事实增量合并进图谱，持续长大。
+- **设置**：配置模型 Provider、embedding，以及一键接入 Claude Code。
 
 ---
 
@@ -71,8 +77,9 @@ Wails 应用提供图形界面完成"建图 + 管理 + 辅助"：
 - **框架**：[Wails v2](https://wails.io)（Go 后端 + Web 前端）
 - **前端**：Svelte 5 + Vite + TypeScript
 - **后端**：Go 1.25（`GOTOOLCHAIN=auto` 自动拉取）
-- **存储**：SQLite（WAL，即时落盘）；数据存于 `~/Library/Application Support/axon/`
-- **密钥**：macOS Keychain，不落明文
+- **存储**：SQLite，纯 Go 驱动 [`modernc.org/sqlite`](https://pkg.go.dev/modernc.org/sqlite)（无 cgo，Windows / macOS 免工具链交叉编译），WAL 即时落盘
+- **数据目录**：`os.UserConfigDir()/axon`（macOS 为 `~/Library/Application Support/axon`，Windows 为 `%AppData%\axon`）
+- **密钥**：OS 凭证库——macOS Keychain / Windows Credential Manager，不落明文
 - **模型接入**：OpenAI-compatible + Anthropic 原生，流式输出
 - **向量**：云端 embedding（如 `text-embedding-3-small`），无 key 时本地词面兜底
 
@@ -86,48 +93,53 @@ Wails 应用提供图形界面完成"建图 + 管理 + 辅助"：
 | `embed` | embedding 抽象接口（云端 + 本地兜底） |
 | `claudedata` | 读取 Claude Code 会话数据 |
 | `provider` | 各家 API 流式调用 |
-| `secret` | Keychain 密钥存取 |
+| `secret` | OS 凭证库密钥存取（Keychain / Credential Manager，按平台分派） |
+| `mcpinstall` | 一键接入：读写 Claude Code 的 `~/.claude.json` |
 | `db` / `store` / `config` | 迁移 / 持久化 / 配置 |
 
 ---
 
 ## 从源码构建
 
-前置：Go 1.25、Node、[Wails CLI](https://wails.io/docs/gettingstarted/installation)、CGO（Xcode Command Line Tools）。
+前置：Go 1.25、Node、[Wails CLI](https://wails.io/docs/gettingstarted/installation)。sqlite 已换成纯 Go 驱动，**后端本身不再需要 cgo**（Wails 打包仍依赖各平台的 WebView 运行时）。
 
 ```bash
 # 实时开发（热重载）
 wails dev
 
-# 后端测试（CGO + race）
-CGO_ENABLED=1 go test -race ./...
+# 后端测试
+go test ./...
 
-# 生产构建 -> build/bin/Axon-x.app
-wails build -clean
+# 生产构建
+wails build -clean               # -> build/bin/Axon-x.app（macOS）
+                                 #    build/bin/Axon-x.exe（Windows）
 
-# 单独编译 MCP server
-go build -o axon-mcp ./cmd/axon-mcp
+# 编译 MCP server（随应用分发，一键接入会定位它）
+go build -o build/bin/axon-mcp ./cmd/axon-mcp          # macOS/Linux
+GOOS=windows go build -o build/bin/axon-mcp.exe ./cmd/axon-mcp
 
-# 打包 dmg
+# 打包 dmg（macOS）
 bash scripts/make-dmg.sh
 ```
 
-> 注意：编译产物 `axon` / `axon-mcp` 已在 `.gitignore` 中，不要提交进仓库。
+> 注意：编译产物 `axon` / `axon-mcp`(`.exe`) 已在 `.gitignore` 中，不要提交进仓库。
+>
+> **一键接入的前提**：`axon-mcp` 二进制需与主程序位于同一目录（打包时一并放入 `build/bin/`，或 .app 的可执行目录），否则设置页会提示找不到二进制。
 
 ---
 
 ## 数据与隐私
 
-- 所有图谱、会话、配置存于 `~/Library/Application Support/axon/`，升级 / 重装不丢。
-- API key **只存 macOS Keychain**，不落明文、不进上述目录。
+- 所有图谱、会话、配置存于用户级数据目录（macOS `~/Library/Application Support/axon/`，Windows `%AppData%\axon\`），升级 / 重装不丢。
+- API key **只存 OS 凭证库**（Keychain / Credential Manager），不落明文、不进上述目录。
 - 单机单用户，无云同步、无多人协作。
 
 ---
 
 ## 已知边界
 
-- 仅 macOS（Apple Silicon / Intel）。
-- ad-hoc 签名（非 Apple 付费公证），首次打开需右键 → 打开。
+- 支持 macOS（Apple Silicon / Intel）与 Windows；Linux 可编译但无原生凭证库接入。
+- macOS 为 ad-hoc 签名（非 Apple 付费公证），首次打开需右键 → 打开。
 - AST 级抽取目前以 Go 为主；其它语言走语言无关的目录 / import 层。
 - 需自备各家 API key；语义召回的最佳精度依赖一个 OpenAI-compatible 的 embedding provider。
 

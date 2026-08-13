@@ -1,7 +1,10 @@
 # Wails / build artifacts
 build/bin
-# Compiled binary (produced by build, never commit)
+# Compiled binaries (produced by build, never commit)
 /axon
+/axon-mcp
+/axon-mcp.exe
+/Axon-x.exe
 
 # Frontend
 node_modules

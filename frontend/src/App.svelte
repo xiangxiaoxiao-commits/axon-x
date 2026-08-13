@@ -1,15 +1,15 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { activeView, currentProject, projects, loadProjects, type View } from "./lib/stores";
-  import TasksView from "./views/TasksView.svelte";
   import GraphView from "./views/GraphView.svelte";
   import SettingsView from "./views/SettingsView.svelte";
 
   // Navigation is a plain sidebar (VSCode/Linear style): a narrow vertical rail
-  // of icon + label entries. Task orchestration is the landing view.
-  // Kept intentionally focused: run tasks, browse business knowledge, configure.
+  // of icon + label entries. The product is an agent-context enhancer: build a
+  // per-project knowledge graph and feed it to Claude Code over MCP. Kept
+  // intentionally focused — browse/curate business knowledge, and configure
+  // providers + MCP one-click install.
   const NAV: { view: View; label: string; icon: string }[] = [
-    { view: "tasks", label: "任务", icon: "◈" },
     { view: "graph", label: "知识", icon: "⊹" },
     { view: "settings", label: "设置", icon: "⚙" },
   ];
@@ -44,12 +44,10 @@
       </nav>
 
       <main class="view">
-        {#if $activeView === "graph"}
-          <GraphView />
-        {:else if $activeView === "settings"}
+        {#if $activeView === "settings"}
           <SettingsView onSaved={refreshProviders} />
         {:else}
-          <TasksView />
+          <GraphView />
         {/if}
       </main>
     </div>

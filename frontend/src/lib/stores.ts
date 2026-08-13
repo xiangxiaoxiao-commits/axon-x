@@ -6,9 +6,10 @@ import { ListClaudeProjects } from "../../wailsjs/go/main/App.js";
 
 export type View = "tasks" | "commit" | "hub" | "search" | "sessions" | "graph" | "memory" | "chat" | "terminal" | "settings";
 
-// Active main view. Task orchestration is the primary entry (the product's main
-// job); everything else is a secondary tool reachable from the sidebar.
-export const activeView = writable<View>("tasks");
+// Active main view. The knowledge graph is the primary entry (the product's
+// main job: curate the per-project knowledge fed to agents over MCP); settings
+// is the only other sidebar entry.
+export const activeView = writable<View>("graph");
 
 // --- Global project selection -------------------------------------------
 // One project chosen once, shared by every view. Empty string means "all

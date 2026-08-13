@@ -115,7 +115,7 @@ func (a *App) startup(ctx context.Context) {
 		log.Fatalf("load config: %v", err)
 	}
 	a.cfg = cfg
-	a.secrets = secret.NewKeychainStore()
+	a.secrets = secret.New()
 
 	log.Printf("axon: ready at %s", dataDir)
 }
