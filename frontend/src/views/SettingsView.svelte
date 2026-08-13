@@ -15,6 +15,7 @@
     InstallMCP,
     UninstallMCP,
   } from "../../wailsjs/go/main/App.js";
+  import { BrowserOpenURL } from "../../wailsjs/runtime/runtime.js";
   import type { main, provider, mcpinstall } from "../../wailsjs/go/models";
   import ProviderCard from "../lib/settings/ProviderCard.svelte";
   import ProviderForm from "../lib/settings/ProviderForm.svelte";
@@ -109,6 +110,8 @@
     baseUrl: string;
     models: string[]; // suggested model names (reference / datalist)
     note?: string;
+    keyUrl?: string; // where to create/manage the API key
+    keyHint?: string; // short "how to get the key" guidance
   };
 
   const PRESETS: Preset[] = [
@@ -120,6 +123,8 @@
       protocol: "openai",
       baseUrl: "https://api.openai.com/v1",
       models: ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo"],
+      keyUrl: "https://platform.openai.com/api-keys",
+      keyHint: "登录 OpenAI 平台 → API keys → Create new secret key,复制 sk- 开头的串(只显示一次)。",
     },
     {
       id: "anthropic",
@@ -129,6 +134,8 @@
       protocol: "anthropic",
       baseUrl: "https://api.anthropic.com/v1",
       models: ["claude-3-5-sonnet", "claude-3-5-haiku", "claude-3-opus"],
+      keyUrl: "https://console.anthropic.com/settings/keys",
+      keyHint: "登录 Anthropic Console → Settings → API keys → Create Key,复制 sk-ant- 开头的串。",
     },
     {
       id: "glm",
@@ -138,7 +145,9 @@
       protocol: "openai",
       baseUrl: "https://open.bigmodel.cn/api/paas/v4",
       models: ["glm-4.6", "glm-4-plus", "glm-4-flash"],
-      note: "智谱 GLM 走 OpenAI 兼容协议(protocol=openai),因此填写方式与 OpenAI 相同,只是 Base URL 不同。",
+      note: "智谱 GLM 走 OpenAI 兼容协议(protocol=openai),填写方式与 OpenAI 相同,只是 Base URL 不同。",
+      keyUrl: "https://open.bigmodel.cn/usercenter/apikeys",
+      keyHint: "登录智谱开放平台 → 用户中心 → API Keys,复制密钥(形如 xxx.yyy)。",
     },
     {
       id: "custom",
@@ -148,7 +157,8 @@
       protocol: "openai",
       baseUrl: "",
       models: [],
-      note: "自行填写名称、协议与 Base URL。若为 OpenAI 兼容服务,协议选 openai。",
+      note: "自行填写名称、协议与 Base URL。若为 OpenAI 兼容服务(如公司网关),协议选 openai。",
+      keyHint: "从你的服务商 / 内部网关控制台获取 API Key 与 Base URL。",
     },
   ];
 
@@ -481,6 +491,24 @@
               <label for="add-key">API Key</label>
               <SecretInput bind:value={newApiKey} hasKey={false} />
             </div>
+
+            {#if activePreset?.keyHint}
+              <div class="row">
+                <span class="label">怎么拿 Key</span>
+                <div class="key-help">
+                  <span>{activePreset.keyHint}</span>
+                  {#if activePreset.keyUrl}
+                    <button
+                      type="button"
+                      class="link-btn"
+                      on:click={() => activePreset?.keyUrl && BrowserOpenURL(activePreset.keyUrl)}
+                    >
+                      打开申请页 ↗
+                    </button>
+                  {/if}
+                </div>
+              </div>
+            {/if}
 
             {#if activePreset && activePreset.models.length}
               <div class="row">
@@ -1014,5 +1042,27 @@
     display: flex;
     gap: 8px;
     flex-wrap: wrap;
+  }
+
+  /* "How to get the key" hint under the API Key field */
+  .key-help {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--text-muted);
+    line-height: 1.6;
+  }
+  .link-btn {
+    background: transparent;
+    border: none;
+    padding: 0;
+    color: var(--accent);
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .link-btn:hover {
+    text-decoration: underline;
   }
 </style>
