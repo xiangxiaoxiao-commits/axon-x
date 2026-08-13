@@ -16,8 +16,12 @@ Axon-x 是一个跨平台桌面应用（macOS + Windows），它把散落在历�
 
 | 平台 | 下载 | 安装 |
 | --- | --- | --- |
-| **macOS**（Apple Silicon） | `Axon-x-*.dmg` | 打开 dmg，把 Axon-x 拖进 Applications |
-| **Windows**（x64） | `Axon-x-*-windows-amd64.zip` | 解压到任意文件夹，双击 `Axon-x.exe` |
+| **macOS**（Intel + Apple Silicon 通用） | `Axon-x-*.dmg` | 打开 dmg，把 Axon-x 拖进 Applications |
+| **Windows** x64 | `Axon-x-*-windows-amd64.zip` | 解压到任意文件夹，双击 `Axon-x.exe` |
+| **Windows** 32 位 | `Axon-x-*-windows-386.zip` | 同上 |
+| **Windows** ARM | `Axon-x-*-windows-arm64.zip` | 同上 |
+
+> 不确定选哪个 Windows 版就下 **x64（amd64）**，绝大多数电脑都用这个。旧的 32 位系统用 386，ARM 笔记本（如骁龙 Surface）用 arm64。Linux 暂不支持（凭证库未实现，无法安全存 API key）。
 
 > **macOS 首次打开**：本应用为 ad-hoc 签名（未做 Apple 付费公证），首次打开会被拦。右键点 App → 打开，或执行 `xattr -dr com.apple.quarantine /Applications/Axon-x.app`。
 >

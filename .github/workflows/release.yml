@@ -1,12 +1,15 @@
 name: Release
 
-# Builds both platforms and attaches them to a GitHub Release:
-#   - macOS (Apple Silicon / arm64) .dmg   — built on a macos-latest (arm64) runner
-#   - Windows (amd64) portable .zip         — built on windows-latest
-# Wails can't cross-compile, so each platform builds on its own runner.
+# Builds every supported, actually-usable platform and attaches them to a
+# GitHub Release. Wails can't cross-compile between OSes, so each OS builds on
+# its own runner. Linux is intentionally omitted: the secret store (API keys)
+# has no Linux implementation, so a Linux build would launch but can't be used.
+#
+#   - macOS universal .dmg (Intel + Apple Silicon in one)  — macos-latest
+#   - Windows amd64 / 386 / arm64 portable .zip            — windows-latest matrix
 #
 # Triggers:
-#   - pushing a tag like v0.2.0 -> builds both and uploads to that tag's release
+#   - pushing a tag like v0.2.0 -> builds all and uploads to that tag's release
 #   - manual run with a tag input -> backfill builds onto an existing release
 
 on:
@@ -23,7 +26,7 @@ permissions:
 
 jobs:
   macos:
-    runs-on: macos-latest # Apple Silicon (arm64)
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -34,11 +37,11 @@ jobs:
           node-version: "20"
       - name: Install Wails CLI
         run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.13.0
-      - name: Build app (darwin/arm64)
-        run: wails build -clean
+      - name: Build app (darwin/universal)
+        run: wails build -platform darwin/universal -clean
       - name: Package .dmg
         # make-dmg.sh builds axon-mcp into the bundle, re-signs ad-hoc, and
-        # produces build/bin/Axon-x-<version>.dmg.
+        # produces build/bin/Axon-x-<version>.dmg (works for the universal app).
         run: bash scripts/make-dmg.sh
       - name: Resolve tag
         id: tag
@@ -51,6 +54,9 @@ jobs:
 
   windows:
     runs-on: windows-latest
+    strategy:
+      matrix:
+        arch: [amd64, 386, arm64]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -61,11 +67,14 @@ jobs:
           node-version: "20"
       - name: Install Wails CLI
         run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.13.0
-      - name: Build app (windows/amd64)
-        run: wails build -platform windows/amd64 -clean
-      - name: Build axon-mcp next to the app
-        # One-click "接入 Claude Code" locates axon-mcp.exe via os.Executable(),
-        # i.e. beside the main .exe — ship them together.
+      - name: Build app (windows/${{ matrix.arch }})
+        run: wails build -platform windows/${{ matrix.arch }} -clean
+      - name: Build axon-mcp (${{ matrix.arch }}) next to the app
+        # Ship axon-mcp.exe beside Axon-x.exe so one-click MCP install finds it
+        # via os.Executable(). Pure-Go sqlite means no cgo, so GOARCH is enough.
+        shell: pwsh
+        env:
+          GOARCH: ${{ matrix.arch }}
         run: go build -o build/bin/axon-mcp.exe ./cmd/axon-mcp
       - name: Resolve tag
         id: tag
@@ -75,7 +84,7 @@ jobs:
         shell: pwsh
         run: |
           $tag = "${{ steps.tag.outputs.tag }}"
-          $zip = "build/bin/Axon-x-$tag-windows-amd64.zip"
+          $zip = "build/bin/Axon-x-$tag-windows-${{ matrix.arch }}.zip"
           Compress-Archive -Path build/bin/Axon-x.exe, build/bin/axon-mcp.exe -DestinationPath $zip -Force
           echo "ASSET=$zip" >> $env:GITHUB_ENV
       - name: Upload to release
