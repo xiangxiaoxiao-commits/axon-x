@@ -167,25 +167,37 @@ func (h *toolHandler) searchKnowledge(raw json.RawMessage) (*toolResult, error) 
 		return textResult(fmt.Sprintf("项目 `%s` 还没有知识图谱（未建索引或 slug 不对，用 list_projects 确认）。", a.Project)), nil
 	}
 
-	// Embed the query (best-effort): cloud if configured, else local fallback.
+	// Embed the query per the configured mode. A nil embedder means semantic
+	// mode was on but cloud is unavailable: run keyword-only (no query vector),
+	// never a local vector masquerading as semantic.
 	var qv []float32
 	emb := newEmbedder(h.ctx, h.cfg, h.secrets, h.probe)
-	local := emb.Model() == embed.LocalModelID
-	if v, e := emb.Embed(h.ctx, a.Query); e == nil {
-		qv = v
+	local := emb != nil && emb.Model() == embed.LocalModelID
+	semanticUnavailable := emb == nil
+	if emb != nil {
+		if v, e := emb.Embed(h.ctx, a.Query); e == nil {
+			qv = v
+		}
 	}
 
 	chunks := retrieve.LoadChunks(h.dataDir, a.Project)
 	res := retrieve.RecallWithOpts(g, chunks, qv, a.Query, retrieve.RecallOptsFor(local))
 	if len(res.Hit) == 0 && len(res.Chunks) == 0 {
-		return textResult(fmt.Sprintf("在项目 `%s` 里没有查到和「%s」相关的知识。", a.Project, a.Query)), nil
+		msg := fmt.Sprintf("在项目 `%s` 里没有查到和「%s」相关的知识。", a.Project, a.Query)
+		if semanticUnavailable {
+			msg += "\n\n> 注：已开启语义模式，但云端 embedding 当前不可用，本次仅按关键词召回。请在 axon 设置里检查 embedding 配置或改用关键词模式。"
+		}
+		return textResult(msg), nil
 	}
 
 	titles := sessionTitleMap(a.Project)
 	var b strings.Builder
 	fmt.Fprintf(&b, "# 项目 `%s` 与「%s」相关的业务知识\n", a.Project, a.Query)
 	if local {
-		b.WriteString("\n> 注：本次用本地兜底 embedding（无云端向量），语义召回为词面近似，精度有限。\n")
+		b.WriteString("\n> 注：当前为关键词模式（本地词面向量），语义召回为字面近似，精度有限。\n")
+	}
+	if semanticUnavailable {
+		b.WriteString("\n> 注：已开启语义模式，但云端 embedding 当前不可用，本次仅按关键词召回（精度受限）。\n")
 	}
 	writeStructure(&b, g, res.Hit, titles)
 	writeChunks(&b, res.Chunks, titles)

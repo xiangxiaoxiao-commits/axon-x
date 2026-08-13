@@ -11,32 +11,38 @@ import (
 	"axon/internal/secret"
 )
 
-// newEmbedder builds the embedder for the recall path, mirroring the App's
-// degradation chain. It NEVER returns an error: a cloud (OpenAI-compatible)
-// endpoint is preferred, but a missing, misconfigured, or embedding-incapable
-// endpoint (e.g. a gateway that serves chat but 503s on /v1/embeddings) falls
-// back to the pure-Go LocalEmbedder so semantic/chunk recall keeps working
-// instead of producing empty query vectors.
+// newEmbedder builds the embedder for the recall path, honoring the SAME
+// explicit EmbeddingMode the GUI writes — no silent cloud->local degradation:
+//
+//   - keyword mode (default): always the local lexical embedder.
+//   - semantic mode: cloud model ONLY. If cloud is missing/misconfigured/not
+//     usable, it returns nil and the caller runs recall WITHOUT a query vector
+//     (keyword channel only) rather than pretending a local vector is semantic.
+//     This keeps the query embedder consistent with how the graph was indexed.
 //
 // Cloud usability is verified with a live probe the first time an endpoint is
-// seen; the result is cached in probe so later recalls don't re-probe. probe
-// must be non-nil (see main / embed.NewProbeCache).
+// seen; the result is cached in probe. probe must be non-nil.
 func newEmbedder(ctx context.Context, cfg *config.Manager, secrets secret.Store, probe *embed.ProbeCache) embed.Embedder {
-	cloud, key, err := buildCloudEmbedder(cfg, secrets)
-	if err != nil {
-		log.Printf("axon-mcp: cloud embedding unavailable (%v); falling back to local embedder", err)
-		return embed.NewLocal()
-	}
-	if cloud == nil {
-		return embed.NewLocal()
+	if cfg.Get().EmbeddingMode != config.EmbeddingModeSemantic {
+		return embed.NewLocal() // keyword (or unset): local lexical embedder
 	}
 
+	// Semantic mode: cloud only, no fallback.
+	cloud, key, err := buildCloudEmbedder(cfg, secrets)
+	if err != nil {
+		log.Printf("axon-mcp: semantic mode but cloud embedding unavailable (%v); recall runs keyword-only", err)
+		return nil
+	}
+	if cloud == nil {
+		log.Printf("axon-mcp: semantic mode but no embedding provider configured; recall runs keyword-only")
+		return nil
+	}
 	usable, probed, perr := probe.Usable(ctx, cloud, key)
 	if !usable {
 		if probed {
-			log.Printf("axon-mcp: cloud embedding not usable (%v); falling back to local embedder", perr)
+			log.Printf("axon-mcp: semantic mode but cloud embedding not usable (%v); recall runs keyword-only", perr)
 		}
-		return embed.NewLocal()
+		return nil
 	}
 	return cloud
 }
