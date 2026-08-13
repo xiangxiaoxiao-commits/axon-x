@@ -657,7 +657,11 @@
   .b.danger:hover:not(:disabled) { background: #F87171; color: #1c1206; }
   .edit-err { margin-top: 8px; font-size: 11px; color: #F87171; }
 
-  .article { flex: 1; overflow-y: auto; padding: 24px 32px; max-width: 820px; margin: 0 auto; line-height: 1.7; font-family: var(--font-ui); font-size: 14px; position: relative; z-index: 1; }
+  /* Fill the stage and scroll on its own. .stage isn't a flex container, so
+     flex:1 wouldn't apply — absolute inset lets the article take the full
+     height and scroll, while max-width + auto margins keep the text centered. */
+  .article { position: absolute; inset: 0; overflow-y: auto; padding: 24px 32px; line-height: 1.7; font-family: var(--font-ui); font-size: 14px; z-index: 1; }
+  .article > :global(*) { max-width: 820px; margin-left: auto; margin-right: auto; }
   .article :global(h2) { border-bottom: 1px solid var(--border); padding-bottom: 4px; margin: 20px 0 8px; }
   .article :global(p) { margin: 0 0 12px; }
   .article :global(ul) { padding-left: 22px; }
