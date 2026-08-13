@@ -139,7 +139,11 @@
 
   // Reload whenever the global project changes.
   let loadedFor = " ";
-  $: if ($currentProject !== loadedFor) { loadedFor = $currentProject; focus = ""; progress = ""; load(); }
+  // Whether the first graph load for the current project has finished. Until it
+  // has, g is still null and we must NOT render the onboarding empty-state, or it
+  // flashes on every open before the async load resolves.
+  let loaded = false;
+  $: if ($currentProject !== loadedFor) { loadedFor = $currentProject; focus = ""; progress = ""; loaded = false; load(); }
 
   // Onboarding checklist can ask us to index the current project (step 3).
   let lastIndexReq = 0;
@@ -152,6 +156,7 @@
     const prevFocus = focus;
     try { g = fromStore ? await GetGraph($currentProject) : await BuildGraph($currentProject); }
     catch (e) { console.error(e); g = null; }
+    finally { loaded = true; }
     byName = {}; deg = {}; adj = new Map(); maxDeg = 0; colorOf = {};
     if (!g?.entities?.length) { focus = ""; nodes = []; edges = []; return; }
     for (const e of g.entities) byName[e.name.toLowerCase()] = { name: e.name, type: e.type, obs: e.observations || [], sources: e.obsSources || [] };
@@ -546,6 +551,8 @@
       <div class="article selectable">
         {#if articleLoading}<div class="empty">正在把知识写成文章…</div>{:else}{@html articleHtml}{/if}
       </div>
+    {:else if !loaded}
+      <div class="empty">正在加载知识图谱…</div>
     {:else if !g || !g.entities?.length}
       <div class="empty-scroll">
         <Onboarding
