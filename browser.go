@@ -1,8 +1,6 @@
 package main
 
 import (
-	"fmt"
-	"os/exec"
 	"strings"
 
 	"axon/internal/claudedata"
@@ -47,38 +45,9 @@ func resumeShellCommand(cwd, sessionID string) string {
 }
 
 // ResumeCommand returns the resume command with a trailing newline, ready to
-// write to the embedded terminal (the newline makes it execute).
+// hand to TermStartResume (the newline makes it execute in the new tab's shell).
 func (a *App) ResumeCommand(cwd, sessionID string) string {
 	return resumeShellCommand(cwd, sessionID) + "\n"
-}
-
-// ResumeInITerm opens a NEW iTerm tab and runs the resume command there, so
-// multiple sessions can run side by side (unlike the single embedded terminal).
-// It activates iTerm first (creating a window if none is open), then creates a
-// tab in the current window. Errors (e.g. iTerm not installed) are returned so
-// the UI can fall back to the embedded terminal.
-func (a *App) ResumeInITerm(cwd, sessionID string) error {
-	cmd := resumeShellCommand(cwd, sessionID)
-	// AppleScript string literal: escape backslashes then double quotes.
-	esc := strings.ReplaceAll(cmd, `\`, `\\`)
-	esc = strings.ReplaceAll(esc, `"`, `\"`)
-	script := `tell application "iTerm"
-	activate
-	if (count of windows) = 0 then
-		create window with default profile
-		tell current session of current window to write text "` + esc + `"
-	else
-		tell current window
-			create tab with default profile
-			tell current session to write text "` + esc + `"
-		end tell
-	end if
-end tell`
-	out, err := exec.Command("osascript", "-e", script).CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("open iTerm: %s", strings.TrimSpace(string(out)))
-	}
-	return nil
 }
 
 // shellQuote wraps s in single quotes, escaping any embedded single quotes, so

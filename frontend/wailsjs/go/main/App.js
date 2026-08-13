@@ -158,10 +158,6 @@ export function ResumeCommand(arg1, arg2) {
   return window['go']['main']['App']['ResumeCommand'](arg1, arg2);
 }
 
-export function ResumeInITerm(arg1, arg2) {
-  return window['go']['main']['App']['ResumeInITerm'](arg1, arg2);
-}
-
 export function ReviewTask(arg1, arg2, arg3) {
   return window['go']['main']['App']['ReviewTask'](arg1, arg2, arg3);
 }
@@ -198,20 +194,24 @@ export function StopGeneration(arg1) {
   return window['go']['main']['App']['StopGeneration'](arg1);
 }
 
-export function TermResize(arg1, arg2) {
-  return window['go']['main']['App']['TermResize'](arg1, arg2);
+export function TermResize(arg1, arg2, arg3) {
+  return window['go']['main']['App']['TermResize'](arg1, arg2, arg3);
 }
 
-export function TermStart() {
-  return window['go']['main']['App']['TermStart']();
+export function TermStart(arg1) {
+  return window['go']['main']['App']['TermStart'](arg1);
 }
 
-export function TermStop() {
-  return window['go']['main']['App']['TermStop']();
+export function TermStartResume(arg1, arg2) {
+  return window['go']['main']['App']['TermStartResume'](arg1, arg2);
 }
 
-export function TermWrite(arg1) {
-  return window['go']['main']['App']['TermWrite'](arg1);
+export function TermStop(arg1) {
+  return window['go']['main']['App']['TermStop'](arg1);
+}
+
+export function TermWrite(arg1, arg2) {
+  return window['go']['main']['App']['TermWrite'](arg1, arg2);
 }
 
 export function TestEmbedding() {

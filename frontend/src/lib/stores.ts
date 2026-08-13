@@ -11,6 +11,14 @@ export type View = "tasks" | "commit" | "hub" | "search" | "sessions" | "graph" 
 // is the only other sidebar entry.
 export const activeView = writable<View>("graph");
 
+// --- Resume-in-terminal signal ------------------------------------------
+// SessionsView asks the terminal to open a NEW tab running a resume command by
+// pushing a request here and switching activeView to "terminal". TerminalView
+// watches this, opens a tab, and clears it. A store (not a prop) because the two
+// views never share a parent.
+export type ResumeRequest = { title: string; cmd: string };
+export const resumeRequest = writable<ResumeRequest | null>(null);
+
 // --- Global project selection -------------------------------------------
 // One project chosen once, shared by every view. Empty string means "all
 // projects" (used by cross-project search).

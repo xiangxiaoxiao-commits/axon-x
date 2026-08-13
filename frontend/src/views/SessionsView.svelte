@@ -2,10 +2,10 @@
   // Browse Claude Code's saved sessions: projects -> sessions -> transcript.
   // These live on disk under ~/.claude and are never lost when a tab closes.
   import {
-    ListClaudeSessions, ReadClaudeSession, ClaudeSessionProgress, ResumeInITerm,
+    ListClaudeSessions, ReadClaudeSession, ClaudeSessionProgress, ResumeCommand,
   } from "../../wailsjs/go/main/App.js";
   import type { claudedata } from "../../wailsjs/go/models";
-  import { currentProject } from "../lib/stores";
+  import { currentProject, activeView, resumeRequest } from "../lib/stores";
 
   let sessions: claudedata.SessionMeta[] = [];
   let messages: claudedata.SessionMessage[] = [];
@@ -43,13 +43,16 @@
 
   let resumeErr = "";
 
-  // Open the session in a NEW iTerm tab (native multi-window, unlike the single
-  // embedded terminal), running `cd <cwd> && claude --resume <id>` there.
+  // Open the session in a NEW in-app terminal tab running
+  // `cd <cwd> && claude --resume <id>`. Multiple resumes = multiple tabs.
   async function resume(s: claudedata.SessionMeta, e: Event) {
     e.stopPropagation(); // don't also trigger selectSession
     resumeErr = "";
     try {
-      await ResumeInITerm(s.cwd, s.id);
+      const cmd = await ResumeCommand(s.cwd, s.id);
+      const title = s.title ? s.title.slice(0, 20) : s.id.slice(0, 8);
+      resumeRequest.set({ title, cmd });
+      activeView.set("terminal");
     } catch (err) {
       resumeErr = String(err);
       console.error(err);
@@ -77,7 +80,7 @@
           <div class="item-title">{s.title || "(无标题)"}</div>
           <div class="item-sub">{s.messageCount} 条 · {fmtTime(s.updatedAt)}</div>
         </button>
-        <button class="resume" title="在 iTerm 新标签恢复此会话" on:click={(e) => resume(s, e)}>▶ 恢复</button>
+        <button class="resume" title="在 app 内新终端标签恢复此会话" on:click={(e) => resume(s, e)}>▶ 恢复</button>
       </div>
     {/each}
     {#if !$currentProject}<div class="empty">在顶部选择一个项目查看它的会话</div>
@@ -90,7 +93,7 @@
         <div class="pc-head">
           <span class="pc-label">最后进度</span>
           {#if curCwd}<span class="pc-cwd selectable">{curCwd}</span>{/if}
-          <button class="resume sm" title="在 iTerm 新标签恢复此会话" on:click={(e) => resume(sessions.find((x) => x.id === curSession), e)}>▶ 恢复</button>
+          <button class="resume sm" title="在 app 内新终端标签恢复此会话" on:click={(e) => resume(sessions.find((x) => x.id === curSession), e)}>▶ 恢复</button>
         </div>
         {#if resumeErr}<div class="pc-err">恢复失败：{resumeErr}</div>{/if}
         {#if progress.lastUser}

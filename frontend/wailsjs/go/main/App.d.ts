@@ -88,8 +88,6 @@ export function RepoStatus(arg1:string):Promise<gitx.RepoStatus>;
 
 export function ResumeCommand(arg1:string,arg2:string):Promise<string>;
 
-export function ResumeInITerm(arg1:string,arg2:string):Promise<void>;
-
 export function ReviewTask(arg1:string,arg2:string,arg3:string):Promise<void>;
 
 export function RunTask(arg1:string):Promise<void>;
@@ -108,13 +106,15 @@ export function SetEmbeddingMode(arg1:string):Promise<void>;
 
 export function StopGeneration(arg1:string):Promise<void>;
 
-export function TermResize(arg1:number,arg2:number):Promise<void>;
+export function TermResize(arg1:string,arg2:number,arg3:number):Promise<void>;
 
-export function TermStart():Promise<void>;
+export function TermStart(arg1:string):Promise<void>;
 
-export function TermStop():Promise<void>;
+export function TermStartResume(arg1:string,arg2:string):Promise<void>;
 
-export function TermWrite(arg1:string):Promise<void>;
+export function TermStop(arg1:string):Promise<void>;
+
+export function TermWrite(arg1:string,arg2:string):Promise<void>;
 
 export function TestEmbedding():Promise<void>;
 

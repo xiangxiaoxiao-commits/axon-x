@@ -7,73 +7,105 @@ import (
 	"axon/internal/term"
 )
 
-// Terminal events emitted to the frontend.
+// Terminal events emitted to the frontend. Payloads carry the tab id so the
+// frontend can route output/exit to the right xterm instance.
 const (
 	EventTermData = "term:data"
 	EventTermExit = "term:exit"
 )
 
-// termState holds the single embedded shell session. One terminal is enough
-// for the first version; a multi-tab terminal can come later.
-type termState struct {
-	mu      sync.Mutex
-	session *term.Session
+// termEvent is the payload for term:* events: which tab, and (for data) the
+// base64-encoded shell bytes.
+type termEvent struct {
+	ID   string `json:"id"`
+	Data string `json:"data,omitempty"`
 }
 
-// TermStart launches the embedded shell (idempotent: a running session is
-// reused). Shell output is streamed to the frontend as base64 on term:data.
-func (a *App) TermStart() error {
+// termState holds every open embedded shell, keyed by a frontend-assigned tab
+// id, so multiple terminals (e.g. several resumed sessions) run side by side.
+type termState struct {
+	mu       sync.Mutex
+	sessions map[string]*term.Session
+}
+
+// TermStart launches a shell for tab id (idempotent: a live tab is reused).
+// Output is streamed to the frontend as term:data{id,data}.
+func (a *App) TermStart(id string) error {
+	return a.termStart(id, "")
+}
+
+// TermStartResume launches a shell for tab id and, once it's ready, runs cmd
+// (a full `cd … && claude --resume …\n` line). Injecting server-side avoids the
+// frontend having to race the shell's first prompt.
+func (a *App) TermStartResume(id, cmd string) error {
+	return a.termStart(id, cmd)
+}
+
+// termStart is the shared launcher. If initialCmd is non-empty it's written to
+// the PTY right after start (the shell buffers input, so it runs once ready).
+func (a *App) termStart(id, initialCmd string) error {
 	a.term.mu.Lock()
-	defer a.term.mu.Unlock()
-	if a.term.session != nil {
-		return nil
+	if a.term.sessions == nil {
+		a.term.sessions = make(map[string]*term.Session)
 	}
+	if _, ok := a.term.sessions[id]; ok {
+		a.term.mu.Unlock()
+		return nil // already running
+	}
+	a.term.mu.Unlock()
+
 	s, err := term.Start(
 		func(b []byte) {
-			// base64 so arbitrary bytes survive the JSON event bridge intact.
-			a.emit(EventTermData, base64.StdEncoding.EncodeToString(b))
+			a.emit(EventTermData, termEvent{ID: id, Data: base64.StdEncoding.EncodeToString(b)})
 		},
 		func() {
 			a.term.mu.Lock()
-			a.term.session = nil
+			delete(a.term.sessions, id)
 			a.term.mu.Unlock()
-			a.emit(EventTermExit, "")
+			a.emit(EventTermExit, termEvent{ID: id})
 		},
 	)
 	if err != nil {
 		return err
 	}
-	a.term.session = s
+	a.term.mu.Lock()
+	a.term.sessions[id] = s
+	a.term.mu.Unlock()
+
+	if initialCmd != "" {
+		_ = s.Write(initialCmd)
+	}
 	return nil
 }
 
-// TermWrite forwards keystrokes to the shell.
-func (a *App) TermWrite(data string) error {
+// session returns the live session for a tab id, or nil.
+func (a *App) session(id string) *term.Session {
 	a.term.mu.Lock()
-	s := a.term.session
-	a.term.mu.Unlock()
-	if s == nil {
-		return nil
-	}
-	return s.Write(data)
+	defer a.term.mu.Unlock()
+	return a.term.sessions[id]
 }
 
-// TermResize informs the shell of the terminal size (in character cells).
-func (a *App) TermResize(rows, cols int) error {
-	a.term.mu.Lock()
-	s := a.term.session
-	a.term.mu.Unlock()
-	if s == nil {
-		return nil
+// TermWrite forwards keystrokes to the shell of tab id.
+func (a *App) TermWrite(id, data string) error {
+	if s := a.session(id); s != nil {
+		return s.Write(data)
 	}
-	return s.Resize(uint16(rows), uint16(cols))
+	return nil
 }
 
-// TermStop terminates the embedded shell.
-func (a *App) TermStop() {
+// TermResize informs the shell of tab id of the terminal size (character cells).
+func (a *App) TermResize(id string, rows, cols int) error {
+	if s := a.session(id); s != nil {
+		return s.Resize(uint16(rows), uint16(cols))
+	}
+	return nil
+}
+
+// TermStop terminates the shell of tab id and forgets it.
+func (a *App) TermStop(id string) {
 	a.term.mu.Lock()
-	s := a.term.session
-	a.term.session = nil
+	s := a.term.sessions[id]
+	delete(a.term.sessions, id)
 	a.term.mu.Unlock()
 	if s != nil {
 		s.Close()
