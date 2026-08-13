@@ -10,6 +10,23 @@ Axon-x 是一个跨平台桌面应用（macOS + Windows），它把散落在历�
 
 ---
 
+## 下载安装
+
+最新版本在 **[Releases](https://github.com/xiangxiaoxiao-commits/axon-x/releases/latest)** 直接下载：
+
+| 平台 | 下载 | 安装 |
+| --- | --- | --- |
+| **macOS**（Apple Silicon） | `Axon-x-*.dmg` | 打开 dmg，把 Axon-x 拖进 Applications |
+| **Windows**（x64） | `Axon-x-*-windows-amd64.zip` | 解压到任意文件夹，双击 `Axon-x.exe` |
+
+> **macOS 首次打开**：本应用为 ad-hoc 签名（未做 Apple 付费公证），首次打开会被拦。右键点 App → 打开，或执行 `xattr -dr com.apple.quarantine /Applications/Axon-x.app`。
+>
+> **Windows 首次打开**：请把 `Axon-x.exe` 与 `axon-mcp.exe` **放在同一文件夹**（一键接入靠它旁边的 axon-mcp.exe 定位）；SmartScreen 提示时点「更多信息」→「仍要运行」；需 WebView2 运行时（Win10/11 一般已内置）。
+
+想自己编译见下方 [从源码构建](#从源码构建)。
+
+---
+
 ## 解决什么问题
 
 用 AI 写代码时，最大的摩擦不是模型不够聪明，而是它**不懂上下文**：
