@@ -30,6 +30,10 @@
   let indexing = false;
   let progress = "";
 
+  // "+ 知识来源" dropdown: groups the three ingest actions (index sessions /
+  // build from code / absorb Obsidian) so the toolbar stays uncluttered.
+  let showSources = false;
+
   // "从代码建图" — scan a repo, extract code skeleton into the graph.
   let codeBuilding = false;
   let showRepoInput = false;
@@ -90,8 +94,16 @@
 
   const reduceMotion = typeof matchMedia !== "undefined" && matchMedia("(prefers-reduced-motion: reduce)").matches;
 
+  // Close the "知识来源" dropdown when clicking anywhere outside it.
+  function onDocMouseDown(ev: MouseEvent) {
+    if (!showSources) return;
+    const t = ev.target as HTMLElement;
+    if (!t.closest(".src-menu")) showSources = false;
+  }
+
   onMount(() => {
     refreshOnboarding();
+    window.addEventListener("mousedown", onDocMouseDown);
     EventsOn("graph:progress", (p: any) => {
       if (p?.projectSlug !== $currentProject) return;
       if (p?.phase === "code") {
@@ -122,6 +134,7 @@
     if (raf) cancelAnimationFrame(raf);
     window.removeEventListener("mousemove", onDrag);
     window.removeEventListener("mouseup", endDrag);
+    window.removeEventListener("mousedown", onDocMouseDown);
   });
 
   // Reload whenever the global project changes.
@@ -478,20 +491,43 @@
     <input class="term" placeholder="跳到节点，如「支付模块」" bind:value={term}
       on:keydown={(e) => e.key === "Enter" && jump()} />
     <button class="b" on:click={jump}>跳转</button>
-    <button class="b ghost" on:click={indexProject} disabled={indexing}>{indexing ? "索引中…" : "建索引"}</button>
-    <button class="b ghost" on:click={toggleRepoInput} disabled={codeBuilding}>{codeBuilding ? "建图中…" : "🧬 从代码建图"}</button>
+
+    <div class="src-menu">
+      <button class="b" class:on={showSources} on:click={() => (showSources = !showSources)}
+        disabled={indexing || codeBuilding || obsBuilding}>
+        {#if indexing}建索引中…{:else if codeBuilding}建图中…{:else if obsBuilding}吸收中…{:else}+ 知识来源 ▾{/if}
+      </button>
+      {#if showSources}
+        <div class="src-pop">
+          <button class="src-item" on:click={() => { showSources = false; indexProject(); }}>
+            <span class="si-t">💬 从历史对话建索引</span>
+            <span class="si-d">读这个项目的 Claude Code 会话并提炼知识</span>
+          </button>
+          <button class="src-item" on:click={() => { showSources = false; showVaultInput = false; if ($currentProject) showRepoInput = true; else progress = '先在左下角选一个项目'; }}>
+            <span class="si-t">🧬 从代码建图</span>
+            <span class="si-d">扫描仓库，抽出模块/文件/函数与依赖</span>
+          </button>
+          <button class="src-item" on:click={() => { showSources = false; showRepoInput = false; if ($currentProject) showVaultInput = true; else progress = '先在左下角选一个项目'; }}>
+            <span class="si-t">📓 吸收 Obsidian</span>
+            <span class="si-d">把 vault 笔记与 [[wikilink]] 并入图谱</span>
+          </button>
+        </div>
+      {/if}
+    </div>
+
     {#if showRepoInput}
       <input class="term repo" placeholder="仓库绝对路径，如 /Users/me/project" bind:value={repoDir}
         on:keydown={(e) => e.key === "Enter" && buildFromCode()} />
       <button class="b" on:click={buildFromCode} disabled={codeBuilding}>{codeBuilding ? "…" : "开始扫描"}</button>
+      <button class="b ghost" on:click={() => (showRepoInput = false)}>取消</button>
     {/if}
-    <button class="b ghost" on:click={toggleVaultInput} disabled={obsBuilding}>{obsBuilding ? "吸收中…" : "📓 吸收 Obsidian"}</button>
     {#if showVaultInput}
       <input class="term repo" placeholder="Obsidian vault 绝对路径，如 /Users/xiangxiao/Documents/Obsidian Vault" bind:value={vaultDir}
         on:keydown={(e) => e.key === "Enter" && buildFromObsidian()} />
       <button class="b" on:click={buildFromObsidian} disabled={obsBuilding}>{obsBuilding ? "…" : "开始"}</button>
+      <button class="b ghost" on:click={() => (showVaultInput = false)}>取消</button>
     {/if}
-    <button class="b" on:click={genArticle} disabled={articleLoading || !g?.entities?.length}>{articleLoading ? "生成中…" : "📖 阅读文章"}</button>
+    <button class="b ghost" on:click={genArticle} disabled={articleLoading || !g?.entities?.length}>{articleLoading ? "生成中…" : "📖 阅读文章"}</button>
     {#if mode === "graph"}
       <span class="depth">
         跳数
@@ -625,6 +661,23 @@
   .pill { background: transparent; border: 1px solid var(--border); color: var(--text-muted); border-radius: 999px; width: 22px; height: 22px; font-size: 11px; font-family: var(--font-mono); }
   .pill.on { background: #FBBF24; border-color: #FBBF24; color: #1c1206; font-weight: 700; }
   .prog, .stat { color: var(--text-muted); }
+
+  .src-menu { position: relative; display: inline-block; }
+  .b.on { filter: brightness(1.1); }
+  .src-pop {
+    position: absolute; top: calc(100% + 6px); left: 0; z-index: 20;
+    width: 300px; display: flex; flex-direction: column;
+    background: var(--bg-surface); border: 1px solid var(--border);
+    border-radius: var(--radius-card); padding: 6px; box-shadow: 0 12px 32px rgba(0,0,0,.35);
+  }
+  .src-item {
+    display: flex; flex-direction: column; gap: 2px; text-align: left;
+    background: transparent; border: none; border-radius: var(--radius-control);
+    padding: 9px 10px; cursor: pointer; font-family: var(--font-mono);
+  }
+  .src-item:hover { background: var(--bg-elevated); }
+  .si-t { font-size: 12.5px; color: var(--text-primary); font-weight: 600; }
+  .si-d { font-size: 11px; color: var(--text-muted); }
   .spacer { flex: 1; }
   .stage { flex: 1; position: relative; min-height: 0; overflow: hidden; z-index: 1; }
   .canvas { width: 100%; height: 100%; }
