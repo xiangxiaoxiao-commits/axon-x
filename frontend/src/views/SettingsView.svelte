@@ -73,6 +73,33 @@
   let mcpBusy = false;
   let mcpMsg = "";
   let mcpErr = "";
+  // Current project's entity count, so the MCP card can show what an agent
+  // would actually be able to query after connecting.
+  let curEntityCount = 0;
+  let copied = false;
+
+  // The CLAUDE.md snippet, with the current project's slug filled in, so the
+  // user can paste a ready-to-use instruction instead of hand-assembling it.
+  $: claudeSnippet = `## 项目知识图谱（axon-knowledge MCP）
+- 开工前先用 search_knowledge 查本项目既有决策/约束/坑（project: ${$currentProject || "<你的项目 slug>"}）。
+- 敲定非显然的持久知识后，用 remember_knowledge 写回（project 同上）：一个实体一个概念，observations 一句话一条，给出别名。
+- 不要记临时调试、寒暄、能从代码直接看出的事实。`;
+
+  async function refreshCurEntityCount() {
+    if (!$currentProject) { curEntityCount = 0; return; }
+    try {
+      const g = await GetGraph($currentProject);
+      curEntityCount = g?.entities?.length || 0;
+    } catch { curEntityCount = 0; }
+  }
+
+  async function copySnippet() {
+    try {
+      await navigator.clipboard.writeText(claudeSnippet);
+      copied = true;
+      setTimeout(() => (copied = false), 1800);
+    } catch { /* clipboard may be unavailable; ignore */ }
+  }
 
   async function refreshMCP() {
     try {
@@ -255,7 +282,12 @@
   onMount(() => {
     load();
     refreshMCP();
+    refreshCurEntityCount();
   });
+
+  // Refresh the entity count when the selected project changes.
+  let lastProjForCount = " ";
+  $: if ($currentProject !== lastProjForCount) { lastProjForCount = $currentProject; refreshCurEntityCount(); }
 
   async function load() {
     loading = true;
@@ -463,6 +495,22 @@
 
           {#if mcpMsg}<p class="mcp-ok">{mcpMsg}</p>{/if}
           {#if mcpErr}<p class="mcp-err">{mcpErr}</p>{/if}
+
+          <!-- What the agent can query for the currently selected project. -->
+          <div class="mcp-proj">
+            当前项目：<code>{$currentProject || "（未选）"}</code>
+            {#if $currentProject}
+              · 图谱有 <strong>{curEntityCount}</strong> 个实体
+              {#if curEntityCount === 0}<span class="mcp-hint">（还没建图，接入后 agent 查不到东西——先去「知识」建索引）</span>{/if}
+            {/if}
+          </div>
+
+          <!-- Copy-paste CLAUDE.md instruction so the agent actually uses the graph. -->
+          <details class="mcp-snip">
+            <summary>让 agent 主动查/写：复制这段到项目的 CLAUDE.md</summary>
+            <pre class="snip">{claudeSnippet}</pre>
+            <button class="btn sm" type="button" on:click={copySnippet}>{copied ? "已复制 ✓" : "复制"}</button>
+          </details>
         </div>
       </section>
 
