@@ -58,6 +58,7 @@ export namespace claudedata {
 	    updatedAt: number;
 	    sizeBytes: number;
 	    cwd: string;
+	    model: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new SessionMeta(source);
@@ -72,6 +73,7 @@ export namespace claudedata {
 	        this.updatedAt = source["updatedAt"];
 	        this.sizeBytes = source["sizeBytes"];
 	        this.cwd = source["cwd"];
+	        this.model = source["model"];
 	    }
 	}
 	export class SessionProgress {

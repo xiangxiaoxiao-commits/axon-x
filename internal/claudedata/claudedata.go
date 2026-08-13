@@ -39,4 +39,9 @@ type SessionMeta struct {
 	// own "cwd" field (exact, unlike the lossy slug). Needed to `cd` there before
 	// `claude --resume`. Empty if the transcript never recorded one.
 	Cwd string `json:"cwd"`
+	// Model is the family label (Opus/Sonnet/Haiku/…) of the last real model that
+	// answered in this session, derived from assistant events' message.model.
+	// Empty if the transcript recorded no usable model (e.g. only synthetic
+	// events). Used to group/filter sessions by model.
+	Model string `json:"model"`
 }
