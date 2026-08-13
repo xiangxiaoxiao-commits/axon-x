@@ -57,6 +57,7 @@ export namespace claudedata {
 	    messageCount: number;
 	    updatedAt: number;
 	    sizeBytes: number;
+	    cwd: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new SessionMeta(source);
@@ -70,6 +71,23 @@ export namespace claudedata {
 	        this.messageCount = source["messageCount"];
 	        this.updatedAt = source["updatedAt"];
 	        this.sizeBytes = source["sizeBytes"];
+	        this.cwd = source["cwd"];
+	    }
+	}
+	export class SessionProgress {
+	    lastUser: string;
+	    lastAssistant: string;
+	    updatedAt: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new SessionProgress(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.lastUser = source["lastUser"];
+	        this.lastAssistant = source["lastAssistant"];
+	        this.updatedAt = source["updatedAt"];
 	    }
 	}
 

@@ -15,6 +15,15 @@ type SessionMessage struct {
 	Text string `json:"text"`
 }
 
+// SessionProgress is the "where did I leave off" snapshot of a session: the last
+// real user prompt and the tail of the last assistant reply. It lets you decide
+// whether to resume without scrolling the whole transcript.
+type SessionProgress struct {
+	LastUser      string `json:"lastUser"`      // last genuine user prompt (not a tool result)
+	LastAssistant string `json:"lastAssistant"` // full text of the last assistant reply
+	UpdatedAt     int64  `json:"updatedAt"`     // file mtime, unix millis
+}
+
 // innerMessage matches the "message" object on user/assistant events. Content
 // is either a plain string or an array of typed blocks; we keep text blocks.
 type innerMessage struct {
@@ -66,6 +75,56 @@ func ReadSession(projectSlug, sessionID string) ([]SessionMessage, error) {
 		return nil, fmt.Errorf("scan session: %w", err)
 	}
 	return out, nil
+}
+
+// ReadProgress streams a session and returns just the last genuine user prompt
+// and the last assistant reply. Tool-result-only user turns carry no text
+// blocks, so extractText yields "" for them and they're skipped naturally — the
+// result is the last thing you actually typed, not a tool echo.
+func ReadProgress(projectSlug, sessionID string) (SessionProgress, error) {
+	root, err := Root()
+	if err != nil {
+		return SessionProgress{}, err
+	}
+	path := filepath.Join(root, "projects", filepath.Base(projectSlug), filepath.Base(sessionID)+".jsonl")
+	f, err := os.Open(path)
+	if err != nil {
+		return SessionProgress{}, fmt.Errorf("open session: %w", err)
+	}
+	defer f.Close()
+
+	var p SessionProgress
+	if info, err := f.Stat(); err == nil {
+		p.UpdatedAt = info.ModTime().UnixMilli()
+	}
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
+	for sc.Scan() {
+		var ev rawEvent
+		if json.Unmarshal(sc.Bytes(), &ev) != nil {
+			continue
+		}
+		if ev.Type != "user" && ev.Type != "assistant" {
+			continue
+		}
+		var im innerMessage
+		if json.Unmarshal(ev.Message, &im) != nil {
+			continue
+		}
+		text := strings.TrimSpace(extractText(im.Content))
+		if text == "" {
+			continue
+		}
+		if ev.Type == "user" {
+			p.LastUser = text
+		} else {
+			p.LastAssistant = text
+		}
+	}
+	if err := sc.Err(); err != nil {
+		return p, fmt.Errorf("scan session: %w", err)
+	}
+	return p, nil
 }
 
 // extractText handles content that is either a JSON string or an array of

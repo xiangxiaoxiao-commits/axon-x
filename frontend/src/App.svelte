@@ -4,6 +4,8 @@
   import GraphView from "./views/GraphView.svelte";
   import SettingsView from "./views/SettingsView.svelte";
   import AboutView from "./views/AboutView.svelte";
+  import SessionsView from "./views/SessionsView.svelte";
+  import TerminalView from "./views/TerminalView.svelte";
 
   // Navigation is a plain sidebar (VSCode/Linear style): a narrow vertical rail
   // of icon + label entries. The product is an agent-context enhancer: build a
@@ -12,6 +14,8 @@
   // providers + MCP one-click install.
   const NAV: { view: View; label: string; icon: string }[] = [
     { view: "graph", label: "知识", icon: "⊹" },
+    { view: "sessions", label: "会话", icon: "⇆" },
+    { view: "terminal", label: "终端", icon: "❯" },
     { view: "settings", label: "设置", icon: "⚙" },
   ];
 
@@ -48,9 +52,16 @@
       <main class="view">
         {#if $activeView === "settings"}
           <SettingsView onSaved={refreshProviders} />
-        {:else}
+        {:else if $activeView === "sessions"}
+          <SessionsView />
+        {:else if $activeView !== "terminal"}
           <GraphView />
         {/if}
+        <!-- Terminal stays mounted so its shell (and any running claude
+             --resume session) survives tab switches; we only hide it. -->
+        <div class="term-layer" class:hidden={$activeView !== "terminal"}>
+          <TerminalView />
+        </div>
       </main>
     </div>
   {/if}
@@ -102,4 +113,6 @@
   .proj-pick select:focus { border-color: var(--accent); }
 
   .view { flex: 1; min-width: 0; height: 100vh; position: relative; }
+  .term-layer { position: absolute; inset: 0; }
+  .term-layer.hidden { display: none; }
 </style>

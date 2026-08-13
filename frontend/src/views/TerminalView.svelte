@@ -6,10 +6,27 @@
   import "@xterm/xterm/css/xterm.css";
   import { TermStart, TermWrite, TermResize, TermStop } from "../../wailsjs/go/main/App.js";
   import { EventsOn, EventsOff } from "../../wailsjs/runtime/runtime.js";
+  import { activeView, pendingResume } from "../lib/stores";
+  import { get } from "svelte/store";
 
   let host: HTMLElement;
   let term: Terminal;
   let fit: FitAddon;
+  let shellReady = false;
+
+  // Flush a queued resume command once the shell has printed its first output
+  // (i.e. it's ready to read input). Writing the whole command with its trailing
+  // newline makes it run. Clearing the store marks it consumed.
+  function flushPendingResume() {
+    if (!shellReady) return;
+    const cmd = get(pendingResume);
+    if (!cmd) return;
+    pendingResume.set("");
+    TermWrite(cmd);
+    term?.focus();
+  }
+  // React to a resume requested while this view is already mounted.
+  $: if ($pendingResume && shellReady) flushPendingResume();
 
   // Decode base64 shell output (bytes preserved across the JSON bridge).
   function b64ToStr(b64: string): string {
@@ -44,8 +61,15 @@
     term.open(host);
     doFit();
 
-    EventsOn("term:data", (b64: string) => term.write(b64ToStr(b64)));
-    EventsOn("term:exit", () => term.write("\r\n\x1b[31m[shell exited]\x1b[0m\r\n"));
+    EventsOn("term:data", (b64: string) => {
+      term.write(b64ToStr(b64));
+      // First output means the shell is up and reading input; safe to inject.
+      if (!shellReady) { shellReady = true; flushPendingResume(); }
+    });
+    EventsOn("term:exit", () => {
+      term.write("\r\n\x1b[31m[shell exited]\x1b[0m\r\n");
+      shellReady = false;
+    });
 
     // Forward keystrokes to the shell.
     term.onData((d) => TermWrite(d));
@@ -57,11 +81,15 @@
     window.addEventListener("resize", doFit);
   });
 
+  // Refit whenever the terminal becomes visible again (it's hidden, not
+  // unmounted, on tab switch, so xterm can't measure while display:none).
+  $: if ($activeView === "terminal" && fit) queueMicrotask(doFit);
+
   onDestroy(() => {
     window.removeEventListener("resize", doFit);
     EventsOff("term:data");
     EventsOff("term:exit");
-    // Keep the shell alive across tab switches; stop only on teardown.
+    // Mounted for the app's lifetime; stop the shell only on real teardown.
     TermStop();
     term?.dispose();
   });

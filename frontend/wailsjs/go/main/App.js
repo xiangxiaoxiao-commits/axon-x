@@ -22,6 +22,10 @@ export function CancelTask(arg1) {
   return window['go']['main']['App']['CancelTask'](arg1);
 }
 
+export function ClaudeSessionProgress(arg1, arg2) {
+  return window['go']['main']['App']['ClaudeSessionProgress'](arg1, arg2);
+}
+
 export function CreateTask(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['CreateTask'](arg1, arg2, arg3, arg4);
 }
@@ -148,6 +152,10 @@ export function RenameEntity(arg1, arg2, arg3) {
 
 export function RepoStatus(arg1) {
   return window['go']['main']['App']['RepoStatus'](arg1);
+}
+
+export function ResumeCommand(arg1, arg2) {
+  return window['go']['main']['App']['ResumeCommand'](arg1, arg2);
 }
 
 export function ReviewTask(arg1, arg2, arg3) {

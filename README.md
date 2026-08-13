@@ -93,11 +93,13 @@ claude mcp add axon-knowledge -s user /path/to/axon-mcp
 
 ## 桌面端功能
 
-界面收敛为两个入口——**知识**与**设置**：
+界面收敛为四个入口——**知识**、**会话**、**终端**与**设置**：
 
 - **知识图谱**：可视化查看实体 / 关系 / 别名 / 溯源；支持人工确认、修正、去噪（保证图谱质量）。
 - **建索引**：对一个真实仓库跑"从代码建图"；对话与笔记同样并入。
 - **回写闭环**：新学到的业务事实增量合并进图谱，持续长大。
+- **会话浏览与一键恢复**：浏览 Claude Code 存在本地的历史会话（按项目隔离，标签页关了也不丢）；详情页顶部展示「最后进度」（最后一轮你的提问 + AI 回复尾部），一眼看清停在哪；点「▶ 恢复」直接在内置终端里 `cd` 回原工作目录并 `claude --resume`，异常时快速接回。
+- **内置终端**：PTY 驱动的真实 shell，跨标签页常驻（恢复起来的会话切走再切回仍存活）。
 - **设置**：配置模型 Provider、embedding，以及一键接入 Claude Code。
 
 ---
@@ -166,7 +168,7 @@ claude mcp add axon-knowledge -s user /path/to/axon-mcp
 | `graph` | 知识图谱模型：实体 / 关系 / 别名归一 / 溯源 / embedding |
 | `retrieve` | App 无关的召回核心：HybridRAG 双通道 + RRF 融合 |
 | `embed` | embedding 抽象接口（云端 + 本地兜底） |
-| `claudedata` | 读取 Claude Code 会话数据 |
+| `claudedata` | 读取 Claude Code 会话数据（列表 / 全文 / 最后进度 / 精确工作目录），支撑会话浏览与一键恢复 |
 | `provider` | 各家 API 流式调用 |
 | `secret` | OS 凭证库密钥存取（Keychain / Credential Manager，按平台分派） |
 | `mcpinstall` | 一键接入：读写 Claude Code 的 `~/.claude.json` |

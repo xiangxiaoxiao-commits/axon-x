@@ -35,4 +35,8 @@ type SessionMeta struct {
 	MessageCount int    `json:"messageCount"`
 	UpdatedAt    int64  `json:"updatedAt"` // file mtime, unix millis
 	SizeBytes    int64  `json:"sizeBytes"`
+	// Cwd is the working directory the session ran in, read from the transcript's
+	// own "cwd" field (exact, unlike the lossy slug). Needed to `cd` there before
+	// `claude --resume`. Empty if the transcript never recorded one.
+	Cwd string `json:"cwd"`
 }
