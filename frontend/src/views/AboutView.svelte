@@ -135,6 +135,72 @@
         </div>
       </details>
 
+      <details class="deep">
+        <summary>深入:知识图谱怎么生成、怎么进化(点击展开)</summary>
+        <div class="deep-body">
+
+          <h4>建索引:从历史对话蒸馏(IndexProject)</h4>
+          <p>
+            读 Claude Code 在 <code>~/.claude/projects</code> 下的会话记录,<strong>逐会话</strong>处理:
+          </p>
+          <ul>
+            <li><strong>拼接文本</strong>:把 user/assistant 消息拼成对话文本,上限 <code>16000</code> 字符;超了<strong>保留最新的轮次</strong>(结论通常在后面)。</li>
+            <li><strong>LLM 蒸馏</strong>:用一个理解力强的模型(<code>gpt-5.6-sol</code>,温度 0.1)按固定提示词只提炼"下次还用得上"的持久知识——模块/服务/概念、关键决策及理由、踩过的坑与约束;<strong>丢弃</strong>寒暄、日志、报错、一次性操作、被否定的方案。强制输出严格 JSON:<code>entities</code>(name/type/aliases/observations)+ <code>relations</code>(from/label/to)。</li>
+            <li><strong>溯源打戳</strong>:每条 observation 记下来自哪个会话 id,后续注入时能显示"这条知识来自 xx 会话"。</li>
+            <li><strong>原文分块</strong>:把整段会话切成 chunk 存入"原文通道",连同实体一起 embedding。</li>
+            <li><strong>增量 + 缓存</strong>:结果按会话存成 cache 文件。再次建索引<strong>只处理新增/改动</strong>的会话(按文件 mtime 判断);已缓存的直接跳过,不重复烧 token。若只是缓存 schema 升级,会复用旧的蒸馏结果、只补新字段。</li>
+          </ul>
+
+          <h4>从代码建图:静态骨架 + 业务富化(BuildGraphFromCode)</h4>
+          <ul>
+            <li><strong>静态骨架(免费、确定性、全仓)</strong>:扫描仓库,语言无关层抽出 目录/文件/包 实体和 import(<code>依赖</code>)关系;Go 文件另用 <code>go/ast</code> 精确抽 函数/类型 实体与 <code>包含</code>/<code>调用</code> 关系。文件名的 camelCase/snake_case 会拆成别名(如 <code>PaymentService</code> → "payment service"),方便自然语言命中。</li>
+            <li><strong>LLM 业务富化(可选、限额)</strong>:挑最多 <code>40</code> 个关键文件,让模型<strong>只补业务含义</strong>(职责 observation + 中文/领域别名),不复述语法。名字与骨架实体完全对齐,这样能<strong>叠加</strong>到同一节点上。没配 OpenAI provider 就跳过、退化为纯骨架,不报错。</li>
+            <li><strong>原文通道</strong>:每个源文件按声明边界切块 embedding,让最终代码可被逐字召回。</li>
+            <li>整个代码知识存在<strong>专属 cache key</strong>(<code>code:graph</code>)下,每次重建全量覆盖。</li>
+          </ul>
+
+          <h4>利用 Obsidian 已有笔记(BuildGraphFromObsidian)</h4>
+          <p>
+            Obsidian 笔记是<strong>人写的、高密度、已经带结构</strong>的知识,所以处理方式和对话不同——<strong>不做 LLM 蒸馏</strong>,直接映射:
+          </p>
+          <ul>
+            <li>每篇 <code>.md</code> 笔记 → 一个 <code>note</code> 实体(名字=标题,别名=路径/文件名)。</li>
+            <li>笔记里的 <code>[[wikilink]]</code> → 一条 <code>链接</code> 关系。这是<strong>人已经确认过的关系</strong>,比模型抽的更可信,直接当图谱的边。链接目标会归一化(去掉 <code>#锚点</code>、<code>|别名</code>、<code>.md</code>、路径),对齐到目标笔记的标题以便合并。</li>
+            <li>笔记正文按段落切 chunk(带一段重叠)进原文通道 embedding——笔记的主要价值在正文,所以这条通道是重点。</li>
+            <li>同样<strong>增量</strong>:按 mtime 跳过未改动的笔记;跳过 <code>.obsidian</code>/<code>.trash</code> 等隐藏目录和附件。</li>
+          </ul>
+
+          <h4>多来源融合:别名归一与去重(graph.Merge)</h4>
+          <p>
+            对话、代码、Obsidian 三个来源各自存 cache,召回前会全部 <strong>Merge</strong> 进一张图。合并的关键是<strong>别名归一</strong>:
+          </p>
+          <ul>
+            <li>每个实体按"名字 + 所有别名"建索引。新实体只要<strong>命中任一个 key</strong>,就折叠进已有节点,而不是新建。于是 <code>支付服务</code>、<code>PaymentService</code>、<code>payment</code> 在跨来源时<strong>collapse 成同一个节点</strong>。</li>
+            <li>observations 按"事实+来源"成对<strong>并集去重</strong>;别名并集;类型缺失才补。</li>
+            <li>Embedding <strong>最新非空的赢</strong>——最近一次建索引产生的向量覆盖旧的。</li>
+            <li>关系按 <code>(from, to, label)</code> 归一化去重。</li>
+          </ul>
+
+          <h4>进化迭代:越用越懂(回写闭环)</h4>
+          <p>
+            图谱不是建一次就固定。<strong>回写(writeback)</strong>让它随使用长大:
+          </p>
+          <ul>
+            <li>一个任务被采纳后,把它的 输入 + 确认的规格 + 最终产出 拼成文本,<strong>复用同一套蒸馏提示词</strong>抽出新的实体/关系。</li>
+            <li>打上 <code>task:</code> 来源戳,embedding 后存成新的 cache,再<strong>重新 Merge</strong> 进图——新学到的事实通过别名归一自动并入相关的已有节点(如关于"支付服务"的新结论直接挂到它名下)。</li>
+            <li>全程 fire-and-forget:回写失败绝不影响主流程。</li>
+          </ul>
+          <p class="lead">
+            所以"进化"= <strong>增量建索引</strong>(新对话)+ <strong>回写</strong>(任务沉淀)+ <strong>人工校正</strong>(知识视图里改/删/确认)三条路持续往同一张图里加、并靠别名归一保持一个概念一个节点。
+          </p>
+
+          <h4>人工校正:保证质量</h4>
+          <p>
+            自动抽取难免有噪音。知识视图支持<strong>删实体、改 observations、合并别名</strong>——去噪和纠错后,别名归一会持续生效。<strong>图谱质量比数量重要</strong>:宁可少而准。
+          </p>
+        </div>
+      </details>
+
       <hr class="divider" />
 
       <h3>接入 Claude Code(MCP)的原理</h3>
