@@ -73,6 +73,46 @@ func (h *toolHandler) list() map[string]interface{} {
 					"required": []string{"project", "name"},
 				},
 			},
+			{
+				Name: "remember_knowledge",
+				Description: "把本次对话里学到的、以后还用得上的持久业务知识写回该项目的知识图谱（让它越用越懂）。" +
+					"只记录持久知识：设计决策及理由、约束/坑、接口约定、模块职责与关系；不要记临时调试、寒暄或一次性操作。" +
+					"通过别名归一，新知识会自动并入已有的同名实体。写入后立即对后续 search_knowledge / get_entity 生效。",
+				InputSchema: map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"project": strProp("项目 slug（用 list_projects 获取）"),
+						"entities": map[string]interface{}{
+							"type":        "array",
+							"description": "要记住的实体列表。每个实体：name(实体名) + type(module|service|concept|decision|constraint) + observations(关于它的事实，一句话一条) + 可选 aliases(别名/中英文/简称)。",
+							"items": map[string]interface{}{
+								"type": "object",
+								"properties": map[string]interface{}{
+									"name":         strProp("实体名"),
+									"type":         strProp("module|service|concept|decision|constraint"),
+									"observations": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "关于它的持久事实，一句话一条"},
+									"aliases":      map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "别名（同一事物的其他叫法），没有就省略"},
+								},
+								"required": []string{"name", "observations"},
+							},
+						},
+						"relations": map[string]interface{}{
+							"type":        "array",
+							"description": "可选：实体间的关系。每条：from(实体A) + to(实体B) + label(关系，如 依赖/调用/属于)。",
+							"items": map[string]interface{}{
+								"type": "object",
+								"properties": map[string]interface{}{
+									"from":  strProp("实体A"),
+									"to":    strProp("实体B"),
+									"label": strProp("关系，如 依赖/调用/属于"),
+								},
+								"required": []string{"from", "to", "label"},
+							},
+						},
+					},
+					"required": []string{"project", "entities"},
+				},
+			},
 		},
 	}
 }
@@ -112,6 +152,8 @@ func (h *toolHandler) call(raw json.RawMessage) (*toolResult, error) {
 		return h.listProjects()
 	case "get_entity":
 		return h.getEntity(p.Arguments)
+	case "remember_knowledge":
+		return h.rememberKnowledge(p.Arguments)
 	default:
 		return nil, fmt.Errorf("unknown tool %q", p.Name)
 	}

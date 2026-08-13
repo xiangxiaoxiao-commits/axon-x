@@ -210,11 +210,23 @@
         它<strong>不依赖 <code>claude</code> 命令行</strong>——因为从 Finder 启动的应用往往拿不到完整 PATH——而是直接、
         原子地读写配置文件,macOS 与 Windows 行为一致。
       </p>
-      <p>接入后,agent 在会话里能调用三个工具:</p>
+      <p>接入后,agent 在会话里能调用四个工具:</p>
       <ul>
         <li><code>list_projects</code>:列出所有已建图谱的项目。</li>
         <li><code>search_knowledge</code>:给一句话,返回相关实体、事实、原文片段,带来源。</li>
         <li><code>get_entity</code>:查看某个实体的全部事实 + 关系 + 别名。</li>
+        <li><code>remember_knowledge</code>:<strong>把本次对话学到的持久知识写回图谱</strong>——这是 MCP 模式下"越用越懂"的写入闭环(见下)。</li>
+      </ul>
+
+      <h3>MCP 模式下如何让图谱越用越全</h3>
+      <p>
+        查询(<code>search_knowledge</code>)是<strong>只读</strong>的,查再多也不会自动沉淀。让图谱在纯 MCP 使用下持续长大,靠这几条:
+      </p>
+      <ul>
+        <li><strong>让 agent 主动写回</strong>(核心):在 <code>CLAUDE.md</code> 里写一句"重要决策/约束确认后,调用 <code>remember_knowledge</code> 记进项目图谱"。这样每次对话里学到的结论<strong>实时</strong>写回,通过别名归一并入已有实体,不用回 GUI。</li>
+        <li><strong>定期重新「建索引」</strong>:你用 Claude Code 会不断在本地积累新会话文件,回 axon 点一次建索引即可<strong>增量</strong>蒸馏进图(旧的跳过)。</li>
+        <li><strong>代码/笔记变了就重跑</strong>「从代码建图」「吸收 Obsidian」。</li>
+        <li><strong>人工校正</strong>:知识视图里去噪、纠错、合并别名,保证质量。</li>
       </ul>
 
       <hr class="divider" />

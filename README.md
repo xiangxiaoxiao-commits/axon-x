@@ -56,6 +56,7 @@ claude mcp add axon-knowledge -s user /path/to/axon-mcp
 | `list_projects` | 列出所有已建图谱的项目（slug + 路径 + 实体数） |
 | `search_knowledge` | 给一段自然语言 query，返回相关实体、事实与原文片段，带来源标注 |
 | `get_entity` | 查看某实体的全部 observations（事实）+ 关系 + 别名，支持别名与大小写不敏感匹配 |
+| `remember_knowledge` | 把本次对话学到的持久知识写回图谱（实体/关系），通过别名归一并入已有节点——MCP 模式下"越用越懂"的写入闭环 |
 
 `axon-mcp` 是一个独立二进制，不依赖 GUI，直接读 GUI 建好的 `graphs/` 与 `graphcache/`，与 App 共用 `internal/retrieve` 里的召回核心。
 
