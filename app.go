@@ -197,13 +197,31 @@ func (a *App) SetDefaults(providerName, modelID string) error {
 type EmbeddingConfig struct {
 	Provider string `json:"provider"`
 	Model    string `json:"model"`
+	// Mode is "semantic" or "keyword" (empty defaults to keyword). It selects
+	// the recall backend explicitly; there is no silent cloud->local fallback.
+	Mode string `json:"mode"`
 }
 
 // GetEmbeddingConfig returns the configured embedding provider/model so the
 // settings UI can prefill its embedding section.
 func (a *App) GetEmbeddingConfig() EmbeddingConfig {
 	cfg := a.cfg.Get()
-	return EmbeddingConfig{Provider: cfg.EmbeddingProvider, Model: cfg.EmbeddingModel}
+	mode := cfg.EmbeddingMode
+	if mode == "" {
+		mode = config.EmbeddingModeKeyword // empty means keyword (offline default)
+	}
+	return EmbeddingConfig{Provider: cfg.EmbeddingProvider, Model: cfg.EmbeddingModel, Mode: mode}
+}
+
+// SetEmbeddingMode persists the recall backend selection: "semantic" (cloud
+// model only, no fallback) or "keyword" (local lexical embedder).
+func (a *App) SetEmbeddingMode(mode string) error {
+	switch mode {
+	case config.EmbeddingModeSemantic, config.EmbeddingModeKeyword:
+	default:
+		return fmt.Errorf("invalid embedding mode %q (want %q or %q)", mode, config.EmbeddingModeSemantic, config.EmbeddingModeKeyword)
+	}
+	return a.cfg.SetEmbeddingMode(mode)
 }
 
 // SetEmbeddingConfig persists the provider/model used for semantic-memory

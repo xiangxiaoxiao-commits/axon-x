@@ -246,6 +246,7 @@ export namespace main {
 	export class EmbeddingConfig {
 	    provider: string;
 	    model: string;
+	    mode: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new EmbeddingConfig(source);
@@ -255,6 +256,7 @@ export namespace main {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.provider = source["provider"];
 	        this.model = source["model"];
+	        this.mode = source["mode"];
 	    }
 	}
 	export class InjectedChunk {

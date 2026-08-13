@@ -3,46 +3,46 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 	"strings"
 
+	"axon/internal/config"
 	"axon/internal/embed"
 	"axon/internal/provider"
 )
 
-// newEmbedder builds the embedder used by every recall/index path. It NEVER
-// returns an error: recall must always have a working embedder. A cloud
-// (OpenAI-compatible) endpoint is preferred, but a cloud endpoint that is
-// missing, misconfigured, or that serves chat while failing on /v1/embeddings
-// (503) falls back to the pure-Go LocalEmbedder so semantic/chunk recall keeps
-// working (fuzzy lexical vectors) instead of collapsing to empty query vectors.
+// newEmbedder builds the embedder for every recall/index path according to the
+// user's explicit EmbeddingMode — there is NO silent cloud->local degradation.
 //
-// Degradation chain: usable cloud embedding > local embedding > (only if the
-// query itself can't be embedded) substring matching.
+//   - keyword mode (default): always the pure-Go local lexical embedder. Never
+//     touches the network, never errors.
+//   - semantic mode: ONLY the configured cloud model. If cloud is not
+//     configured, misconfigured, or the endpoint can't embed, this returns an
+//     error and the caller must NOT fall back — recall/index simply proceeds
+//     without vectors (empty semantic recall) and surfaces the problem, so a
+//     broken setup is visible instead of masquerading as low-quality results.
 //
 // Cloud usability is verified with a live probe (embed a short string) the first
-// time an endpoint is seen; the result is cached per process so later recalls
-// don't re-probe the network. TestEmbedding is the explicit entry point that
-// still surfaces misconfiguration as an error (see buildCloudEmbedder).
+// time an endpoint is seen; the result is cached per process.
 func (a *App) newEmbedder() (embed.Embedder, error) {
-	cloud, key, err := a.buildCloudEmbedder()
-	if err != nil {
-		// Cloud is configured but broken (unknown provider, wrong protocol,
-		// missing key). Don't fail recall: log and use the local fallback.
-		log.Printf("axon: cloud embedding unavailable (%v); falling back to local embedder", err)
-		return embed.NewLocal(), nil
-	}
-	if cloud == nil {
-		// Nothing configured: local, zero-dependency embedder.
+	if a.cfg.Get().EmbeddingMode != config.EmbeddingModeSemantic {
+		// keyword (or unset): local lexical embedder, no network, no error.
 		return embed.NewLocal(), nil
 	}
 
+	// Semantic mode: cloud only, no fallback.
+	cloud, key, err := a.buildCloudEmbedder()
+	if err != nil {
+		return nil, fmt.Errorf("语义模式已开启，但云端 embedding 不可用：%w", err)
+	}
+	if cloud == nil {
+		return nil, fmt.Errorf("语义模式已开启，但未配置可用的 embedding Provider（需 openai 协议）")
+	}
 	usable, probed, perr := a.embedProbeCache().Usable(a.ctx, cloud, key)
 	if !usable {
-		if probed {
-			log.Printf("axon: cloud embedding not usable (%v); falling back to local embedder", perr)
+		if probed && perr != nil {
+			return nil, fmt.Errorf("语义模式已开启，但云端 embedding 调用失败：%w", perr)
 		}
-		return embed.NewLocal(), nil
+		return nil, fmt.Errorf("语义模式已开启，但云端 embedding 不可用")
 	}
 	return cloud, nil
 }

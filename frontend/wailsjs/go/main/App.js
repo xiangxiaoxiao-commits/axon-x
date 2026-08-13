@@ -178,6 +178,10 @@ export function SetEmbeddingConfig(arg1, arg2) {
   return window['go']['main']['App']['SetEmbeddingConfig'](arg1, arg2);
 }
 
+export function SetEmbeddingMode(arg1) {
+  return window['go']['main']['App']['SetEmbeddingMode'](arg1);
+}
+
 export function StopGeneration(arg1) {
   return window['go']['main']['App']['StopGeneration'](arg1);
 }

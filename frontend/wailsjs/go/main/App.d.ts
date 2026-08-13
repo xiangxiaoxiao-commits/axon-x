@@ -98,6 +98,8 @@ export function SetDefaults(arg1:string,arg2:string):Promise<void>;
 
 export function SetEmbeddingConfig(arg1:string,arg2:string):Promise<void>;
 
+export function SetEmbeddingMode(arg1:string):Promise<void>;
+
 export function StopGeneration(arg1:string):Promise<void>;
 
 export function TermResize(arg1:number,arg2:number):Promise<void>;

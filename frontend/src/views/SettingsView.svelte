@@ -10,6 +10,7 @@
     SetDefaults,
     GetEmbeddingConfig,
     SetEmbeddingConfig,
+    SetEmbeddingMode,
     TestEmbedding,
     MCPStatus,
     InstallMCP,
@@ -47,6 +48,10 @@
   let testingEmbed = false;
   let embedTestMsg = "";
   let embedTestOk = false;
+  // Recall backend: "semantic" (cloud model only, no fallback) or "keyword"
+  // (local lexical embedder). Explicit — no silent degradation.
+  let embedMode: "semantic" | "keyword" = "keyword";
+  let modeMsg = "";
   // Common embedding models across vendors (datalist suggestions; free-typed OK).
   const EMBED_MODELS = [
     "text-embedding-3-small",
@@ -257,6 +262,7 @@
       const embed = await GetEmbeddingConfig();
       embedProvider = embed.provider;
       embedModel = embed.model;
+      embedMode = embed.mode === "semantic" ? "semantic" : "keyword";
     } catch (e) {
       loadError = `加载 Providers 失败:${String(e)}`;
     }
@@ -320,6 +326,25 @@
       defaultsMsg = `保存失败:${String(e)}`;
     }
     savingDefaults = false;
+  }
+
+  // Switch recall backend and persist immediately (toggle-style UX).
+  async function setMode(mode: "semantic" | "keyword") {
+    if (mode === embedMode) return;
+    modeMsg = "";
+    embedTestMsg = "";
+    const prev = embedMode;
+    embedMode = mode; // optimistic
+    try {
+      await SetEmbeddingMode(mode);
+      modeMsg =
+        mode === "semantic"
+          ? "已切换到语义模型。若云端调用失败，召回不会降级，会直接报错——请用下方「测试连接」确认可用。"
+          : "已切换到关键词（本地词面向量），完全离线，不调用云端。";
+    } catch (e) {
+      embedMode = prev; // revert on failure
+      modeMsg = `切换失败:${String(e)}`;
+    }
   }
 
   async function saveEmbedding() {
@@ -613,13 +638,37 @@
 
       <!-- Embedding (semantic memory) config -->
       <section>
-        <h2>Embedding(语义检索)</h2>
+        <h2>召回方式</h2>
+
+        <!-- Explicit recall backend switch: no silent degradation. -->
+        <div class="mode-switch">
+          <button
+            type="button"
+            class="mode-opt"
+            class:active={embedMode === "keyword"}
+            on:click={() => setMode("keyword")}
+          >
+            <span class="mode-title">🔤 关键词</span>
+            <span class="mode-sub">本地词面向量,完全离线,不调用云端。速度快、零成本,但只按字面近似召回。</span>
+          </button>
+          <button
+            type="button"
+            class="mode-opt"
+            class:active={embedMode === "semantic"}
+            on:click={() => setMode("semantic")}
+          >
+            <span class="mode-title">🧠 语义模型</span>
+            <span class="mode-sub">只用下方配置的云端 embedding 模型。按意思召回,精度高。<strong>失败不降级</strong>,会直接报错。</span>
+          </button>
+        </div>
+        {#if modeMsg}<p class="mode-msg">{modeMsg}</p>{/if}
+
+        {#if embedMode === "semantic"}
+        <h2 class="sub-h2">Embedding 模型配置</h2>
         <div class="note" class:warn={!hasOpenAI}>
-          语义检索(按意思召回业务知识)需要一个支持 embedding 的服务。Embedding 走
-          OpenAI 兼容接口,所以这里只列 <strong>openai 协议</strong>的 Provider——
+          语义模型走 OpenAI 兼容接口,所以这里只列 <strong>openai 协议</strong>的 Provider——
           <strong>智谱 GLM 也是 openai 协议</strong>,同样可用(模型填
           <code>embedding-3</code>);OpenAI 用 <code>text-embedding-3-small</code>。
-          未配置时语义检索会降级为关键词匹配。
         </div>
 
         {#if embedProviders.length === 0}
@@ -685,6 +734,7 @@
               {/if}
             </div>
           </div>
+        {/if}
         {/if}
       </section>
 
@@ -1064,5 +1114,52 @@
   }
   .link-btn:hover {
     text-decoration: underline;
+  }
+
+  /* Recall backend switch */
+  .mode-switch {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+  .mode-opt {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+    text-align: left;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-card);
+    padding: 14px 16px;
+    cursor: pointer;
+  }
+  .mode-opt:hover {
+    border-color: var(--text-muted);
+  }
+  .mode-opt.active {
+    border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
+    box-shadow: inset 0 0 0 1px var(--accent);
+  }
+  .mode-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+  .mode-sub {
+    font-size: 12px;
+    color: var(--text-muted);
+    line-height: 1.6;
+  }
+  .mode-msg {
+    margin: 10px 0 0;
+    font-size: 12.5px;
+    color: var(--text-muted);
+    line-height: 1.6;
+  }
+  .sub-h2 {
+    font-size: 14px;
+    margin: 20px 0 12px;
   }
 </style>

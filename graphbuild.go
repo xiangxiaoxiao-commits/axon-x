@@ -131,20 +131,21 @@ func (a *App) IndexProject(projectSlug string) error {
 		return err
 	}
 
-	// Build an embedder for semantic (HybridRAG) retrieval. Optional: if none is
-	// available, indexing proceeds without vectors and MatchKnowledge falls back
-	// to substring matching.
+	// Build an embedder per the user's mode. Keyword mode always returns the
+	// local lexical embedder. Semantic mode returns the cloud model, or an error
+	// if it's unavailable — in which case we do NOT fall back: indexing proceeds
+	// without vectors and the failure is surfaced to the UI.
 	emb, embErr := a.newEmbedder()
 	if embErr != nil {
 		emb = nil
 	}
 
 	if emb == nil {
-		// No embedder: chunk recall can't work, and the frontend should know the
-		// index is being built in the degraded (keyword-only) mode.
+		// Semantic mode with a broken cloud endpoint: skip vectors this run and
+		// tell the frontend exactly why, instead of silently degrading.
 		a.emit(EventGraphProgress, map[string]any{
 			"projectSlug": projectSlug, "phase": "index",
-			"warning": "未配置 embedding provider：本次不生成向量与原文块，召回将退回关键词匹配",
+			"warning": fmt.Sprintf("本次不生成向量与原文块：%v", embErr),
 		})
 	}
 

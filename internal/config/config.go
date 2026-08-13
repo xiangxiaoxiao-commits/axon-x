@@ -31,7 +31,20 @@ type Config struct {
 	// EmbeddingModel is the embedding model id (e.g. text-embedding-3-small,
 	// embedding-3, BAAI/bge-m3). Empty falls back to the embedder default.
 	EmbeddingModel string `json:"embeddingModel"`
+	// EmbeddingMode selects the recall backend explicitly, replacing the old
+	// silent cloud->local degradation:
+	//   "semantic" — use ONLY the configured cloud model; if it fails, recall
+	//                returns empty and surfaces the error (never degrades).
+	//   "keyword"  — use the local lexical (n-gram) embedder; never calls cloud.
+	// Empty is treated as "keyword" (safe, offline default).
+	EmbeddingMode string `json:"embeddingMode"`
 }
+
+// Embedding recall modes for Config.EmbeddingMode.
+const (
+	EmbeddingModeSemantic = "semantic"
+	EmbeddingModeKeyword  = "keyword"
+)
 
 // Manager loads and saves Config, guarding concurrent access.
 type Manager struct {
@@ -116,6 +129,14 @@ func (m *Manager) SetEmbedding(providerName, model string) error {
 	defer m.mu.Unlock()
 	m.cfg.EmbeddingProvider = providerName
 	m.cfg.EmbeddingModel = model
+	return m.saveLocked()
+}
+
+// SetEmbeddingMode persists the recall backend selection (semantic|keyword).
+func (m *Manager) SetEmbeddingMode(mode string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.cfg.EmbeddingMode = mode
 	return m.saveLocked()
 }
 
