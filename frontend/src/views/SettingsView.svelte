@@ -259,6 +259,21 @@
     formTarget = "new";
   }
 
+  // Opens the add-provider form with a preset pre-selected and scrolls up to
+  // it. Used by the Embedding section's shortcut buttons so a user missing an
+  // OpenAI-compatible provider can add GLM/OpenAI in one click.
+  function openAddWithPreset(presetId: string) {
+    openAdd();
+    const preset = PRESETS.find((p) => p.id === presetId);
+    if (preset) applyPreset(preset);
+    // Wait for the form to render, then bring it into view.
+    setTimeout(() => {
+      document
+        .querySelector(".add-form")
+        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 0);
+  }
+
   function openEdit(info: main.ProviderInfo) {
     saveError = "";
     formTarget = info;
@@ -572,16 +587,24 @@
       <section>
         <h2>Embedding(语义检索)</h2>
         <div class="note" class:warn={!hasOpenAI}>
-          语义检索(按意思召回业务知识)需要一个支持 embedding 的服务。智谱 GLM 用
-          <code>embedding-3</code>,OpenAI 用 <code>text-embedding-3-small</code>。
-          未配置时语义检索会降级为关键词匹配。Embedding 走 OpenAI 兼容接口,只能选
-          openai 协议的 Provider。
+          语义检索(按意思召回业务知识)需要一个支持 embedding 的服务。Embedding 走
+          OpenAI 兼容接口,所以这里只列 <strong>openai 协议</strong>的 Provider——
+          <strong>智谱 GLM 也是 openai 协议</strong>,同样可用(模型填
+          <code>embedding-3</code>);OpenAI 用 <code>text-embedding-3-small</code>。
+          未配置时语义检索会降级为关键词匹配。
         </div>
 
         {#if embedProviders.length === 0}
-          <div class="note warn">
-            当前尚未配置 openai 协议的 Provider,无法启用语义检索。请先在上方添加一个
-            protocol 为 openai 的 Provider。
+          <div class="note warn empty-embed">
+            <div>还没有 openai 协议的 Provider,语义检索暂不可用。点下面按钮一键添加(会自动填好协议和地址,你只需粘贴 API Key):</div>
+            <div class="empty-actions">
+              <button class="btn" type="button" on:click={() => openAddWithPreset("glm")}>
+                + 添加智谱 GLM
+              </button>
+              <button class="btn" type="button" on:click={() => openAddWithPreset("openai")}>
+                + 添加 OpenAI
+              </button>
+            </div>
           </div>
         {:else}
           <div class="defaults">
@@ -978,5 +1001,18 @@
     margin: 0;
     color: var(--danger);
     font-size: 13px;
+  }
+
+  /* Embedding empty-state: shortcut buttons to add a compatible provider */
+  .empty-embed {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    line-height: 1.7;
+  }
+  .empty-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
   }
 </style>
