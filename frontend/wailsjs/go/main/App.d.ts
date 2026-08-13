@@ -3,6 +3,7 @@
 import {graph} from '../models';
 import {task} from '../models';
 import {main} from '../models';
+import {mcpinstall} from '../models';
 import {claudedata} from '../models';
 import {model} from '../models';
 import {gitx} from '../models';
@@ -49,6 +50,8 @@ export function IndexProject(arg1:string):Promise<void>;
 
 export function IndexSearch():Promise<void>;
 
+export function InstallMCP():Promise<mcpinstall.Status>;
+
 export function ListClaudeProjects():Promise<Array<claudedata.Project>>;
 
 export function ListClaudeSessions(arg1:string):Promise<Array<claudedata.SessionMeta>>;
@@ -66,6 +69,8 @@ export function ListProviders():Promise<Array<main.ProviderInfo>>;
 export function ListTaskRuns(arg1:string):Promise<Array<task.Run>>;
 
 export function ListTasks():Promise<Array<task.Task>>;
+
+export function MCPStatus():Promise<mcpinstall.Status>;
 
 export function MatchKnowledge(arg1:string,arg2:string):Promise<main.KnowledgeMatch>;
 
@@ -104,6 +109,8 @@ export function TermStop():Promise<void>;
 export function TermWrite(arg1:string):Promise<void>;
 
 export function TestEmbedding():Promise<void>;
+
+export function UninstallMCP():Promise<mcpinstall.Status>;
 
 export function UpdateEntityObservations(arg1:string,arg2:string,arg3:Array<string>):Promise<void>;
 

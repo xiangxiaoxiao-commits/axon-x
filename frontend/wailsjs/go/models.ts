@@ -340,6 +340,27 @@ export namespace main {
 
 }
 
+export namespace mcpinstall {
+	
+	export class Status {
+	    installed: boolean;
+	    command: string;
+	    configPath: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Status(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.installed = source["installed"];
+	        this.command = source["command"];
+	        this.configPath = source["configPath"];
+	    }
+	}
+
+}
+
 export namespace model {
 	
 	export class Conversation {

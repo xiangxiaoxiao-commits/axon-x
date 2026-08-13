@@ -11,8 +11,11 @@
     GetEmbeddingConfig,
     SetEmbeddingConfig,
     TestEmbedding,
+    MCPStatus,
+    InstallMCP,
+    UninstallMCP,
   } from "../../wailsjs/go/main/App.js";
-  import type { main, provider } from "../../wailsjs/go/models";
+  import type { main, provider, mcpinstall } from "../../wailsjs/go/models";
   import ProviderCard from "../lib/settings/ProviderCard.svelte";
   import ProviderForm from "../lib/settings/ProviderForm.svelte";
   import SecretInput from "../lib/settings/SecretInput.svelte";
@@ -50,6 +53,48 @@
     "embedding-3",
     "BAAI/bge-m3",
   ];
+
+  // --- MCP one-click install (Claude Code integration) ----------------------
+  // Registers axon's stdio knowledge server into Claude Code's user config so
+  // any agent session can query this project's business knowledge over MCP.
+  let mcp: mcpinstall.Status | null = null;
+  let mcpBusy = false;
+  let mcpMsg = "";
+  let mcpErr = "";
+
+  async function refreshMCP() {
+    try {
+      mcp = await MCPStatus();
+    } catch (e) {
+      mcpErr = `读取 MCP 状态失败:${String(e)}`;
+    }
+  }
+
+  async function installMCP() {
+    mcpMsg = "";
+    mcpErr = "";
+    mcpBusy = true;
+    try {
+      mcp = await InstallMCP();
+      mcpMsg = "已接入 Claude Code。重启正在运行的 Claude Code 会话后即可使用 axon-knowledge 工具。";
+    } catch (e) {
+      mcpErr = `接入失败:${String(e)}`;
+    }
+    mcpBusy = false;
+  }
+
+  async function uninstallMCP() {
+    mcpMsg = "";
+    mcpErr = "";
+    mcpBusy = true;
+    try {
+      mcp = await UninstallMCP();
+      mcpMsg = "已从 Claude Code 移除。";
+    } catch (e) {
+      mcpErr = `移除失败:${String(e)}`;
+    }
+    mcpBusy = false;
+  }
 
   // --- One-click provider presets (add flow only) ---------------------------
   // Each preset prefills protocol + baseURL so the user only pastes a key.
@@ -186,7 +231,10 @@
     (p) => p.protocol === "openai" && p.hasKey,
   );
 
-  onMount(load);
+  onMount(() => {
+    load();
+    refreshMCP();
+  });
 
   async function load() {
     loading = true;
@@ -292,6 +340,52 @@
       {#if loadError}
         <div class="banner error">{loadError}</div>
       {/if}
+
+      <!-- MCP one-click install: the product's headline integration. Wires
+           axon's knowledge graph into Claude Code so any agent session can
+           query this project's business knowledge. -->
+      <section>
+        <h2>接入 Claude Code(MCP)</h2>
+        <div class="mcp-card">
+          <div class="mcp-desc">
+            一键把 axon 的知识图谱接入 Claude Code。接入后,AI 在任意会话里都能通过
+            <code>axon-knowledge</code> 工具查询本项目沉淀的业务知识(设计决策、约束、接口约定),
+            无需你反复解释。
+          </div>
+
+          <div class="mcp-status">
+            <span
+              class="dot"
+              class:on={mcp?.installed}
+              class:off={!mcp?.installed}
+            ></span>
+            {#if mcp?.installed}
+              <span class="mcp-state">已接入</span>
+              <span class="mcp-path mono">{mcp.command}</span>
+            {:else}
+              <span class="mcp-state">未接入</span>
+            {/if}
+          </div>
+
+          <div class="mcp-actions">
+            {#if mcp?.installed}
+              <button class="btn primary" type="button" on:click={installMCP} disabled={mcpBusy}>
+                {mcpBusy ? "处理中…" : "重新接入 / 更新路径"}
+              </button>
+              <button class="btn ghost" type="button" on:click={uninstallMCP} disabled={mcpBusy}>
+                移除接入
+              </button>
+            {:else}
+              <button class="btn primary" type="button" on:click={installMCP} disabled={mcpBusy}>
+                {mcpBusy ? "接入中…" : "一键接入 Claude Code"}
+              </button>
+            {/if}
+          </div>
+
+          {#if mcpMsg}<p class="mcp-ok">{mcpMsg}</p>{/if}
+          {#if mcpErr}<p class="mcp-err">{mcpErr}</p>{/if}
+        </div>
+      </section>
 
       <!-- First-run guidance (UX §5.1). -->
       {#if needsSetup}
@@ -817,5 +911,72 @@
     display: flex;
     justify-content: flex-end;
     gap: 8px;
+  }
+
+  /* MCP install card */
+  .mcp-card {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-card);
+    padding: 16px;
+  }
+  .mcp-desc {
+    font-size: 13px;
+    color: var(--text-muted);
+    line-height: 1.7;
+  }
+  .mcp-desc code {
+    color: var(--text-primary);
+    background: var(--bg-elevated);
+    padding: 1px 5px;
+    border-radius: 4px;
+    font-size: 12px;
+  }
+  .mcp-status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+  }
+  .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex: 0 0 8px;
+  }
+  .dot.on {
+    background: var(--accent);
+  }
+  .dot.off {
+    background: var(--text-muted);
+  }
+  .mcp-state {
+    color: var(--text-primary);
+    font-weight: 500;
+  }
+  .mcp-path {
+    color: var(--text-muted);
+    font-size: 12px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .mcp-actions {
+    display: flex;
+    gap: 8px;
+  }
+  .mcp-ok {
+    margin: 0;
+    color: var(--accent);
+    font-size: 13px;
+    line-height: 1.6;
+  }
+  .mcp-err {
+    margin: 0;
+    color: var(--danger);
+    font-size: 13px;
   }
 </style>

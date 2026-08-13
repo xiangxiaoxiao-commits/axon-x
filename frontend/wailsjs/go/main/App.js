@@ -82,6 +82,10 @@ export function IndexSearch() {
   return window['go']['main']['App']['IndexSearch']();
 }
 
+export function InstallMCP() {
+  return window['go']['main']['App']['InstallMCP']();
+}
+
 export function ListClaudeProjects() {
   return window['go']['main']['App']['ListClaudeProjects']();
 }
@@ -116,6 +120,10 @@ export function ListTaskRuns(arg1) {
 
 export function ListTasks() {
   return window['go']['main']['App']['ListTasks']();
+}
+
+export function MCPStatus() {
+  return window['go']['main']['App']['MCPStatus']();
 }
 
 export function MatchKnowledge(arg1, arg2) {
@@ -192,6 +200,10 @@ export function TermWrite(arg1) {
 
 export function TestEmbedding() {
   return window['go']['main']['App']['TestEmbedding']();
+}
+
+export function UninstallMCP() {
+  return window['go']['main']['App']['UninstallMCP']();
 }
 
 export function UpdateEntityObservations(arg1, arg2, arg3) {
