@@ -45,3 +45,13 @@ export const hasProvider = writable<boolean>(false);
 
 // True while an assistant reply is streaming.
 export const streaming = writable<boolean>(false);
+
+// --- Onboarding cross-view signals --------------------------------------
+// Bumped to ask the knowledge view to start indexing the current project, so
+// the onboarding checklist (which may render inside the graph view) and the
+// settings view can both trigger it without prop-drilling. Consumers watch for
+// changes and act once.
+export const indexRequest = writable<number>(0);
+export function requestIndex(): void {
+  indexRequest.update((n) => n + 1);
+}

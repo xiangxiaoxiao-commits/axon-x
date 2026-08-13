@@ -5,11 +5,26 @@
   // node color encodes entity type (with a legend). Click a node to re-focus,
   // drag to nudge. The focus node's facts float beside the canvas.
   import { onMount, onDestroy } from "svelte";
-  import { BuildGraph, GetGraph, IndexProject, GenerateArticle, BuildGraphFromCode, BuildGraphFromObsidian, DeleteEntity, UpdateEntityObservations } from "../../wailsjs/go/main/App.js";
+  import { BuildGraph, GetGraph, IndexProject, GenerateArticle, BuildGraphFromCode, BuildGraphFromObsidian, DeleteEntity, UpdateEntityObservations, ListProviders, MCPStatus, GetEmbeddingConfig } from "../../wailsjs/go/main/App.js";
   import { EventsOn, EventsOff } from "../../wailsjs/runtime/runtime.js";
   import type { graph } from "../../wailsjs/go/models";
-  import { currentProject } from "../lib/stores";
+  import { currentProject, indexRequest } from "../lib/stores";
   import { marked } from "marked";
+  import Onboarding from "./Onboarding.svelte";
+
+  // Onboarding status (drives the empty-state checklist). Refreshed on mount and
+  // whenever the graph reloads, so completed steps tick off as the user goes.
+  let obHasProvider = false;
+  let obMcpInstalled = false;
+  let obEmbedMode = false;
+  async function refreshOnboarding() {
+    try {
+      const provs = await ListProviders();
+      obHasProvider = (provs || []).some((p: any) => p.hasKey);
+    } catch { obHasProvider = false; }
+    try { obMcpInstalled = (await MCPStatus()).installed; } catch { obMcpInstalled = false; }
+    try { obEmbedMode = !!(await GetEmbeddingConfig()).mode; } catch { obEmbedMode = false; }
+  }
 
   let g: graph.Graph | null = null;
   let indexing = false;
@@ -76,6 +91,7 @@
   const reduceMotion = typeof matchMedia !== "undefined" && matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   onMount(() => {
+    refreshOnboarding();
     EventsOn("graph:progress", (p: any) => {
       if (p?.projectSlug !== $currentProject) return;
       if (p?.phase === "code") {
@@ -98,6 +114,7 @@
         indexing = false; progress = `完成：${p.entities} 个节点`;
       }
       await load();
+      refreshOnboarding();
     });
   });
   onDestroy(() => {
@@ -110,6 +127,10 @@
   // Reload whenever the global project changes.
   let loadedFor = " ";
   $: if ($currentProject !== loadedFor) { loadedFor = $currentProject; focus = ""; progress = ""; load(); }
+
+  // Onboarding checklist can ask us to index the current project (step 3).
+  let lastIndexReq = 0;
+  $: if ($indexRequest !== lastIndexReq) { lastIndexReq = $indexRequest; if (!indexing && $currentProject) indexProject(); }
 
   // load(false) assembles from the session cache (BuildGraph); load(true) reads
   // the saved graph.json (GetGraph) so manual edits aren't overwritten by a
@@ -490,7 +511,16 @@
         {#if articleLoading}<div class="empty">正在把知识写成文章…</div>{:else}{@html articleHtml}{/if}
       </div>
     {:else if !g || !g.entities?.length}
-      <div class="empty">还没有知识。点上方「建索引」，我会读这个项目的所有会话并提炼知识。</div>
+      <div class="empty-scroll">
+        <Onboarding
+          hasProvider={obHasProvider}
+          hasEmbedMode={obEmbedMode}
+          hasGraph={false}
+          mcpInstalled={obMcpInstalled}
+          projectSelected={!!$currentProject}
+          {indexing}
+        />
+      </div>
     {:else}
       <svg bind:this={svgEl} viewBox="0 0 {W} {H}" class="canvas" preserveAspectRatio="xMidYMid meet">
         <!-- edges -->
@@ -599,6 +629,7 @@
   .stage { flex: 1; position: relative; min-height: 0; overflow: hidden; z-index: 1; }
   .canvas { width: 100%; height: 100%; }
   .empty { padding: 40px; color: var(--text-muted); max-width: 560px; line-height: 1.6; }
+  .empty-scroll { position: absolute; inset: 0; overflow-y: auto; }
 
   .axon { stroke: var(--border); stroke-width: 1.2; }
   .axon.hot { stroke: #FDE68A; stroke-width: 1.6; }
