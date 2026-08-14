@@ -58,6 +58,10 @@ export function EnrichTask(arg1) {
   return window['go']['main']['App']['EnrichTask'](arg1);
 }
 
+export function ExcludeObservation(arg1, arg2, arg3) {
+  return window['go']['main']['App']['ExcludeObservation'](arg1, arg2, arg3);
+}
+
 export function GenerateArticle(arg1, arg2) {
   return window['go']['main']['App']['GenerateArticle'](arg1, arg2);
 }
@@ -178,6 +182,10 @@ export function SendMessage(arg1, arg2, arg3, arg4, arg5, arg6, arg7) {
   return window['go']['main']['App']['SendMessage'](arg1, arg2, arg3, arg4, arg5, arg6, arg7);
 }
 
+export function SessionDistilledKnowledge(arg1, arg2) {
+  return window['go']['main']['App']['SessionDistilledKnowledge'](arg1, arg2);
+}
+
 export function SetDefaults(arg1, arg2) {
   return window['go']['main']['App']['SetDefaults'](arg1, arg2);
 }
@@ -216,6 +224,10 @@ export function TermWrite(arg1, arg2) {
 
 export function TestEmbedding() {
   return window['go']['main']['App']['TestEmbedding']();
+}
+
+export function UnexcludeObservation(arg1, arg2, arg3) {
+  return window['go']['main']['App']['UnexcludeObservation'](arg1, arg2, arg3);
 }
 
 export function UninstallMCP() {

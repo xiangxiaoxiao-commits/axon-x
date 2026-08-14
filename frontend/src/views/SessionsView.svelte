@@ -3,13 +3,15 @@
   // These live on disk under ~/.claude and are never lost when a tab closes.
   import {
     ListClaudeSessions, ReadClaudeSession, ClaudeSessionProgress, ResumeCommand,
+    SessionDistilledKnowledge, ExcludeObservation, UnexcludeObservation,
   } from "../../wailsjs/go/main/App.js";
-  import type { claudedata } from "../../wailsjs/go/models";
+  import type { claudedata, main } from "../../wailsjs/go/models";
   import { currentProject, activeView, resumeRequest } from "../lib/stores";
 
   let sessions: claudedata.SessionMeta[] = [];
   let messages: claudedata.SessionMessage[] = [];
   let progress: claudedata.SessionProgress | null = null;
+  let knowledge: main.SessionKnowledge | null = null; // what this session distilled
   let curSession = "";
   let curCwd = "";
   let filter = "";
@@ -73,14 +75,29 @@
   }
 
   async function selectSession(s: claudedata.SessionMeta) {
-    curSession = s.id; curCwd = s.cwd; loading = true; messages = []; progress = null;
+    curSession = s.id; curCwd = s.cwd; loading = true; messages = []; progress = null; knowledge = null;
     try {
       // Progress first (cheap tail) so the "where I left off" card shows fast,
-      // then the full transcript.
+      // then the distilled knowledge, then the full transcript.
       progress = await ClaudeSessionProgress($currentProject, s.id);
+      knowledge = await SessionDistilledKnowledge($currentProject, s.id);
       messages = await ReadClaudeSession($currentProject, s.id);
     } catch (e) { console.error(e); }
     finally { loading = false; }
+  }
+
+  // Toggle whether one distilled fact is excluded from the graph. Updates the
+  // local view optimistically, then persists + rebuilds via the backend.
+  async function toggleExclude(entityName: string, obs: main.DistilledObservation) {
+    const next = !obs.excluded;
+    obs.excluded = next; knowledge = knowledge; // trigger reactivity
+    try {
+      if (next) await ExcludeObservation($currentProject, entityName, obs.text);
+      else await UnexcludeObservation($currentProject, entityName, obs.text);
+    } catch (e) {
+      obs.excluded = !next; knowledge = knowledge; // revert on failure
+      console.error(e);
+    }
   }
 
   let resumeErr = "";
@@ -184,6 +201,34 @@
         {/if}
       </div>
     {/if}
+
+    {#if curSession && knowledge}
+      <div class="kn-card">
+        <div class="kn-head">
+          <span class="kn-label">🧠 本会话产出的知识</span>
+          {#if !knowledge.indexed}
+            <span class="kn-hint">未建索引，此会话还没被总结</span>
+          {:else if knowledge.entities.length === 0}
+            <span class="kn-hint">这次没有总结出知识</span>
+          {/if}
+        </div>
+        {#each knowledge.entities as ent}
+          <div class="kn-ent">
+            <div class="kn-ent-name">{ent.name}<span class="kn-ent-type">{ent.type}</span></div>
+            {#each ent.observations as obs}
+              <div class="kn-obs" class:excluded={obs.excluded}>
+                <span class="kn-obs-text selectable">{obs.text}</span>
+                <button class="kn-btn" title={obs.excluded ? "恢复这条知识" : "不要这条知识（从图谱剔除，重建也不会回来）"}
+                  on:click={() => toggleExclude(ent.name, obs)}>
+                  {obs.excluded ? "↩ 恢复" : "✕ 剔除"}
+                </button>
+              </div>
+            {/each}
+          </div>
+        {/each}
+      </div>
+    {/if}
+
     {#if loading}
       <div class="empty">加载中…</div>
     {:else if messages.length}
@@ -331,6 +376,35 @@
   .pc-label { font-size: 11px; font-weight: 600; color: var(--accent); letter-spacing: .5px; }
   .pc-cwd { flex: 1; min-width: 0; font-size: 11px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .pc-err { font-size: 11.5px; color: #f85149; margin-bottom: 6px; }
+
+  .kn-card {
+    border: 1px solid var(--border); border-radius: 8px;
+    background: var(--bg-elevated); padding: 12px 14px; margin-bottom: 16px;
+  }
+  .kn-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; }
+  .kn-label { font-size: 12.5px; font-weight: 600; }
+  .kn-hint { font-size: 11.5px; color: var(--text-muted); }
+  .kn-ent { margin: 8px 0; }
+  .kn-ent-name { font-size: 12.5px; font-weight: 600; margin-bottom: 3px; }
+  .kn-ent-type {
+    font-size: 10.5px; color: var(--text-muted); font-weight: 400;
+    margin-left: 6px; padding: 1px 5px; border: 1px solid var(--border); border-radius: 4px;
+  }
+  .kn-obs {
+    display: flex; align-items: center; gap: 8px;
+    padding: 4px 0 4px 10px; border-left: 2px solid var(--border);
+  }
+  .kn-obs-text { flex: 1; font-size: 12.5px; line-height: 1.5; }
+  .kn-obs.excluded .kn-obs-text { text-decoration: line-through; color: var(--text-muted); }
+  .kn-btn {
+    flex: 0 0 auto; font-size: 11px; padding: 2px 8px;
+    background: transparent; border: 1px solid var(--border); border-radius: 4px;
+    color: var(--text-muted); cursor: pointer; opacity: 0; transition: opacity .12s;
+  }
+  .kn-obs:hover .kn-btn { opacity: 1; }
+  .kn-obs.excluded .kn-btn { opacity: 1; color: var(--accent); border-color: var(--accent); }
+  .kn-btn:hover { border-color: #f85149; color: #f85149; }
+  .kn-obs.excluded .kn-btn:hover { border-color: var(--accent); color: var(--accent); }
   .pc-block { display: flex; gap: 8px; padding: 4px 0; }
   .pc-role { flex: 0 0 22px; font-size: 11px; text-align: center; padding-top: 1px; }
   .pc-role.user { color: var(--accent); }
