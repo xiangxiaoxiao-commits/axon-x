@@ -18,7 +18,8 @@ import (
 // session, so "I don't want this fact" holds globally — if several sessions
 // distilled the same fact, excluding it once removes it everywhere.
 type Exclusions struct {
-	Obs map[string]bool `json:"obs"` // set of ObsKey -> true
+	Obs      map[string]bool `json:"obs"`                // set of ObsKey -> true (single facts)
+	Sessions map[string]bool `json:"sessions,omitempty"` // set of session id -> true (whole sessions)
 }
 
 // ObsKey is the stable identity of an observation: sha1 of the normalized
@@ -49,6 +50,9 @@ func LoadExclusions(dataDir, slug string) (*Exclusions, error) {
 	if ex.Obs == nil {
 		ex.Obs = map[string]bool{}
 	}
+	if ex.Sessions == nil {
+		ex.Sessions = map[string]bool{}
+	}
 	return ex, nil
 }
 
@@ -73,7 +77,7 @@ func SaveExclusions(dataDir, slug string, ex *Exclusions) error {
 // from g in place. An entity left with zero observations is dropped entirely,
 // along with any relation that referenced it.
 func FilterExcluded(g *Graph, ex *Exclusions) {
-	if ex == nil || len(ex.Obs) == 0 {
+	if ex == nil || (len(ex.Obs) == 0 && len(ex.Sessions) == 0) {
 		return
 	}
 	keptEnts := g.Entities[:0]
@@ -83,7 +87,10 @@ func FilterExcluded(g *Graph, ex *Exclusions) {
 		var src []string
 		for i, o := range e.Observations {
 			if ex.Obs[ObsKey(e.Name, o)] {
-				continue // excluded
+				continue // single fact excluded
+			}
+			if s := obsSourceAt(e.ObsSources, i); s != "" && ex.Sessions[s] {
+				continue // its whole source session is excluded
 			}
 			obs = append(obs, o)
 			if s := obsSourceAt(e.ObsSources, i); s != "" || len(e.ObsSources) > 0 {

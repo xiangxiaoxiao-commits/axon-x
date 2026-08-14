@@ -412,6 +412,7 @@ export namespace main {
 	    sessionId: string;
 	    entities: DistilledEntity[];
 	    indexed: boolean;
+	    sessionExcluded: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new SessionKnowledge(source);
@@ -422,6 +423,7 @@ export namespace main {
 	        this.sessionId = source["sessionId"];
 	        this.entities = this.convertValues(source["entities"], DistilledEntity);
 	        this.indexed = source["indexed"];
+	        this.sessionExcluded = source["sessionExcluded"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

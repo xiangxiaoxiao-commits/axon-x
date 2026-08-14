@@ -45,6 +45,27 @@ func TestFilterExcluded_DropsEmptyEntityAndItsRelations(t *testing.T) {
 	}
 }
 
+func TestFilterExcluded_WholeSessionBySource(t *testing.T) {
+	g := &Graph{Entities: []Entity{{
+		Name:         "Foo",
+		Observations: []string{"from noisy session", "from good session"},
+		ObsSources:   []string{"noisy", "good"},
+	}}}
+	ex := &Exclusions{Obs: map[string]bool{}, Sessions: map[string]bool{"noisy": true}}
+	FilterExcluded(g, ex)
+
+	if len(g.Entities) != 1 {
+		t.Fatalf("entity should survive on its good fact, got %d", len(g.Entities))
+	}
+	e := g.Entities[0]
+	if len(e.Observations) != 1 || e.Observations[0] != "from good session" {
+		t.Fatalf("only the noisy-session fact should go, got %v", e.Observations)
+	}
+	if len(e.ObsSources) != 1 || e.ObsSources[0] != "good" {
+		t.Fatalf("sources out of lockstep: %v", e.ObsSources)
+	}
+}
+
 // The crux: an excluded fact must NOT come back after a fresh Merge from caches.
 func TestFilterExcluded_SurvivesReMerge(t *testing.T) {
 	cacheEnts := []Entity{{

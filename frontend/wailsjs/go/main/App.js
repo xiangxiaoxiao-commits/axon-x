@@ -54,12 +54,20 @@ export function DoCommit(arg1, arg2, arg3) {
   return window['go']['main']['App']['DoCommit'](arg1, arg2, arg3);
 }
 
+export function EditObservation(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['main']['App']['EditObservation'](arg1, arg2, arg3, arg4, arg5);
+}
+
 export function EnrichTask(arg1) {
   return window['go']['main']['App']['EnrichTask'](arg1);
 }
 
 export function ExcludeObservation(arg1, arg2, arg3) {
   return window['go']['main']['App']['ExcludeObservation'](arg1, arg2, arg3);
+}
+
+export function ExcludeSession(arg1, arg2) {
+  return window['go']['main']['App']['ExcludeSession'](arg1, arg2);
 }
 
 export function GenerateArticle(arg1, arg2) {
@@ -228,6 +236,10 @@ export function TestEmbedding() {
 
 export function UnexcludeObservation(arg1, arg2, arg3) {
   return window['go']['main']['App']['UnexcludeObservation'](arg1, arg2, arg3);
+}
+
+export function UnexcludeSession(arg1, arg2) {
+  return window['go']['main']['App']['UnexcludeSession'](arg1, arg2);
 }
 
 export function UninstallMCP() {
