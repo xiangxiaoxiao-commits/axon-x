@@ -36,7 +36,13 @@ export function DeleteTask(arg1:string):Promise<void>;
 
 export function DoCommit(arg1:string,arg2:string,arg3:boolean):Promise<string>;
 
+export function EditObservation(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string):Promise<void>;
+
 export function EnrichTask(arg1:string):Promise<void>;
+
+export function ExcludeObservation(arg1:string,arg2:string,arg3:string):Promise<void>;
+
+export function ExcludeSession(arg1:string,arg2:string):Promise<void>;
 
 export function GenerateArticle(arg1:string,arg2:string):Promise<string>;
 
@@ -98,6 +104,8 @@ export function SearchSessions(arg1:string,arg2:string):Promise<Array<search.Hit
 
 export function SendMessage(arg1:string,arg2:string,arg3:string,arg4:string,arg5:number,arg6:number,arg7:string):Promise<number>;
 
+export function SessionDistilledKnowledge(arg1:string,arg2:string):Promise<main.SessionKnowledge>;
+
 export function SetDefaults(arg1:string,arg2:string):Promise<void>;
 
 export function SetEmbeddingConfig(arg1:string,arg2:string):Promise<void>;
@@ -117,6 +125,10 @@ export function TermStop(arg1:string):Promise<void>;
 export function TermWrite(arg1:string,arg2:string):Promise<void>;
 
 export function TestEmbedding():Promise<void>;
+
+export function UnexcludeObservation(arg1:string,arg2:string,arg3:string):Promise<void>;
+
+export function UnexcludeSession(arg1:string,arg2:string):Promise<void>;
 
 export function UninstallMCP():Promise<mcpinstall.Status>;
 

@@ -275,6 +275,12 @@ func (a *App) assembleGraph(projectSlug, term string) (*graph.Graph, error) {
 	for _, c := range caches {
 		g.Merge(c.Entities, c.Relations)
 	}
+	// Apply the user's exclusion list AFTER merging, so facts the user deleted
+	// stay gone even though the source caches still contain them. This is what
+	// makes deletions survive re-indexing.
+	if ex, exErr := graph.LoadExclusions(dataDir, projectSlug); exErr == nil {
+		graph.FilterExcluded(g, ex)
+	}
 	if term != "" {
 		g = filterGraph(g, term)
 	}
