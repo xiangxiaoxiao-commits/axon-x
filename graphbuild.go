@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -53,6 +55,66 @@ const extractPrompt = `你是一个知识提炼器。从下面的对话中，只
 
 只输出如下 JSON，不要任何解释：
 {"entities":[{"name":"实体名","type":"module|service|concept|decision|constraint","aliases":["别名"],"observations":["关于它的事实"]}],"relations":[{"from":"实体A","to":"实体B","label":"关系"}]}`
+
+// Namespace is one named knowledge-graph namespace returned by ListNamespaces.
+type Namespace struct {
+	Name     string `json:"name"`
+	Entities int    `json:"entities"`
+}
+
+// ListNamespaces returns all named namespaces that have a graphcache directory,
+// with their entity counts. Used by the frontend project selector.
+func (a *App) ListNamespaces() ([]Namespace, error) {
+	dataDir, err := db.AppDataDir()
+	if err != nil {
+		return nil, err
+	}
+	entries, readErr := os.ReadDir(filepath.Join(dataDir, "graphcache"))
+	if readErr != nil {
+		if os.IsNotExist(readErr) {
+			return []Namespace{}, nil
+		}
+		return nil, readErr
+	}
+	var out []Namespace
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		g, err := retrieve.AssembleGraph(dataDir, e.Name())
+		if err != nil {
+			continue
+		}
+		out = append(out, Namespace{Name: e.Name(), Entities: len(g.Entities)})
+	}
+	return out, nil
+}
+
+// BuildMultiGraph assembles and merges graphs from multiple namespaces into one.
+// Entities sharing names/aliases across namespaces are automatically merged via
+// graph.Merge, making cross-namespace relationships visible.
+func (a *App) BuildMultiGraph(slugs []string) (*graph.Graph, error) {
+	dataDir, err := db.AppDataDir()
+	if err != nil {
+		return nil, err
+	}
+	merged := &graph.Graph{ProjectSlug: strings.Join(slugs, "+"), Entities: []graph.Entity{}, Relations: []graph.Relation{}}
+	for _, slug := range slugs {
+		caches, cErr := graph.LoadAllCache(dataDir, slug)
+		if cErr != nil {
+			continue
+		}
+		for _, c := range caches {
+			merged.Merge(c.Entities, c.Relations)
+		}
+		// Apply exclusions per namespace.
+		if ex, exErr := graph.LoadExclusions(dataDir, slug); exErr == nil {
+			graph.FilterExcluded(merged, ex)
+		}
+	}
+	merged.UpdatedAt = time.Now().UnixMilli()
+	return merged, nil
+}
 
 // GetGraph returns the stored knowledge graph for a project.
 func (a *App) GetGraph(projectSlug string) (*graph.Graph, error) {

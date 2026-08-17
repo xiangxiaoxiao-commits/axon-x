@@ -64,6 +64,10 @@ export function ListClaudeProjects():Promise<Array<claudedata.Project>>;
 
 export function ListClaudeSessions(arg1:string):Promise<Array<claudedata.SessionMeta>>;
 
+export function ListNamespaces():Promise<Array<main.Namespace>>;
+
+export function BuildMultiGraph(arg1:Array<string>):Promise<graph.Graph>;
+
 export function ListConversations():Promise<Array<model.Conversation>>;
 
 export function ListMemoryFiles(arg1:string):Promise<Array<claudedata.MemoryFile>>;

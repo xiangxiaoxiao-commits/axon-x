@@ -6,19 +6,6 @@ import (
 	"testing"
 )
 
-func TestEncodeSlug(t *testing.T) {
-	cases := map[string]string{
-		"/Users/me/app":        "-Users-me-app",
-		"/Users/me/xx-service": "-Users-me-xx-service", // lossy but deterministic
-		"/":                    "-",
-	}
-	for in, want := range cases {
-		if got := encodeSlug(in); got != want {
-			t.Errorf("encodeSlug(%q) = %q, want %q", in, got, want)
-		}
-	}
-}
-
 // withCwd runs fn with the process working directory temporarily set to dir.
 func withCwd(t *testing.T, dir string, fn func()) {
 	t.Helper()
@@ -41,27 +28,26 @@ func TestResolveSlug_ExplicitWins(t *testing.T) {
 	}
 }
 
-func TestResolveSlug_MatchesCwdCacheDir(t *testing.T) {
+func TestResolveSlug_ReadsAxonProjectFile(t *testing.T) {
 	data := t.TempDir()
-	// Use macOS-safe eval of symlinks (TempDir under /var -> /private/var).
 	proj := t.TempDir()
 	if resolved, err := filepath.EvalSymlinks(proj); err == nil {
 		proj = resolved
 	}
-	slug := encodeSlug(proj)
-	if err := os.MkdirAll(filepath.Join(data, "graphcache", slug), 0o755); err != nil {
+	// Write .axon-project in the project root.
+	if err := os.WriteFile(filepath.Join(proj, ".axon-project"), []byte("gaia\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	h := &toolHandler{dataDir: data}
 	withCwd(t, proj, func() {
 		got, src := h.resolveSlug("")
-		if got != slug || src != slugMatched {
-			t.Fatalf("got (%q,%v), want (%q, matched)", got, src, slug)
+		if got != "gaia" || src != slugMapped {
+			t.Fatalf("got (%q,%v), want (gaia, mapped)", got, src)
 		}
 	})
 }
 
-func TestResolveSlug_MatchesAncestorFromSubdir(t *testing.T) {
+func TestResolveSlug_FindsAxonProjectInAncestor(t *testing.T) {
 	data := t.TempDir()
 	proj := t.TempDir()
 	if resolved, err := filepath.EvalSymlinks(proj); err == nil {
@@ -71,21 +57,21 @@ func TestResolveSlug_MatchesAncestorFromSubdir(t *testing.T) {
 	if err := os.MkdirAll(sub, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	slug := encodeSlug(proj)
-	if err := os.MkdirAll(filepath.Join(data, "graphcache", slug), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(proj, ".axon-project"), []byte("glite"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	h := &toolHandler{dataDir: data}
 	withCwd(t, sub, func() {
 		got, src := h.resolveSlug("")
-		if got != slug || src != slugMatched {
-			t.Fatalf("from subdir got (%q,%v), want (%q, matched)", got, src, slug)
+		if got != "glite" || src != slugMapped {
+			t.Fatalf("from subdir got (%q,%v), want (glite, mapped)", got, src)
 		}
 	})
 }
 
-func TestResolveSlug_DerivesWhenNoCache(t *testing.T) {
-	data := t.TempDir() // empty: no graphcache at all
+func TestResolveSlug_UnknownWhenNoFile(t *testing.T) {
+	data := t.TempDir()
+	// Use a temp dir with no .axon-project anywhere up.
 	proj := t.TempDir()
 	if resolved, err := filepath.EvalSymlinks(proj); err == nil {
 		proj = resolved
@@ -93,8 +79,42 @@ func TestResolveSlug_DerivesWhenNoCache(t *testing.T) {
 	h := &toolHandler{dataDir: data}
 	withCwd(t, proj, func() {
 		got, src := h.resolveSlug("")
-		if got != encodeSlug(proj) || src != slugDerived {
-			t.Fatalf("got (%q,%v), want (%q, derived)", got, src, encodeSlug(proj))
+		if got != "" || src != slugUnknown {
+			t.Fatalf("got (%q,%v), want (\"\", unknown)", got, src)
 		}
 	})
+}
+
+func TestParseProjectFile(t *testing.T) {
+	cases := []struct {
+		input string
+		want  string
+	}{
+		{"gaia\n", "gaia"},
+		{"  glite  \n\n", "glite"},
+		{"\n\n  axon  ", "axon"},
+		{"", ""},
+		{"  \n  \n  ", ""},
+	}
+	for _, tc := range cases {
+		got := parseProjectFile([]byte(tc.input))
+		if got != tc.want {
+			t.Errorf("parseProjectFile(%q) = %q, want %q", tc.input, got, tc.want)
+		}
+	}
+}
+
+func TestNamespaceDirs(t *testing.T) {
+	data := t.TempDir()
+	gc := filepath.Join(data, "graphcache")
+	for _, ns := range []string{"gaia", "glite", "axon", "_global_"} {
+		if err := os.MkdirAll(filepath.Join(gc, ns), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h := &toolHandler{dataDir: data}
+	dirs := h.namespaceDirs()
+	if len(dirs) != 4 {
+		t.Fatalf("got %d dirs, want 4: %v", len(dirs), dirs)
+	}
 }

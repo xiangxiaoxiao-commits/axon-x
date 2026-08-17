@@ -2,7 +2,7 @@
 // list, the current conversation and its messages.
 import { writable, get } from "svelte/store";
 import type { model, claudedata } from "../../wailsjs/go/models";
-import { ListClaudeProjects } from "../../wailsjs/go/main/App.js";
+import { ListClaudeProjects, ListNamespaces } from "../../wailsjs/go/main/App.js";
 
 export type View = "tasks" | "commit" | "hub" | "search" | "sessions" | "graph" | "memory" | "chat" | "terminal" | "settings";
 
@@ -26,6 +26,32 @@ export const currentProject = writable<string>("");
 
 // The Claude Code project list, loaded once on startup.
 export const projects = writable<claudedata.Project[]>([]);
+
+// --- Named namespaces (new) -------------------------------------------
+// All available knowledge-graph namespaces. Populated on startup from
+// ListNamespaces (scans graphcache/).
+export type NamespaceInfo = { name: string; entities: number };
+export const namespaces = writable<NamespaceInfo[]>([]);
+
+// Which namespaces are currently selected for graph viewing (multi-select).
+export const selectedNamespaces = writable<string[]>([]);
+
+// Load namespaces from the backend and default-select the first one.
+export async function loadNamespaces(): Promise<void> {
+  try {
+    const list: NamespaceInfo[] = await ListNamespaces();
+    namespaces.set(list);
+    const current = get(selectedNamespaces);
+    if (current.length === 0 && list.length > 0) {
+      // Default: select the first non-global namespace, or just the first.
+      const first = list.find((ns) => ns.name !== "_global_") || list[0];
+      selectedNamespaces.set([first.name]);
+      currentProject.set(first.name);
+    }
+  } catch (e) {
+    console.error("load namespaces", e);
+  }
+}
 
 // Load the project list from disk and default the selection to the first
 // project (unless one is already chosen). Safe to call more than once.

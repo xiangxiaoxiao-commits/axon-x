@@ -238,7 +238,21 @@ export namespace graph {
 }
 
 export namespace main {
-	
+
+	export class Namespace {
+	    name: string;
+	    entities: number;
+
+	    static createFrom(source: any = {}) {
+	        return new Namespace(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.entities = source["entities"];
+	    }
+	}
 	export class CommitDraft {
 	    message: string;
 	    prTitle: string;

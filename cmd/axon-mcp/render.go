@@ -75,9 +75,16 @@ func writeChunks(b *strings.Builder, chunks []graph.Chunk, titles map[string]str
 }
 
 // sessionTitleMap builds a session-id -> title map for a project (best-effort;
-// empty on error, in which case ids render raw).
+// empty on error or when the namespace doesn't correspond to a Claude Code
+// project directory, in which case source ids render raw).
 func sessionTitleMap(projectSlug string) map[string]string {
 	out := map[string]string{}
+	// Only attempt title lookup if the slug looks like a Claude Code path-encoded
+	// slug (starts with '-'). Named namespaces (gaia, glite, etc.) don't map to
+	// Claude Code session directories.
+	if !strings.HasPrefix(projectSlug, "-") {
+		return out
+	}
 	if sessions, err := claudedata.ListSessions(projectSlug); err == nil {
 		for _, s := range sessions {
 			out[s.ID] = s.Title

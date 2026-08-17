@@ -39,7 +39,7 @@ func (h *toolHandler) projectOverview(raw json.RawMessage) (*toolResult, error) 
 	}
 	slug, src := h.resolveSlug(a.Project)
 	if slug == "" {
-		return nil, fmt.Errorf("无法确定项目：请显式传 project，或用 list_projects 查看可用项目")
+		return nil, fmt.Errorf("无法确定项目：当前目录没有 .axon-project 文件，请显式传 project 参数或创建 .axon-project")
 	}
 
 	g, err := retrieve.AssembleGraph(h.dataDir, slug)

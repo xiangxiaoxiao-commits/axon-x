@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { activeView, currentProject, projects, loadProjects, type View } from "./lib/stores";
+  import { activeView, currentProject, projects, loadProjects, namespaces, selectedNamespaces, loadNamespaces, type View } from "./lib/stores";
   import GraphView from "./views/GraphView.svelte";
   import SettingsView from "./views/SettingsView.svelte";
   import AboutView from "./views/AboutView.svelte";
@@ -21,10 +21,22 @@
 
   let ready = false;
   let showAbout = false;
-  onMount(async () => { ready = true; await loadProjects(); });
+  onMount(async () => { ready = true; await loadNamespaces(); await loadProjects(); });
   function refreshProviders() {}
 
   function go(v: View) { $activeView = v; }
+
+  function toggleNs(name: string) {
+    const cur = $selectedNamespaces;
+    if (cur.includes(name)) {
+      selectedNamespaces.set(cur.filter((n) => n !== name));
+    } else {
+      selectedNamespaces.set([...cur, name]);
+    }
+    // Keep currentProject in sync (first selected namespace, for legacy compat).
+    const next = $selectedNamespaces;
+    currentProject.set(next.length > 0 ? next[0] : "");
+  }
 </script>
 
 <div class="app">
@@ -40,13 +52,17 @@
             </button>
           {/each}
         </div>
-        <label class="proj-pick">
-          <span class="proj-label">项目</span>
-          <select bind:value={$currentProject}>
-            <option value="">全部项目</option>
-            {#each $projects as p}<option value={p.slug}>{p.path}</option>{/each}
-          </select>
-        </label>
+        <div class="ns-pick">
+          <span class="ns-label">图谱</span>
+          <div class="ns-tags">
+            {#each $namespaces as ns}
+              <button class="ns-tag" class:on={$selectedNamespaces.includes(ns.name)}
+                on:click={() => toggleNs(ns.name)} title="{ns.entities} 实体">
+                {ns.name}<span class="ns-cnt">{ns.entities}</span>
+              </button>
+            {/each}
+          </div>
+        </div>
       </nav>
 
       <main class="view">
@@ -100,17 +116,22 @@
   .nav-item .ic { width: 16px; text-align: center; font-size: 14px; }
   .nav-item.active .ic { color: var(--accent); }
 
-  .proj-pick {
+  .ns-pick {
     display: flex; flex-direction: column; gap: 4px;
     padding: 10px 12px; border-top: 1px solid var(--border);
   }
-  .proj-label { font-size: 11px; color: var(--text-muted); font-family: var(--font-mono); }
-  .proj-pick select {
-    background: var(--bg-elevated); color: var(--text-primary);
+  .ns-label { font-size: 11px; color: var(--text-muted); font-family: var(--font-mono); }
+  .ns-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+  .ns-tag {
+    display: inline-flex; align-items: center; gap: 3px;
+    background: var(--bg-elevated); color: var(--text-muted);
     border: 1px solid var(--border); border-radius: var(--radius-control);
-    font-family: var(--font-mono); font-size: 12px; padding: 4px 8px; outline: none;
+    font-family: var(--font-mono); font-size: 11px; padding: 2px 7px;
+    cursor: pointer; transition: all 0.15s;
   }
-  .proj-pick select:focus { border-color: var(--accent); }
+  .ns-tag:hover { border-color: var(--accent); color: var(--text-primary); }
+  .ns-tag.on { background: var(--accent); color: #1c1206; border-color: var(--accent); font-weight: 600; }
+  .ns-cnt { font-size: 9px; opacity: 0.7; }
 
   .view { flex: 1; min-width: 0; height: 100vh; position: relative; }
   .term-layer { position: absolute; inset: 0; }

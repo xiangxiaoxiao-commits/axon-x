@@ -5,10 +5,10 @@
   // node color encodes entity type (with a legend). Click a node to re-focus,
   // drag to nudge. The focus node's facts float beside the canvas.
   import { onMount, onDestroy } from "svelte";
-  import { BuildGraph, GetGraph, IndexProject, GenerateArticle, BuildGraphFromCode, BuildGraphFromObsidian, DeleteEntity, UpdateEntityObservations, ListProviders, MCPStatus, GetEmbeddingConfig } from "../../wailsjs/go/main/App.js";
+  import { BuildGraph, GetGraph, IndexProject, GenerateArticle, BuildGraphFromCode, BuildGraphFromObsidian, DeleteEntity, UpdateEntityObservations, ListProviders, MCPStatus, GetEmbeddingConfig, BuildMultiGraph } from "../../wailsjs/go/main/App.js";
   import { EventsOn, EventsOff } from "../../wailsjs/runtime/runtime.js";
   import type { graph } from "../../wailsjs/go/models";
-  import { currentProject, indexRequest } from "../lib/stores";
+  import { currentProject, indexRequest, selectedNamespaces } from "../lib/stores";
   import { marked } from "marked";
   import Onboarding from "./Onboarding.svelte";
 
@@ -137,24 +137,39 @@
     window.removeEventListener("mousedown", onDocMouseDown);
   });
 
-  // Reload whenever the global project changes.
+  // Reload whenever the selected namespaces change.
   let loadedFor = " ";
   // Whether the first graph load for the current project has finished. Until it
   // has, g is still null and we must NOT render the onboarding empty-state, or it
   // flashes on every open before the async load resolves.
   let loaded = false;
-  $: if ($currentProject !== loadedFor) { loadedFor = $currentProject; focus = ""; progress = ""; loaded = false; load(); }
+  $: {
+    const key = $selectedNamespaces.join(",") || $currentProject;
+    if (key !== loadedFor) { loadedFor = key; focus = ""; progress = ""; loaded = false; load(); }
+  }
 
   // Onboarding checklist can ask us to index the current project (step 3).
   let lastIndexReq = 0;
   $: if ($indexRequest !== lastIndexReq) { lastIndexReq = $indexRequest; if (!indexing && $currentProject) indexProject(); }
 
-  // load(false) assembles from the session cache (BuildGraph); load(true) reads
-  // the saved graph.json (GetGraph) so manual edits aren't overwritten by a
-  // re-assembly. Used to refresh after delete/edit.
+  // load(false) assembles from the session cache (BuildGraph or BuildMultiGraph
+  // for multiple namespaces); load(true) reads the saved graph.json (GetGraph) so
+  // manual edits aren't overwritten by a re-assembly.
   async function load(fromStore = false) {
     const prevFocus = focus;
-    try { g = fromStore ? await GetGraph($currentProject) : await BuildGraph($currentProject); }
+    try {
+      const slugs = $selectedNamespaces;
+      if (slugs.length > 1) {
+        // Multi-namespace: merge all selected graphs.
+        g = await BuildMultiGraph(slugs);
+      } else if (slugs.length === 1) {
+        g = fromStore ? await GetGraph(slugs[0]) : await BuildGraph(slugs[0]);
+      } else if ($currentProject) {
+        g = fromStore ? await GetGraph($currentProject) : await BuildGraph($currentProject);
+      } else {
+        g = null;
+      }
+    }
     catch (e) { console.error(e); g = null; }
     finally { loaded = true; }
     byName = {}; deg = {}; adj = new Map(); maxDeg = 0; colorOf = {};

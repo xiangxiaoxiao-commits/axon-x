@@ -110,6 +110,14 @@ export function ListClaudeSessions(arg1) {
   return window['go']['main']['App']['ListClaudeSessions'](arg1);
 }
 
+export function ListNamespaces() {
+  return window['go']['main']['App']['ListNamespaces']();
+}
+
+export function BuildMultiGraph(arg1) {
+  return window['go']['main']['App']['BuildMultiGraph'](arg1);
+}
+
 export function ListConversations() {
   return window['go']['main']['App']['ListConversations']();
 }
