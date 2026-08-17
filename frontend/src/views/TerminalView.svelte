@@ -27,7 +27,16 @@
 
   function fitTab(t: Tab) {
     if (!t?.fit || !t.host) return;
+    // Only fit if the host has non-zero dimensions (display:none panes are 0).
+    if (t.host.clientWidth === 0 || t.host.clientHeight === 0) return;
     try { t.fit.fit(); TermResize(t.id, t.term.rows, t.term.cols); } catch {}
+  }
+
+  // Wait for the browser to finish layout before fitting. A single tick() only
+  // flushes Svelte's microtask; the browser might not have reflowed yet. Two
+  // rAF frames guarantee the layout is stable.
+  function fitAfterLayout(t: Tab) {
+    requestAnimationFrame(() => requestAnimationFrame(() => fitTab(t)));
   }
 
   // Create a tab (optionally running a resume command) and make it active. The
@@ -47,10 +56,15 @@
     tabs = [...tabs, t];
     activeId = id;
     await tick(); // wait for the host div to render
-    if (t.host) { term.open(t.host); fitTab(t); term.focus(); }
+    if (t.host) {
+      term.open(t.host);
+      observeResize(t);   // auto-refit on any future resize
+      fitAfterLayout(t);  // fit after browser layout is stable
+      term.focus();
+    }
     if (cmd) await TermStartResume(id, cmd); else await TermStart(id);
     t.started = true;
-    fitTab(t);
+    fitAfterLayout(t);
   }
 
   async function closeTab(id: string, e?: Event) {
@@ -58,6 +72,7 @@
     TermStop(id);
     const t = tabs.find((x) => x.id === id);
     t?.term.dispose();
+    observers.get(id)?.disconnect(); observers.delete(id);
     tabs = tabs.filter((x) => x.id !== id);
     if (activeId === id) { activeId = tabs.length ? tabs[tabs.length - 1].id : ""; await refit(); }
   }
@@ -67,7 +82,18 @@
   async function refit() {
     await tick();
     const t = tabs.find((x) => x.id === activeId);
-    if (t) { fitTab(t); t.term.focus(); }
+    if (t) { fitAfterLayout(t); t.term.focus(); }
+  }
+
+  // ResizeObserver per pane: whenever the container's pixel dimensions change
+  // (window resize, sidebar toggle, layout shift), refit the terminal so cols
+  // stay accurate. Much more reliable than relying solely on window.resize.
+  const observers = new Map<string, ResizeObserver>();
+  function observeResize(t: Tab) {
+    if (!t.host || observers.has(t.id)) return;
+    const ro = new ResizeObserver(() => fitTab(t));
+    ro.observe(t.host);
+    observers.set(t.id, ro);
   }
 
   // Consume a resume request coming from SessionsView.
@@ -95,6 +121,8 @@
     window.removeEventListener("resize", refit);
     EventsOff("term:data");
     EventsOff("term:exit");
+    for (const [, ro] of observers) ro.disconnect();
+    observers.clear();
     for (const t of tabs) { TermStop(t.id); t.term.dispose(); }
   });
 </script>
