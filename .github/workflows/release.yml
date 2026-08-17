@@ -39,13 +39,15 @@ jobs:
         run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.13.0
       - name: Build app (darwin/universal)
         run: wails build -platform darwin/universal -clean
-      - name: Package .dmg
-        # make-dmg.sh builds axon-mcp into the bundle, re-signs ad-hoc, and
-        # produces build/bin/Axon-x-<version>.dmg (works for the universal app).
-        run: bash scripts/make-dmg.sh
       - name: Resolve tag
         id: tag
         run: echo "tag=${{ github.event.inputs.tag || github.ref_name }}" >> "$GITHUB_OUTPUT"
+      - name: Package .dmg
+        # Pass the tag (stripped of 'v' prefix) as the version arg so the dmg
+        # filename matches the release (e.g. Axon-x-0.2.0.dmg for tag v0.2.0).
+        run: bash scripts/make-dmg.sh "${TAG#v}"
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
       - name: Upload to release
         uses: softprops/action-gh-release@v2
         with:
