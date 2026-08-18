@@ -1,6 +1,7 @@
 package main
 
 import (
+	"sort"
 	"strings"
 
 	"axon/internal/claudedata"
@@ -14,13 +15,48 @@ func (a *App) ListClaudeProjects() ([]claudedata.Project, error) {
 	return claudedata.ListProjects()
 }
 
-// ListClaudeSessions returns session summaries for a project.
+// ListClaudeSessions returns session summaries for a project, including all
+// agent sources (Claude Code, Codex, WorkBuddy, CodeBuddy).
 func (a *App) ListClaudeSessions(projectSlug string) ([]claudedata.SessionMeta, error) {
-	return claudedata.ListSessions(projectSlug)
+	// Claude Code sessions.
+	claude, _ := claudedata.ListSessions(projectSlug)
+	// Codex sessions.
+	codex, _ := claudedata.ListCodexSessions(projectSlug)
+	// WorkBuddy + CodeBuddy sessions.
+	buddy, _ := claudedata.ListBuddySessions(projectSlug)
+
+	all := make([]claudedata.SessionMeta, 0, len(claude)+len(codex)+len(buddy))
+	all = append(all, claude...)
+	all = append(all, codex...)
+	all = append(all, buddy...)
+
+	// Sort newest first.
+	sort.Slice(all, func(i, j int) bool { return all[i].UpdatedAt > all[j].UpdatedAt })
+	return all, nil
 }
 
-// ReadClaudeSession loads the full transcript of a session.
+// ReadClaudeSession loads the full transcript of a session. Handles sessions
+// from all agents: plain ID = Claude Code, "codex:" prefix = Codex,
+// "workbuddy:"/"codebuddy:" prefix = buddy agents.
 func (a *App) ReadClaudeSession(projectSlug, sessionID string) ([]claudedata.SessionMessage, error) {
+	if strings.HasPrefix(sessionID, "codex:") {
+		rawID := strings.TrimPrefix(sessionID, "codex:")
+		file := claudedata.FindCodexSessionFile(rawID)
+		if file == "" {
+			return nil, nil
+		}
+		return claudedata.ReadCodexSession(file)
+	}
+	if strings.HasPrefix(sessionID, "workbuddy:") || strings.HasPrefix(sessionID, "codebuddy:") {
+		rawID := sessionID
+		rawID = strings.TrimPrefix(rawID, "workbuddy:")
+		rawID = strings.TrimPrefix(rawID, "codebuddy:")
+		file := claudedata.FindBuddySessionFile(rawID)
+		if file == "" {
+			return nil, nil
+		}
+		return claudedata.ReadBuddySession(file)
+	}
 	return claudedata.ReadSession(projectSlug, sessionID)
 }
 
