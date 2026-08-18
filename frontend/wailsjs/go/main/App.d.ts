@@ -18,6 +18,8 @@ export function BuildGraphFromCode(arg1:string,arg2:string):Promise<void>;
 
 export function BuildGraphFromObsidian(arg1:string,arg2:string):Promise<void>;
 
+export function BuildMultiGraph(arg1:Array<string>):Promise<graph.Graph>;
+
 export function CancelTask(arg1:string):Promise<void>;
 
 export function ClaudeSessionProgress(arg1:string,arg2:string):Promise<claudedata.SessionProgress>;
@@ -64,10 +66,6 @@ export function ListClaudeProjects():Promise<Array<claudedata.Project>>;
 
 export function ListClaudeSessions(arg1:string):Promise<Array<claudedata.SessionMeta>>;
 
-export function ListNamespaces():Promise<Array<main.Namespace>>;
-
-export function BuildMultiGraph(arg1:Array<string>):Promise<graph.Graph>;
-
 export function ListConversations():Promise<Array<model.Conversation>>;
 
 export function ListMemoryFiles(arg1:string):Promise<Array<claudedata.MemoryFile>>;
@@ -75,6 +73,8 @@ export function ListMemoryFiles(arg1:string):Promise<Array<claudedata.MemoryFile
 export function ListMessages(arg1:string):Promise<Array<model.Message>>;
 
 export function ListModels(arg1:string):Promise<Array<string>>;
+
+export function ListNamespaces():Promise<Array<main.Namespace>>;
 
 export function ListProviders():Promise<Array<main.ProviderInfo>>;
 

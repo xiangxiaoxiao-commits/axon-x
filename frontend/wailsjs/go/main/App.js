@@ -18,6 +18,10 @@ export function BuildGraphFromObsidian(arg1, arg2) {
   return window['go']['main']['App']['BuildGraphFromObsidian'](arg1, arg2);
 }
 
+export function BuildMultiGraph(arg1) {
+  return window['go']['main']['App']['BuildMultiGraph'](arg1);
+}
+
 export function CancelTask(arg1) {
   return window['go']['main']['App']['CancelTask'](arg1);
 }
@@ -110,14 +114,6 @@ export function ListClaudeSessions(arg1) {
   return window['go']['main']['App']['ListClaudeSessions'](arg1);
 }
 
-export function ListNamespaces() {
-  return window['go']['main']['App']['ListNamespaces']();
-}
-
-export function BuildMultiGraph(arg1) {
-  return window['go']['main']['App']['BuildMultiGraph'](arg1);
-}
-
 export function ListConversations() {
   return window['go']['main']['App']['ListConversations']();
 }
@@ -132,6 +128,10 @@ export function ListMessages(arg1) {
 
 export function ListModels(arg1) {
   return window['go']['main']['App']['ListModels'](arg1);
+}
+
+export function ListNamespaces() {
+  return window['go']['main']['App']['ListNamespaces']();
 }
 
 export function ListProviders() {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // CacheSchema is the current on-disk SessionCache layout version. Bump it when a
@@ -66,7 +67,7 @@ func LoadCache(dataDir, slug, sessionID string, mtime int64) (*SessionCache, boo
 // cache is stale only because of a Schema bump, its already-distilled entities
 // can be reused so only the new (cheap, LLM-free) fields are recomputed.
 func LoadCacheRaw(dataDir, slug, sessionID string) (*SessionCache, bool) {
-	p := filepath.Join(cacheDir(dataDir, slug), sessionID+".json")
+	p := filepath.Join(cacheDir(dataDir, slug), sanitizeFileName(sessionID)+".json")
 	data, err := os.ReadFile(p)
 	if err != nil {
 		return nil, false
@@ -90,12 +91,30 @@ func SaveCache(dataDir, slug string, c *SessionCache) error {
 	if err != nil {
 		return err
 	}
-	p := filepath.Join(dir, c.SessionID+".json")
+	p := filepath.Join(dir, sanitizeFileName(c.SessionID)+".json")
 	tmp := p + ".tmp"
 	if err := os.WriteFile(tmp, data, 0o644); err != nil {
 		return fmt.Errorf("write cache: %w", err)
 	}
 	return os.Rename(tmp, p)
+}
+
+// sanitizeFileName replaces characters that are illegal in Windows file names
+// (: < > | " ? * \) with underscores. Colons are the most common offender:
+// session IDs like "mcp:1234-abcd" or "codex:uuid" contain them, and Windows
+// NTFS interprets ':' as an Alternate Data Stream separator.
+func sanitizeFileName(name string) string {
+	var b strings.Builder
+	b.Grow(len(name))
+	for _, r := range name {
+		switch r {
+		case ':', '<', '>', '|', '"', '?', '*', '\\':
+			b.WriteByte('_')
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 // LoadAllCache returns every cached session for a project.
