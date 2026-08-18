@@ -43,7 +43,11 @@ func agentConfigPath(agent Agent) (string, error) {
 	case "claude":
 		return filepath.Join(home, ".claude.json"), nil
 	case "codex":
-		return filepath.Join(home, ".codex", "config.toml"), nil
+		dir := os.Getenv("CODEX_HOME")
+		if dir == "" {
+			dir = filepath.Join(home, ".codex")
+		}
+		return filepath.Join(dir, "config.toml"), nil
 	case "workbuddy":
 		return filepath.Join(home, ".workbuddy", ".mcp.json"), nil
 	case "codebuddy":

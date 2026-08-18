@@ -9,8 +9,12 @@ import (
 	"strings"
 )
 
-// codexRoot returns the ~/.codex directory.
+// codexRoot returns the Codex data directory.
+// Respects CODEX_HOME env var; defaults to ~/.codex.
 func codexRoot() (string, error) {
+	if dir := os.Getenv("CODEX_HOME"); dir != "" {
+		return dir, nil
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
