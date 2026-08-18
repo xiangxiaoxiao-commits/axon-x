@@ -52,9 +52,11 @@
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
-    const unicode11 = new Unicode11Addon();
-    term.loadAddon(unicode11);
-    term.unicode.activeVersion = "11";
+    try {
+      const unicode11 = new Unicode11Addon();
+      term.loadAddon(unicode11);
+      term.unicode.activeVersion = "11";
+    } catch { /* unicode11 addon optional — CJK alignment degrades gracefully */ }
     term.onData((d) => TermWrite(id, d));
     const t: Tab = { id, title, term, fit, started: false };
     tabs = [...tabs, t];
