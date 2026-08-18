@@ -11,6 +11,8 @@
 - **多 Agent 一键接入**：设置页支持同时接入 Claude Code、Codex、WorkBuddy、CodeBuddy，显示每个 Agent 的接入状态。
 - **多 Agent 会话归档**：建索引时自动扫描 Claude Code、Codex、WorkBuddy、CodeBuddy 四种 Agent 的本地会话记录并蒸馏进图谱。
 - **GUI 命名空间切换**：侧边栏项目选择器改为标签式，点击切换查看不同命名空间的图谱。
+- **会话按目录分组**：会话浏览页从按时间分桶改为按工作目录分组，所有 Agent 的会话按项目目录归类展示。
+- **多 Agent 会话浏览**：会话列表同时展示 Claude Code、Codex、WorkBuddy、CodeBuddy 的会话，带 model 标签区分来源。
 
 ### 修复
 

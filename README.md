@@ -140,7 +140,7 @@ codex mcp add axon-knowledge -- /path/to/axon-mcp
 - **知识图谱**：可视化查看实体 / 关系 / 别名 / 溯源；支持**多命名空间合并展示**（选中多个项目标签即可看到跨项目关联）；支持人工确认、修正、去噪（保证图谱质量）。
 - **建索引**：对一个真实仓库跑"从代码建图"；Claude Code、Codex、WorkBuddy、CodeBuddy 的对话记录、Obsidian 笔记同样并入。
 - **回写闭环**：新学到的业务事实增量合并进图谱，持续长大。
-- **会话浏览与一键恢复**：浏览 Claude Code 存在本地的历史会话（按项目隔离，标签页关了也不丢）；详情页顶部展示「最后进度」（最后一轮你的提问 + AI 回复尾部），一眼看清停在哪；点「▶ 恢复」在 **app 内置终端新开一个标签**里 `cd` 回原工作目录并 `claude --resume`。
+- **会话浏览与一键恢复**：浏览所有 Agent（Claude Code、Codex、WorkBuddy、CodeBuddy）存在本地的历史会话，按工作目录分组展示；详情页顶部展示「最后进度」，一眼看清停在哪；点「▶ 恢复」在 **app 内置终端新开一个标签**里 `cd` 回原工作目录并恢复会话。
 - **多标签内置终端**：PTY 驱动的真实 shell，顶部标签栏可开多个、各自独立——每恢复一个会话就是一个新标签，多个会话在 app 内并排跑，全程不依赖外部终端。
 - **会话溯源与知识剔除**：在会话详情页看到「本会话产出的知识」——这次对话被蒸馏进图谱的哪些实体与事实一目了然；对没用的知识点「✕ 剔除」即可把它从图谱移除。剔除按项目记录，**重新建索引也不会被带回来**，让你精确控制图谱只留有价值的知识。
 - **设置**：配置模型 Provider、embedding，以及一键接入 Claude Code。
@@ -211,7 +211,7 @@ codex mcp add axon-knowledge -- /path/to/axon-mcp
 | `graph` | 知识图谱模型：实体 / 关系 / 别名归一 / 溯源 / embedding；按项目的知识排除清单（剔除后重建不复现） |
 | `retrieve` | App 无关的召回核心：HybridRAG 双通道 + RRF 融合 |
 | `embed` | embedding 抽象接口（云端 + 本地兜底） |
-| `claudedata` | 读取 Claude Code 和 OpenAI Codex 的会话数据（列表 / 全文 / 最后进度 / 精确工作目录），支撑会话浏览与一键恢复 |
+| `claudedata` | 读取 Claude Code、Codex、WorkBuddy、CodeBuddy 的会话数据（列表 / 全文 / 最后进度 / 精确工作目录），支撑会话浏览与一键恢复 |
 | `provider` | 各家 API 流式调用 |
 | `secret` | OS 凭证库密钥存取（Keychain / Credential Manager，按平台分派） |
 | `mcpinstall` | 一键接入：读写 Claude Code 的 `~/.claude.json` |
