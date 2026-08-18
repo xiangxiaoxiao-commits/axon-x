@@ -44,12 +44,12 @@ func (h *toolHandler) list() map[string]interface{} {
 				Name: "search_knowledge",
 				Description: "查询项目沉淀的业务知识图谱：给一段自然语言 query，返回相关的实体+事实(结构)与原文片段(内容)，带来源标注。" +
 					"用于回忆设计决策、踩过的坑、约束、接口约定等。" +
-					"project 省略时自动搜当前项目 + _global_（平台通用知识）。" +
+					"project 省略时默认搜索所有命名空间，确保信息完整不遗漏。" +
 					"涉及跨服务交互时可传逗号分隔的多命名空间（如 \"gaia,gaiac\"）同时搜索；传 \"*\" 搜全部。",
 				InputSchema: map[string]interface{}{
 					"type": "object",
 					"properties": map[string]interface{}{
-						"project": strProp("命名空间，支持: 单个(\"gaia\")、逗号分隔多个(\"gaia,gaiac\")、\"*\"(全部)；省略则搜当前项目+_global_"),
+						"project": strProp("可选，限定搜索范围: 单个(\"gaia\")、逗号分隔多个(\"gaia,gaiac\")；省略则搜索所有命名空间"),
 						"query":   strProp("自然语言查询"),
 					},
 					"required": []string{"query"},
@@ -297,15 +297,8 @@ func (h *toolHandler) searchKnowledge(raw json.RawMessage) (*toolResult, error) 
 func (h *toolHandler) resolveSearchSlugs(project string) []string {
 	project = strings.TrimSpace(project)
 	if project == "" {
-		// Default: current project + _global_
-		slug, _ := h.resolveSlug("")
-		if slug == "" {
-			return nil
-		}
-		if slug == "_global_" {
-			return []string{"_global_"}
-		}
-		return []string{slug, "_global_"}
+		// Default: search ALL namespaces so knowledge is never missed.
+		return h.namespaceDirs()
 	}
 	if project == "*" {
 		return h.namespaceDirs()
