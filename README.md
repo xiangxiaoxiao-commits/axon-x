@@ -70,6 +70,16 @@ Axon-x 把这些知识固化下来，让 AI 主动来查，而不是等你手动
 claude mcp add axon-knowledge -s user /path/to/axon-mcp
 ```
 
+### 接入 OpenAI Codex CLI
+
+Codex CLI 同样支持 MCP，一行命令接入：
+
+```bash
+codex mcp add axon-knowledge -- /path/to/axon-mcp
+```
+
+接入后 Codex 在工作时可以调用同样的五个工具读写知识图谱。此外，Axon 的建索引功能也会自动扫描 `~/.codex/sessions/` 下的 Codex 会话记录，将其中属于当前项目（通过 session 的 cwd + `.axon-project` 判断）的对话蒸馏进图谱——**Claude Code 和 Codex 共享同一张知识图谱**。
+
 接入后，AI 在会话中可调用五个工具：
 
 | 工具 | 作用 |
@@ -78,9 +88,9 @@ claude mcp add axon-knowledge -s user /path/to/axon-mcp
 | `search_knowledge` | 给一段自然语言 query，返回相关实体、事实与原文片段，带来源标注 |
 | `get_entity` | 查看某实体的全部 observations（事实）+ 关系 + 别名，支持别名与大小写不敏感匹配 |
 | `remember_knowledge` | 把本次对话学到的持久知识写回图谱（实体/关系），通过别名归一并入已有节点——MCP 模式下"越用越懂"的写入闭环 |
-| `list_projects` | 列出所有已建图谱的项目（slug + 路径 + 实体数），并标出当前工作目录对应的项目 |
+| `list_projects` | 列出所有已建图谱的命名空间（名称 + 实体数），并标出当前项目 |
 
-> **`project` 自动定位**：`project_overview` / `search_knowledge` / `get_entity` / `remember_knowledge` 的 `project` 参数**可省略**——server 是 Claude Code 在项目目录里拉起的，会自动按当前工作目录（含从子目录向上回溯）定位 slug，无需先调 `list_projects` 或手算。只有跨项目查询时才需显式传 `project`。
+> **命名空间自动定位**：在项目根目录放一个 `.axon-project` 文件（内容为命名空间名，如 `gaia`），调用时省略 `project` 参数即可自动路由。支持从子目录向上查找。跨命名空间查询传逗号分隔的多个（`"gaia,gaiac"`），或 `"*"` 搜索全部。**省略 `project` 时默认搜当前项目 + `_global_`**（平台通用知识自动参与召回）。
 
 `axon-mcp` 是一个独立二进制，不依赖 GUI，直接读 GUI 建好的 `graphs/` 与 `graphcache/`，与 App 共用 `internal/retrieve` 里的召回核心。
 
@@ -96,13 +106,13 @@ claude mcp add axon-knowledge -s user /path/to/axon-mcp
    如果当前会话挂载了 axon-knowledge 这个 MCP 工具：
 
    - 开工前（改代码/做设计/排查前）先用 search_knowledge 查本项目的既有决策、
-     约束、坑、接口约定，不要臆测历史设计。project slug 用 list_projects 拿到，
-     选与当前工作目录匹配的那个（slug = 工作目录绝对路径里的 / 换成 -）。
+     约束、坑、接口约定，不要臆测历史设计。project 参数可省略（从 .axon-project 自动读取）。
+   - 涉及跨服务交互时，search_knowledge 传逗号分隔的多命名空间（如 “gaia,gaiac”）。
    - 敲定一个非显然的持久知识后（设计决策及理由 / 约束与坑 / 接口约定 / 模块职责与关系），
-     调用 remember_knowledge 写回（project 用同一个 slug）：一个实体一个概念，
-     observations 一句话一条，给出别名，能表达关系就带 relations。
+     调用 remember_knowledge 写回：一个实体一个概念，observations 一句话一条，
+     给出别名，能表达关系就带 relations。跨项目通用知识写入 _global_。
    - 不要写回：临时调试、一次性操作、寒暄、能从代码或 git log 直接看出的事实、
-     被否定的方案。只沉淀“代码里看不出来、忘了会重复踩坑”的东西，宁可少而准。
+     被否定的方案。只沉淀”代码里看不出来、忘了会重复踩坑”的东西，宁可少而准。
    ```
 
    > 改了 `axon-mcp`（如升级本应用）后，到 **设置 → 接入 Claude Code** 点一次「重新接入 / 更新路径」，并**重启正在运行的 Claude Code 会话**，新工具才会加载。
@@ -119,8 +129,8 @@ claude mcp add axon-knowledge -s user /path/to/axon-mcp
 
 界面收敛为四个入口——**知识**、**会话**、**终端**与**设置**：
 
-- **知识图谱**：可视化查看实体 / 关系 / 别名 / 溯源；支持人工确认、修正、去噪（保证图谱质量）。
-- **建索引**：对一个真实仓库跑"从代码建图"；对话与笔记同样并入。
+- **知识图谱**：可视化查看实体 / 关系 / 别名 / 溯源；支持**多命名空间合并展示**（选中多个项目标签即可看到跨项目关联）；支持人工确认、修正、去噪（保证图谱质量）。
+- **建索引**：对一个真实仓库跑"从代码建图"；Claude Code 和 Codex 的对话记录、Obsidian 笔记同样并入。
 - **回写闭环**：新学到的业务事实增量合并进图谱，持续长大。
 - **会话浏览与一键恢复**：浏览 Claude Code 存在本地的历史会话（按项目隔离，标签页关了也不丢）；详情页顶部展示「最后进度」（最后一轮你的提问 + AI 回复尾部），一眼看清停在哪；点「▶ 恢复」在 **app 内置终端新开一个标签**里 `cd` 回原工作目录并 `claude --resume`。
 - **多标签内置终端**：PTY 驱动的真实 shell，顶部标签栏可开多个、各自独立——每恢复一个会话就是一个新标签，多个会话在 app 内并排跑，全程不依赖外部终端。
@@ -148,11 +158,11 @@ claude mcp add axon-knowledge -s user /path/to/axon-mcp
 ```markdown
 ## 项目知识
 动手改代码或做设计前，先用 axon-knowledge 的 search_knowledge 工具
-查询本项目相关的既有决策、约束与接口约定（project slug: <你的-slug>），
+查询本项目相关的既有决策、约束与接口约定（project 可省略，自动从 .axon-project 读取），
 不要臆测历史设计。
 ```
 
-用 `list_projects` 拿到你的 project slug 填进去。这条指令能把"偶尔查一下"变成"每次动手前必查"。
+在项目根目录放一个 `.axon-project` 文件（内容为命名空间名），agent 就能自动定位。
 
 ### 养图谱的习惯
 
@@ -193,7 +203,7 @@ claude mcp add axon-knowledge -s user /path/to/axon-mcp
 | `graph` | 知识图谱模型：实体 / 关系 / 别名归一 / 溯源 / embedding；按项目的知识排除清单（剔除后重建不复现） |
 | `retrieve` | App 无关的召回核心：HybridRAG 双通道 + RRF 融合 |
 | `embed` | embedding 抽象接口（云端 + 本地兜底） |
-| `claudedata` | 读取 Claude Code 会话数据（列表 / 全文 / 最后进度 / 精确工作目录），支撑会话浏览与一键恢复 |
+| `claudedata` | 读取 Claude Code 和 OpenAI Codex 的会话数据（列表 / 全文 / 最后进度 / 精确工作目录），支撑会话浏览与一键恢复 |
 | `provider` | 各家 API 流式调用 |
 | `secret` | OS 凭证库密钥存取（Keychain / Credential Manager，按平台分派） |
 | `mcpinstall` | 一键接入：读写 Claude Code 的 `~/.claude.json` |
