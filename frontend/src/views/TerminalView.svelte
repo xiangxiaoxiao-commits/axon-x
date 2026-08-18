@@ -5,6 +5,7 @@
   import { onMount, onDestroy, tick } from "svelte";
   import { Terminal } from "@xterm/xterm";
   import { FitAddon } from "@xterm/addon-fit";
+  import { Unicode11Addon } from "@xterm/addon-unicode11";
   import "@xterm/xterm/css/xterm.css";
   import { TermStart, TermStartResume, TermWrite, TermResize, TermStop } from "../../wailsjs/go/main/App.js";
   import { EventsOn, EventsOff } from "../../wailsjs/runtime/runtime.js";
@@ -51,6 +52,9 @@
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
+    const unicode11 = new Unicode11Addon();
+    term.loadAddon(unicode11);
+    term.unicode.activeVersion = "11";
     term.onData((d) => TermWrite(id, d));
     const t: Tab = { id, title, term, fit, started: false };
     tabs = [...tabs, t];
