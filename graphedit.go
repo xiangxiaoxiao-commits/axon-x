@@ -1,7 +1,10 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"axon/internal/db"
@@ -19,9 +22,11 @@ import (
 const manualSource = "manual"
 
 // DeleteEntity removes an entity node and every relation that references it
-// (as source or target). Matching is case-insensitive on the trimmed name, the
-// same normalization the graph uses elsewhere. Deleting a non-existent entity is
-// a no-op error so the UI can surface a stale-state hint.
+// from all source cache files in graphcache/<slug>/, then rebuilds graph.json.
+// This is persistent: the entity won't "revive" on the next assembleGraph since
+// the cache sources no longer contain it. Matching is case-insensitive on the
+// trimmed name or any alias. Deleting a non-existent entity returns an error so
+// the UI can surface a stale-state hint.
 func (a *App) DeleteEntity(projectSlug, entityName string) error {
 	dataDir, err := db.AppDataDir()
 	if err != nil {
@@ -35,34 +40,81 @@ func (a *App) DeleteEntity(projectSlug, entityName string) error {
 	a.graphMu.Lock()
 	defer a.graphMu.Unlock()
 
-	g, err := graph.Load(dataDir, projectSlug)
+	dir := filepath.Join(dataDir, "graphcache", filepath.Base(projectSlug))
+	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return err
-	}
-	kept := g.Entities[:0]
-	found := false
-	for _, e := range g.Entities {
-		if normName(e.Name) == key {
-			found = true
-			continue
-		}
-		kept = append(kept, e)
-	}
-	if !found {
 		return fmt.Errorf("未找到实体「%s」", entityName)
 	}
-	g.Entities = kept
 
-	rels := g.Relations[:0]
-	for _, r := range g.Relations {
-		if normName(r.From) == key || normName(r.To) == key {
+	removedFrom := 0
+	for _, entry := range entries {
+		if !strings.HasSuffix(entry.Name(), ".json") {
 			continue
 		}
-		rels = append(rels, r)
-	}
-	g.Relations = rels
+		fpath := filepath.Join(dir, entry.Name())
+		data, readErr := os.ReadFile(fpath)
+		if readErr != nil {
+			continue
+		}
+		var cache graph.SessionCache
+		if json.Unmarshal(data, &cache) != nil {
+			continue
+		}
 
-	return graph.Save(dataDir, g)
+		origEnts := len(cache.Entities)
+		var keptEnts []graph.Entity
+		for _, e := range cache.Entities {
+			if matchesEntityByNameOrAlias(e, key) {
+				continue
+			}
+			keptEnts = append(keptEnts, e)
+		}
+
+		origRels := len(cache.Relations)
+		var keptRels []graph.Relation
+		for _, r := range cache.Relations {
+			if normName(r.From) == key || normName(r.To) == key {
+				continue
+			}
+			keptRels = append(keptRels, r)
+		}
+
+		if len(keptEnts) == origEnts && len(keptRels) == origRels {
+			continue
+		}
+
+		cache.Entities = keptEnts
+		cache.Relations = keptRels
+		removedFrom++
+
+		if len(cache.Entities) == 0 && len(cache.Relations) == 0 && len(cache.Chunks) == 0 {
+			os.Remove(fpath)
+		} else {
+			out, _ := json.MarshalIndent(cache, "", "  ")
+			_ = os.WriteFile(fpath, out, 0o644)
+		}
+	}
+
+	if removedFrom == 0 {
+		return fmt.Errorf("未找到实体「%s」", entityName)
+	}
+
+	_, err = a.assembleGraph(projectSlug, "")
+	return err
+}
+
+// matchesEntityByNameOrAlias checks if an entity matches the target key (by
+// name or alias, case-insensitive).
+func matchesEntityByNameOrAlias(e graph.Entity, key string) bool {
+	if normName(e.Name) == key {
+		return true
+	}
+	for _, al := range e.Aliases {
+		if normName(al) == key {
+			return true
+		}
+	}
+	return false
 }
 
 // UpdateEntityObservations replaces an entity's observations with the given

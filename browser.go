@@ -63,20 +63,42 @@ func (a *App) ReadClaudeSession(projectSlug, sessionID string) ([]claudedata.Ses
 
 // ClaudeSessionProgress returns the "where did I leave off" snapshot (last user
 // prompt + last assistant reply) so the UI can preview a session before
-// resuming it.
+// resuming it. For non-Claude sessions, returns empty progress (no error).
 func (a *App) ClaudeSessionProgress(projectSlug, sessionID string) (claudedata.SessionProgress, error) {
+	// Non-Claude sessions don't support ReadProgress; return empty.
+	if strings.HasPrefix(sessionID, "codex:") ||
+		strings.HasPrefix(sessionID, "workbuddy:") ||
+		strings.HasPrefix(sessionID, "codebuddy:") {
+		return claudedata.SessionProgress{}, nil
+	}
 	return claudedata.ReadProgress(projectSlug, sessionID)
 }
 
-// resumeShellCommand builds the shell command that reopens a session in Claude
-// Code: cd into the session's original working directory, then
-// `claude --resume <id>`. Both fields are single-quote escaped so paths/ids with
-// spaces or metacharacters can't break out of the command. cwd may be empty
-// (older transcripts); then the cd is skipped and resume runs in place.
+// resumeShellCommand builds the shell command that reopens a session in the
+// appropriate agent. Dispatches by session ID prefix:
+//   - plain ID → claude --resume <id>
+//   - codex:<id> → codex resume <id>
+//   - workbuddy:/codebuddy: → cd to cwd only (no resume support yet)
 func resumeShellCommand(cwd, sessionID string) string {
-	resume := "claude --resume " + shellQuote(sessionID)
+	var resume string
+	switch {
+	case strings.HasPrefix(sessionID, "codex:"):
+		rawID := strings.TrimPrefix(sessionID, "codex:")
+		resume = "codex resume " + shellQuote(rawID)
+	case strings.HasPrefix(sessionID, "workbuddy:") || strings.HasPrefix(sessionID, "codebuddy:"):
+		// WorkBuddy/CodeBuddy don't have a resume CLI; just cd to the directory.
+		resume = ""
+	default:
+		resume = "claude --resume " + shellQuote(sessionID)
+	}
 	if strings.TrimSpace(cwd) == "" {
+		if resume == "" {
+			return "echo '该会话不支持恢复（WorkBuddy/CodeBuddy 暂无 resume 功能）'"
+		}
 		return resume
+	}
+	if resume == "" {
+		return "cd " + shellQuote(cwd)
 	}
 	return "cd " + shellQuote(cwd) + " && " + resume
 }

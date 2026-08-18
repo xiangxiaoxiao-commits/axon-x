@@ -38,6 +38,9 @@ type Config struct {
 	//   "keyword"  — use the local lexical (n-gram) embedder; never calls cloud.
 	// Empty is treated as "keyword" (safe, offline default).
 	EmbeddingMode string `json:"embeddingMode"`
+	// GraphModel is the model used for knowledge distillation (IndexProject,
+	// GenerateArticle, code enrichment). Empty falls back to DefaultModel.
+	GraphModel string `json:"graphModel,omitempty"`
 }
 
 // Embedding recall modes for Config.EmbeddingMode.
@@ -130,6 +133,17 @@ func (m *Manager) SetEmbedding(providerName, model string) error {
 	m.cfg.EmbeddingProvider = providerName
 	m.cfg.EmbeddingModel = model
 	return m.saveLocked()
+}
+
+// GraphModel returns the model to use for knowledge distillation. Falls back
+// to DefaultModel when GraphModel is unset.
+func (m *Manager) GraphModel() string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.cfg.GraphModel != "" {
+		return m.cfg.GraphModel
+	}
+	return m.cfg.DefaultModel
 }
 
 // SetEmbeddingMode persists the recall backend selection (semantic|keyword).

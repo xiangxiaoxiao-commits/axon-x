@@ -3,19 +3,12 @@ package main
 import (
 	"log"
 	"strings"
-	"sync"
 	"time"
 
 	"axon/internal/db"
 	"axon/internal/graph"
 	"axon/internal/task"
 )
-
-// graphWriteMu serializes knowledge-graph writeback so concurrent task
-// acceptances can't interleave their cache-save + graph-rebuild. Writeback is
-// low-frequency (one per accepted task), so a single global lock is enough and
-// avoids two goroutines rebuilding graph.json at the same time.
-var graphWriteMu sync.Mutex
 
 // writeBackTaskKnowledge distills the durable business knowledge from an accepted
 // task — its rough input, the confirmed spec, and the accepted result — and
@@ -88,8 +81,8 @@ func (a *App) writeBackTaskKnowledge(t task.Task, result string) {
 	// entry is what makes writeback durable: assembleGraph rebuilds graph.json
 	// from the cache on every recall, so a direct graph.json write would be
 	// overwritten on the next MatchKnowledge. This mirrors IndexProject exactly.
-	graphWriteMu.Lock()
-	defer graphWriteMu.Unlock()
+	a.graphMu.Lock()
+	defer a.graphMu.Unlock()
 
 	if err := graph.SaveCache(dataDir, slug, &graph.SessionCache{
 		SessionID: source,

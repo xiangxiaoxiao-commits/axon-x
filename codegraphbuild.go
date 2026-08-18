@@ -172,7 +172,7 @@ func (a *App) extractBizFromCode(prov provider.Provider, repoDir, rel string, by
 	b.WriteString(content)
 
 	reply, err := collectReply(a.ctx, prov, provider.ChatRequest{
-		Model: graphModel,
+		Model: a.graphModel(),
 		Messages: []provider.ChatMessage{
 			{Role: provider.RoleSystem, Content: codeBizPrompt},
 			{Role: provider.RoleUser, Content: b.String()},

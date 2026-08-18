@@ -140,6 +140,15 @@ func (h *toolHandler) rememberKnowledge(raw json.RawMessage) (*toolResult, error
 		return nil, fmt.Errorf("save knowledge: %w", err)
 	}
 
+	// Rebuild graph.json so the GUI's GetGraph reflects the new knowledge immediately.
+	if assembled, aErr := retrieve.AssembleGraph(h.dataDir, a.Project); aErr == nil {
+		if ex, exErr := graph.LoadExclusions(h.dataDir, a.Project); exErr == nil {
+			graph.FilterExcluded(assembled, ex)
+		}
+		assembled.UpdatedAt = time.Now().UnixMilli()
+		_ = graph.Save(h.dataDir, assembled)
+	}
+
 	names := make([]string, len(ents))
 	for i, e := range ents {
 		names[i] = e.Name

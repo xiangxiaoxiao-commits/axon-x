@@ -297,7 +297,7 @@ func (a *App) ListModels(providerName string) ([]string, error) {
 	}
 	if pc.Protocol == "anthropic" {
 		return []string{
-			"claude-opus-4-8", "claude-sonnet-5", "claude-haiku-4-5",
+			"claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5",
 		}, nil
 	}
 	prov, err := a.newProvider(pc)

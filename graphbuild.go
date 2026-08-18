@@ -18,9 +18,20 @@ import (
 	"axon/internal/retrieve"
 )
 
-// graphModel is the model used to distill knowledge. gpt-5.6-sol has the
-// strongest comprehension on the user's gateway; extraction needs judgement.
-const graphModel = "gpt-5.6-sol"
+// graphModelDefault is the fallback when no GraphModel is configured. It
+// matches the user's private gateway (gpt-5.6-sol), but any OpenAI-compatible
+// model works — a different provider simply configures its preferred model in
+// settings.
+const graphModelDefault = "gpt-5.6-sol"
+
+// graphModel returns the model used for knowledge distillation, preferring the
+// config value when set, then the default.
+func (a *App) graphModel() string {
+	if m := a.cfg.GraphModel(); m != "" {
+		return m
+	}
+	return graphModelDefault
+}
 
 // Graph build events for the frontend.
 const (
@@ -134,7 +145,7 @@ type extracted struct {
 // extractFromText runs one distillation call over a transcript chunk.
 func (a *App) extractFromText(ctx context.Context, prov provider.Provider, transcript string) (extracted, error) {
 	reply, err := collectReply(ctx, prov, provider.ChatRequest{
-		Model: graphModel,
+		Model: a.graphModel(),
 		Messages: []provider.ChatMessage{
 			{Role: provider.RoleSystem, Content: extractPrompt},
 			{Role: provider.RoleUser, Content: transcript},
@@ -181,7 +192,7 @@ func (a *App) IndexProject(projectSlug string) error {
 	}
 	name, ok := a.providerForProtocol("openai")
 	if !ok {
-		return fmt.Errorf("需要一个 OpenAI 协议的 provider 来调用 %s（去设置配一个）", graphModel)
+		return fmt.Errorf("需要一个 OpenAI 协议的 provider 来调用 %s（去设置配一个）", a.graphModel())
 	}
 	pc, _ := a.cfg.Provider(name)
 	prov, err := a.newProvider(pc)
@@ -591,7 +602,7 @@ func (a *App) GenerateArticle(projectSlug, term string) (string, error) {
 	}
 	name, ok := a.providerForProtocol("openai")
 	if !ok {
-		return "", fmt.Errorf("需要一个 OpenAI 协议的 provider 来调用 %s", graphModel)
+		return "", fmt.Errorf("需要一个 OpenAI 协议的 provider 来调用 %s", a.graphModel())
 	}
 	pc, _ := a.cfg.Provider(name)
 	prov, err := a.newProvider(pc)
@@ -619,7 +630,7 @@ func (a *App) GenerateArticle(projectSlug, term string) (string, error) {
 	}
 
 	return collectReply(a.ctx, prov, provider.ChatRequest{
-		Model:       graphModel,
+		Model:       a.graphModel(),
 		Messages:    []provider.ChatMessage{{Role: provider.RoleSystem, Content: articlePrompt}, {Role: provider.RoleUser, Content: b.String()}},
 		Temperature: 0.3, MaxTokens: 3000,
 	})

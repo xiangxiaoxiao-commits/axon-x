@@ -6,8 +6,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"axon/internal/graph"
+	"axon/internal/retrieve"
 )
 
 // deleteEntityArgs is the delete_entity argument shape.
@@ -95,6 +97,16 @@ func (h *toolHandler) deleteEntity(raw json.RawMessage) (*toolResult, error) {
 	if removedFrom == 0 {
 		return textResult(fmt.Sprintf("在命名空间 `%s` 中没有找到实体「%s」。", slug, a.Name)), nil
 	}
+
+	// Rebuild graph.json so the GUI's GetGraph reflects the deletion immediately.
+	if assembled, aErr := retrieve.AssembleGraph(h.dataDir, slug); aErr == nil {
+		if ex, exErr := graph.LoadExclusions(h.dataDir, slug); exErr == nil {
+			graph.FilterExcluded(assembled, ex)
+		}
+		assembled.UpdatedAt = time.Now().UnixMilli()
+		_ = graph.Save(h.dataDir, assembled)
+	}
+
 	return textResult(fmt.Sprintf("已从命名空间 `%s` 的 %d 个缓存文件中删除实体「%s」及其关系。", slug, removedFrom, a.Name)), nil
 }
 
