@@ -90,7 +90,8 @@ func (h *toolHandler) list() map[string]interface{} {
 				Description: "把本次对话里学到的、以后还用得上的持久业务知识写回该项目的知识图谱（让它越用越懂）。" +
 					"只记录持久知识：设计决策及理由、约束/坑、接口约定、模块职责与关系；不要记临时调试、寒暄或一次性操作。" +
 					"通过别名归一，新知识会自动并入已有的同名实体。写入后立即对后续 search_knowledge / get_entity 生效。" +
-					"project 省略时从 .axon-project 自动读取命名空间（新项目也会据此自动建图）。跨项目通用知识写入 _global_。",
+					"project 省略时从 .axon-project 自动读取命名空间（新项目也会据此自动建图）。" +
+					"注意：知识有归属方向，必须写入正确的命名空间——A 项目的知识不要写到 B 项目。跨项目通用知识写入 _global_。",
 				InputSchema: map[string]interface{}{
 					"type": "object",
 					"properties": map[string]interface{}{

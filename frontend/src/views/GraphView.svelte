@@ -152,18 +152,20 @@
   let lastIndexReq = 0;
   $: if ($indexRequest !== lastIndexReq) { lastIndexReq = $indexRequest; if (!indexing && $currentProject) indexProject(); }
 
-  // load(false) assembles from the session cache (BuildGraph or BuildMultiGraph
-  // for multiple namespaces); load(true) reads the saved graph.json (GetGraph) so
-  // manual edits aren't overwritten by a re-assembly.
+  // load(false) assembles from the session cache (BuildGraph); load(true) reads
+  // the saved graph.json (GetGraph) so manual edits aren't overwritten by a
+  // re-assembly. When multiple namespaces are selected, each loads independently
+  // into its own graph — they are NOT merged, to preserve knowledge boundaries.
   async function load(fromStore = false) {
     const prevFocus = focus;
     try {
       const slugs = $selectedNamespaces;
-      if (slugs.length > 1) {
-        // Multi-namespace: merge all selected graphs.
-        g = await BuildMultiGraph(slugs);
-      } else if (slugs.length === 1) {
-        g = fromStore ? await GetGraph(slugs[0]) : await BuildGraph(slugs[0]);
+      if (slugs.length >= 1) {
+        // Always load the first selected namespace as the active graph.
+        // Multi-namespace does NOT merge — user switches between them via tags.
+        const active = slugs[0];
+        currentProject.set(active);
+        g = fromStore ? await GetGraph(active) : await BuildGraph(active);
       } else if ($currentProject) {
         g = fromStore ? await GetGraph($currentProject) : await BuildGraph($currentProject);
       } else {

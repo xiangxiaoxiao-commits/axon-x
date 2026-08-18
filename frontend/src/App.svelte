@@ -27,15 +27,9 @@
   function go(v: View) { $activeView = v; }
 
   function toggleNs(name: string) {
-    const cur = $selectedNamespaces;
-    if (cur.includes(name)) {
-      selectedNamespaces.set(cur.filter((n) => n !== name));
-    } else {
-      selectedNamespaces.set([...cur, name]);
-    }
-    // Keep currentProject in sync (first selected namespace, for legacy compat).
-    const next = $selectedNamespaces;
-    currentProject.set(next.length > 0 ? next[0] : "");
+    // Single-select: each namespace is an independent graph, click to switch.
+    selectedNamespaces.set([name]);
+    currentProject.set(name);
   }
 </script>
 
