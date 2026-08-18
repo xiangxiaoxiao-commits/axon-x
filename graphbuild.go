@@ -329,6 +329,61 @@ func (a *App) IndexProject(projectSlug string) error {
 		newly++
 	}
 
+	// --- Index WorkBuddy + CodeBuddy sessions that belong to this project ---
+	buddySessions, _ := claudedata.ListBuddySessions(projectSlug)
+	for i, s := range buddySessions {
+		if _, ok := graph.LoadCache(dataDir, projectSlug, s.ID, s.UpdatedAt); ok {
+			continue
+		}
+		a.emit(EventGraphProgress, map[string]any{
+			"projectSlug": projectSlug, "current": i + 1, "total": len(buddySessions),
+			"title": s.Title, "phase": "buddy",
+		})
+		sessionFile := claudedata.FindBuddySessionFile(strings.TrimPrefix(strings.TrimPrefix(s.ID, "workbuddy:"), "codebuddy:"))
+		if sessionFile == "" {
+			continue
+		}
+		msgs, err := claudedata.ReadBuddySession(sessionFile)
+		if err != nil || len(msgs) == 0 {
+			continue
+		}
+
+		if prev, ok := graph.LoadCacheRaw(dataDir, projectSlug, s.ID); ok && prev.Mtime == s.UpdatedAt {
+			chunks := chunkTranscript(s.ID, msgs)
+			a.embedChunks(emb, chunks)
+			_ = graph.SaveCache(dataDir, projectSlug, &graph.SessionCache{
+				SessionID: s.ID, Mtime: s.UpdatedAt, Schema: graph.CacheSchema,
+				Entities: prev.Entities, Relations: prev.Relations, Chunks: chunks,
+			})
+			newly++
+			continue
+		}
+
+		ex := extracted{}
+		transcript := buildTranscript(msgs)
+		if strings.TrimSpace(transcript) != "" {
+			ex, err = a.extractFromText(a.ctx, prov, transcript)
+			if err != nil {
+				a.emit(EventGraphProgress, map[string]any{
+					"projectSlug": projectSlug, "current": i + 1, "total": len(buddySessions),
+					"title": s.Title, "error": err.Error(), "phase": "buddy",
+				})
+				continue
+			}
+		}
+		stampObsSources(ex.Entities, s.ID)
+		chunks := chunkTranscript(s.ID, msgs)
+		if emb != nil {
+			a.embedEntities(emb, ex.Entities)
+			a.embedChunks(emb, chunks)
+		}
+		_ = graph.SaveCache(dataDir, projectSlug, &graph.SessionCache{
+			SessionID: s.ID, Mtime: s.UpdatedAt, Schema: graph.CacheSchema,
+			Entities: ex.Entities, Relations: ex.Relations, Chunks: chunks,
+		})
+		newly++
+	}
+
 	a.emit(EventGraphDone, map[string]any{
 		"projectSlug": projectSlug, "processed": newly, "phase": "index",
 	})
