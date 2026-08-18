@@ -1,6 +1,7 @@
 package main
 
 import (
+	"runtime"
 	"sort"
 	"strings"
 
@@ -76,31 +77,32 @@ func (a *App) ClaudeSessionProgress(projectSlug, sessionID string) (claudedata.S
 
 // resumeShellCommand builds the shell command that reopens a session in the
 // appropriate agent. Dispatches by session ID prefix:
-//   - plain ID → claude --resume <id>
-//   - codex:<id> → codex resume <id>
-//   - workbuddy:/codebuddy: → cd to cwd only (no resume support yet)
+//   - plain ID -> claude --resume <id>
+//   - codex:<id> -> codex resume <id>
+//   - workbuddy:/codebuddy: -> cd to cwd only (no resume support yet)
+//
+// On Windows, uses cmd.exe syntax (cd /d, &); on Unix, POSIX shell (cd, &&).
 func resumeShellCommand(cwd, sessionID string) string {
 	var resume string
 	switch {
 	case strings.HasPrefix(sessionID, "codex:"):
 		rawID := strings.TrimPrefix(sessionID, "codex:")
-		resume = "codex resume " + shellQuote(rawID)
+		resume = "codex resume " + quote(rawID)
 	case strings.HasPrefix(sessionID, "workbuddy:") || strings.HasPrefix(sessionID, "codebuddy:"):
-		// WorkBuddy/CodeBuddy don't have a resume CLI; just cd to the directory.
 		resume = ""
 	default:
-		resume = "claude --resume " + shellQuote(sessionID)
+		resume = "claude --resume " + quote(sessionID)
 	}
 	if strings.TrimSpace(cwd) == "" {
 		if resume == "" {
-			return "echo '该会话不支持恢复（WorkBuddy/CodeBuddy 暂无 resume 功能）'"
+			return echoMsg("This session does not support resume")
 		}
 		return resume
 	}
 	if resume == "" {
-		return "cd " + shellQuote(cwd)
+		return cdCmd(cwd)
 	}
-	return "cd " + shellQuote(cwd) + " && " + resume
+	return cdCmd(cwd) + chainOp() + resume
 }
 
 // ResumeCommand returns the resume command with a trailing newline, ready to
@@ -109,10 +111,36 @@ func (a *App) ResumeCommand(cwd, sessionID string) string {
 	return resumeShellCommand(cwd, sessionID) + "\n"
 }
 
-// shellQuote wraps s in single quotes, escaping any embedded single quotes, so
-// it is safe as one argument in a POSIX shell.
-func shellQuote(s string) string {
+// quote wraps a value for safe shell interpolation (platform-aware).
+func quote(s string) string {
+	if runtime.GOOS == "windows" {
+		return `"` + strings.ReplaceAll(s, `"`, `""`) + `"`
+	}
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// cdCmd returns the cd command appropriate for the OS.
+func cdCmd(dir string) string {
+	if runtime.GOOS == "windows" {
+		return `cd /d ` + quote(dir)
+	}
+	return "cd " + quote(dir)
+}
+
+// chainOp returns the command chaining operator for the OS.
+func chainOp() string {
+	if runtime.GOOS == "windows" {
+		return " & "
+	}
+	return " && "
+}
+
+// echoMsg returns a platform-appropriate echo command.
+func echoMsg(msg string) string {
+	if runtime.GOOS == "windows" {
+		return `echo ` + msg
+	}
+	return "echo " + quote(msg)
 }
 
 // ListMemory returns the global CLAUDE.md plus a project's memory/*.md files.
