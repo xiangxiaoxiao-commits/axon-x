@@ -167,7 +167,7 @@ func installJSON(path, mcpBin string) error {
 		root = map[string]json.RawMessage{}
 	}
 	servers := serversMap(root)
-	entry, _ := json.Marshal(serverEntry{Command: mcpBin, Args: []string{}})
+	entry, _ := json.Marshal(serverEntry{Type: "stdio", Command: mcpBin, Args: []string{}})
 	servers[ServerName] = entry
 	if err := putServers(root, servers); err != nil {
 		return err
