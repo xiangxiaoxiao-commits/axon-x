@@ -126,6 +126,18 @@ func (h *toolHandler) list() map[string]interface{} {
 					"required": []string{"entities"},
 				},
 			},
+			{
+				Name:        "delete_entity",
+				Description: "从项目知识图谱中删除一个实体及其所有关系。用于清理噪音、过期或错误的实体。project 省略时从 .axon-project 自动读取。",
+				InputSchema: map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"project": strProp("项目命名空间；省略则从 .axon-project 自动读取"),
+						"name":    strProp("要删除的实体名（大小写不敏感，支持别名匹配）"),
+					},
+					"required": []string{"name"},
+				},
+			},
 		},
 	}
 }
@@ -169,6 +181,8 @@ func (h *toolHandler) call(raw json.RawMessage) (*toolResult, error) {
 		return h.getEntity(p.Arguments)
 	case "remember_knowledge":
 		return h.rememberKnowledge(p.Arguments)
+	case "delete_entity":
+		return h.deleteEntity(p.Arguments)
 	default:
 		return nil, fmt.Errorf("unknown tool %q", p.Name)
 	}

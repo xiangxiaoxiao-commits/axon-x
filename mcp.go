@@ -35,3 +35,22 @@ func (a *App) UninstallMCP() (mcpinstall.Status, error) {
 	}
 	return mcpinstall.GetStatus()
 }
+
+// --- Multi-agent install ---
+
+// MCPAgentStatusAll returns the install status of axon-knowledge across all
+// supported agents (Claude Code, Codex, WorkBuddy, CodeBuddy).
+func (a *App) MCPAgentStatusAll() []mcpinstall.AgentStatus {
+	return mcpinstall.StatusAll()
+}
+
+// MCPInstallAll registers axon-knowledge in all supported agents in one click.
+func (a *App) MCPInstallAll() []mcpinstall.AgentStatus {
+	bin, _ := mcpinstall.LocateMCPBinary()
+	return mcpinstall.InstallAll(bin)
+}
+
+// MCPUninstallAll removes axon-knowledge from all supported agents.
+func (a *App) MCPUninstallAll() []mcpinstall.AgentStatus {
+	return mcpinstall.UninstallAll()
+}
