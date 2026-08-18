@@ -54,40 +54,48 @@ Axon-x 把这些知识固化下来，让 AI 主动来查，而不是等你手动
 
 2. **检索（Recall）** — **HybridRAG 双通道**：实体结构通道（语义 seed + 关系扩展）与原文 chunk 通道并行召回，用 **RRF（Reciprocal Rank Fusion）** 融合排序。embedding 默认走云端（OpenAI-compatible），无 key 时自动降级到**本地词面兜底**，保证离线可用。
 
-3. **注入（Inject）** — 通过 stdio MCP server 把知识图谱暴露给 Claude Code，AI 在会话中直接调用工具查询，带**来源溯源**。
+3. **注入（Inject）** — 通过 stdio MCP server 把知识图谱暴露给所有 AI Agent（Claude Code、Codex、WorkBuddy、CodeBuddy），AI 在会话中直接调用工具查询，带**来源溯源**。
 
 ---
 
-## 接入 Claude Code（MCP）
+## 接入 AI Agent（MCP）
 
-在 **设置 → 接入 Claude Code** 里点一下**「一键接入」**即可。Axon-x 会定位随应用分发的 `axon-mcp` 二进制，把 `axon-knowledge` 这个 stdio server 写进 Claude Code 的用户级配置（`~/.claude.json` 的 `mcpServers`），保留其它条目不动。设置页会实时显示「已接入 / 未接入」状态，并可一键移除或更新路径。
+在 **设置 → 接入 AI Agent** 里点**「一键接入所有 Agent」**即可。Axon-x 会定位随应用分发的 `axon-mcp` 二进制，把 `axon-knowledge` 注册到所有已安装的 Agent 配置中：
 
-> 从 Finder / 资源管理器启动的 GUI 进程往往拿不到完整 PATH，因此一键接入**不依赖** `claude` CLI，而是直接、原子地读写配置文件，macOS 与 Windows 行为一致。
+| Agent | 配置文件 | 格式 |
+|-------|---------|------|
+| Claude Code | `~/.claude.json` | JSON |
+| OpenAI Codex | `~/.codex/config.toml` | TOML |
+| WorkBuddy | `~/.workbuddy/.mcp.json` | JSON |
+| CodeBuddy | `~/.codebuddy/.mcp.json` | JSON |
 
-也可以手动用 CLI 注册：
+设置页实时显示每个 Agent 的「已接入 / 未接入」状态。
+
+> 从 Finder / 资源管理器启动的 GUI 进程往往拿不到完整 PATH，因此一键接入**不依赖**各 Agent 的 CLI，而是直接、原子地读写配置文件，macOS 与 Windows 行为一致。
+
+也可以手动用各 Agent 的 CLI 注册：
 
 ```bash
+# Claude Code
 claude mcp add axon-knowledge -s user /path/to/axon-mcp
-```
 
-### 接入 OpenAI Codex CLI
-
-Codex CLI 同样支持 MCP，一行命令接入：
-
-```bash
+# OpenAI Codex
 codex mcp add axon-knowledge -- /path/to/axon-mcp
+
+# WorkBuddy / CodeBuddy: 编辑对应的 .mcp.json，添加 mcpServers.axon-knowledge
 ```
 
-接入后 Codex 在工作时可以调用同样的五个工具读写知识图谱。此外，Axon 的建索引功能也会自动扫描 `~/.codex/sessions/` 下的 Codex 会话记录，将其中属于当前项目（通过 session 的 cwd + `.axon-project` 判断）的对话蒸馏进图谱——**Claude Code 和 Codex 共享同一张知识图谱**。
+接入后 Axon 的建索引功能会自动扫描所有 Agent 的会话记录，将属于当前项目的对话蒸馏进图谱——**所有 Agent 共享同一张知识图谱**。
 
-接入后，AI 在会话中可调用五个工具：
+接入后，AI 在会话中可调用六个工具：
 
 | 工具 | 作用 |
 | --- | --- |
-| `project_overview` | 零参数拿到当前项目的知识骨架（核心模块 / 关键决策 / 约束 / 高频实体）。冷启动首选——尤其适合刚 spawn、上下文为空的 subagent 开工前建立整体认知。纯本地、不调模型 |
-| `search_knowledge` | 给一段自然语言 query，返回相关实体、事实与原文片段，带来源标注 |
+| `project_overview` | 零参数拿到当前项目的知识骨架（核心模块 / 关键决策 / 约束 / 高频实体）。冷启动首选 |
+| `search_knowledge` | 给一段自然语言 query，返回相关实体、事实与原文片段，带来源标注。支持多命名空间同时搜索 |
 | `get_entity` | 查看某实体的全部 observations（事实）+ 关系 + 别名，支持别名与大小写不敏感匹配 |
-| `remember_knowledge` | 把本次对话学到的持久知识写回图谱（实体/关系），通过别名归一并入已有节点——MCP 模式下"越用越懂"的写入闭环 |
+| `remember_knowledge` | 把本次对话学到的持久知识写回图谱（实体/关系），通过别名归一并入已有节点 |
+| `delete_entity` | 从图谱中删除一个实体及其所有关系，用于清理噪音或过期知识 |
 | `list_projects` | 列出所有已建图谱的命名空间（名称 + 实体数），并标出当前项目 |
 
 > **命名空间自动定位**：在项目根目录放一个 `.axon-project` 文件（内容为命名空间名，如 `gaia`），调用时省略 `project` 参数即可自动路由。支持从子目录向上查找。跨命名空间查询传逗号分隔的多个（`"gaia,gaiac"`），或 `"*"` 搜索全部。**省略 `project` 时默认搜当前项目 + `_global_`**（平台通用知识自动参与召回）。
@@ -130,7 +138,7 @@ codex mcp add axon-knowledge -- /path/to/axon-mcp
 界面收敛为四个入口——**知识**、**会话**、**终端**与**设置**：
 
 - **知识图谱**：可视化查看实体 / 关系 / 别名 / 溯源；支持**多命名空间合并展示**（选中多个项目标签即可看到跨项目关联）；支持人工确认、修正、去噪（保证图谱质量）。
-- **建索引**：对一个真实仓库跑"从代码建图"；Claude Code 和 Codex 的对话记录、Obsidian 笔记同样并入。
+- **建索引**：对一个真实仓库跑"从代码建图"；Claude Code、Codex、WorkBuddy、CodeBuddy 的对话记录、Obsidian 笔记同样并入。
 - **回写闭环**：新学到的业务事实增量合并进图谱，持续长大。
 - **会话浏览与一键恢复**：浏览 Claude Code 存在本地的历史会话（按项目隔离，标签页关了也不丢）；详情页顶部展示「最后进度」（最后一轮你的提问 + AI 回复尾部），一眼看清停在哪；点「▶ 恢复」在 **app 内置终端新开一个标签**里 `cd` 回原工作目录并 `claude --resume`。
 - **多标签内置终端**：PTY 驱动的真实 shell，顶部标签栏可开多个、各自独立——每恢复一个会话就是一个新标签，多个会话在 app 内并排跑，全程不依赖外部终端。
