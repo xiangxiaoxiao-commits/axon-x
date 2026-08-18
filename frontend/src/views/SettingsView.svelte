@@ -15,6 +15,8 @@
     MCPStatus,
     InstallMCP,
     UninstallMCP,
+    MCPAgentStatusAll,
+    MCPInstallAll,
   } from "../../wailsjs/go/main/App.js";
   import { GetGraph } from "../../wailsjs/go/main/App.js";
   import { BrowserOpenURL } from "../../wailsjs/runtime/runtime.js";
@@ -66,13 +68,15 @@
     "BAAI/bge-m3",
   ];
 
-  // --- MCP one-click install (Claude Code integration) ----------------------
-  // Registers axon's stdio knowledge server into Claude Code's user config so
+  // --- MCP one-click install (multi-agent) ----------------------------------
+  // Registers axon's stdio knowledge server into all supported agents so
   // any agent session can query this project's business knowledge over MCP.
   let mcp: mcpinstall.Status | null = null;
   let mcpBusy = false;
   let mcpMsg = "";
   let mcpErr = "";
+  // Multi-agent status list.
+  let agentStatuses: any[] = [];
   // Current project's entity count, so the MCP card can show what an agent
   // would actually be able to query after connecting.
   let curEntityCount = 0;
@@ -104,6 +108,7 @@
   async function refreshMCP() {
     try {
       mcp = await MCPStatus();
+      agentStatuses = await MCPAgentStatusAll();
     } catch (e) {
       mcpErr = `读取 MCP 状态失败:${String(e)}`;
     }
@@ -114,8 +119,11 @@
     mcpErr = "";
     mcpBusy = true;
     try {
-      mcp = await InstallMCP();
-      mcpMsg = "已接入 Claude Code。重启正在运行的 Claude Code 会话后即可使用 axon-knowledge 工具。";
+      agentStatuses = await MCPInstallAll();
+      mcp = await MCPStatus();
+      const ok = agentStatuses.filter((s: any) => s.installed && !s.error).length;
+      const fail = agentStatuses.filter((s: any) => s.error).length;
+      mcpMsg = `已接入 ${ok} 个 Agent。` + (fail > 0 ? ` ${fail} 个失败（可能未安装）。` : "") + " 重启 Agent 会话后即可使用。";
     } catch (e) {
       mcpErr = `接入失败:${String(e)}`;
     }
@@ -127,8 +135,10 @@
     mcpErr = "";
     mcpBusy = true;
     try {
-      mcp = await UninstallMCP();
-      mcpMsg = "已从 Claude Code 移除。";
+      await UninstallMCP();
+      agentStatuses = await MCPAgentStatusAll();
+      mcp = await MCPStatus();
+      mcpMsg = "已从所有 Agent 移除。";
     } catch (e) {
       mcpErr = `移除失败:${String(e)}`;
     }
@@ -452,43 +462,43 @@
         <div class="banner error">{loadError}</div>
       {/if}
 
-      <!-- MCP one-click install: the product's headline integration. Wires
-           axon's knowledge graph into Claude Code so any agent session can
-           query this project's business knowledge. -->
+      <!-- MCP one-click install: wires axon's knowledge graph into all
+           supported AI agents so any session can query business knowledge. -->
       <section>
-        <h2>接入 Claude Code(MCP)</h2>
+        <h2>接入 AI Agent（MCP）</h2>
         <div class="mcp-card">
           <div class="mcp-desc">
-            一键把 axon 的知识图谱接入 Claude Code。接入后,AI 在任意会话里都能通过
-            <code>axon-knowledge</code> 工具查询本项目沉淀的业务知识(设计决策、约束、接口约定),
-            无需你反复解释。
+            一键把 axon 的知识图谱接入所有 AI Agent。接入后,Agent 在任意会话里都能通过
+            <code>axon-knowledge</code> 工具查询本项目沉淀的业务知识。
           </div>
 
-          <div class="mcp-status">
-            <span
-              class="dot"
-              class:on={mcp?.installed}
-              class:off={!mcp?.installed}
-            ></span>
-            {#if mcp?.installed}
-              <span class="mcp-state">已接入</span>
-              <span class="mcp-path mono">{mcp.command}</span>
-            {:else}
-              <span class="mcp-state">未接入</span>
+          <!-- Per-agent status list -->
+          <div class="mcp-agents">
+            {#each agentStatuses as st}
+              <div class="mcp-agent-row">
+                <span class="dot" class:on={st.installed} class:off={!st.installed}></span>
+                <span class="mcp-agent-name">{st.agent?.label || st.agent?.name || "unknown"}</span>
+                {#if st.installed}
+                  <span class="mcp-state">已接入</span>
+                {:else if st.error}
+                  <span class="mcp-state off">{st.error.length > 40 ? "未安装" : st.error}</span>
+                {:else}
+                  <span class="mcp-state">未接入</span>
+                {/if}
+              </div>
+            {/each}
+            {#if agentStatuses.length === 0}
+              <div class="mcp-agent-row"><span class="muted">加载中…</span></div>
             {/if}
           </div>
 
           <div class="mcp-actions">
+            <button class="btn primary" type="button" on:click={installMCP} disabled={mcpBusy}>
+              {mcpBusy ? "接入中…" : "一键接入所有 Agent"}
+            </button>
             {#if mcp?.installed}
-              <button class="btn primary" type="button" on:click={installMCP} disabled={mcpBusy}>
-                {mcpBusy ? "处理中…" : "重新接入 / 更新路径"}
-              </button>
               <button class="btn ghost" type="button" on:click={uninstallMCP} disabled={mcpBusy}>
-                移除接入
-              </button>
-            {:else}
-              <button class="btn primary" type="button" on:click={installMCP} disabled={mcpBusy}>
-                {mcpBusy ? "接入中…" : "一键接入 Claude Code"}
+                全部移除
               </button>
             {/if}
           </div>
@@ -496,7 +506,6 @@
           {#if mcpMsg}<p class="mcp-ok">{mcpMsg}</p>{/if}
           {#if mcpErr}<p class="mcp-err">{mcpErr}</p>{/if}
 
-          <!-- What the agent can query for the currently selected project. -->
           <div class="mcp-proj">
             当前项目：<code>{$currentProject || "（未选）"}</code>
             {#if $currentProject}
@@ -505,9 +514,8 @@
             {/if}
           </div>
 
-          <!-- Copy-paste CLAUDE.md instruction so the agent actually uses the graph. -->
           <details class="mcp-snip">
-            <summary>让 agent 主动查/写：复制这段到项目的 CLAUDE.md</summary>
+            <summary>让 agent 主动查/写：复制这段到项目指令文件</summary>
             <pre class="snip">{claudeSnippet}</pre>
             <button class="btn sm" type="button" on:click={copySnippet}>{copied ? "已复制 ✓" : "复制"}</button>
           </details>
@@ -1154,6 +1162,22 @@
   .mcp-actions {
     display: flex;
     gap: 8px;
+  }
+  .mcp-agents {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 12px;
+  }
+  .mcp-agent-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+  }
+  .mcp-agent-name {
+    font-weight: 500;
+    min-width: 100px;
   }
   .mcp-ok {
     margin: 0;
