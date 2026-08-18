@@ -190,7 +190,9 @@ func (a *App) IndexProject(projectSlug string) error {
 	}
 	sessions, err := claudedata.ListSessions(projectSlug)
 	if err != nil {
-		return err
+		// Named namespaces (like _global_, gaia, etc.) don't have a matching
+		// Claude Code project directory — that's fine, just no Claude sessions.
+		sessions = nil
 	}
 
 	// Build an embedder per the user's mode. Keyword mode always returns the

@@ -82,7 +82,13 @@ export function ListTaskRuns(arg1:string):Promise<Array<task.Run>>;
 
 export function ListTasks():Promise<Array<task.Task>>;
 
+export function MCPAgentStatusAll():Promise<Array<mcpinstall.AgentStatus>>;
+
+export function MCPInstallAll():Promise<Array<mcpinstall.AgentStatus>>;
+
 export function MCPStatus():Promise<mcpinstall.Status>;
+
+export function MCPUninstallAll():Promise<Array<mcpinstall.AgentStatus>>;
 
 export function MatchKnowledge(arg1:string,arg2:string):Promise<main.KnowledgeMatch>;
 

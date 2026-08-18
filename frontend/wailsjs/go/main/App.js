@@ -146,8 +146,20 @@ export function ListTasks() {
   return window['go']['main']['App']['ListTasks']();
 }
 
+export function MCPAgentStatusAll() {
+  return window['go']['main']['App']['MCPAgentStatusAll']();
+}
+
+export function MCPInstallAll() {
+  return window['go']['main']['App']['MCPInstallAll']();
+}
+
 export function MCPStatus() {
   return window['go']['main']['App']['MCPStatus']();
+}
+
+export function MCPUninstallAll() {
+  return window['go']['main']['App']['MCPUninstallAll']();
 }
 
 export function MatchKnowledge(arg1, arg2) {
