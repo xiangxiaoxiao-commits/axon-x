@@ -33,3 +33,4 @@ frontend/package.json.md5
 .idea
 .vscode/*
 !.vscode/extensions.json
+axon.exe
