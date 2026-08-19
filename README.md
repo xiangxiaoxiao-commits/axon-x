@@ -101,7 +101,7 @@ codex mcp add axon-knowledge -- /path/to/axon-mcp
 | `move_entity` | 把一个实体从源命名空间移动到目标命名空间，用于纠正归属 |
 | `list_projects` | 列出所有已建图谱的命名空间（名称 + 实体数），并标出当前项目 |
 
-> **命名空间自动定位**：在项目根目录放一个 `.axon-project` 文件（内容为命名空间名，如 `gaia`），调用时省略 `project` 参数即可自动路由。支持从子目录向上查找。跨命名空间查询传逗号分隔的多个（`"gaia,gaiac"`），或 `"*"` 搜索全部。**省略 `project` 时默认搜当前项目 + `_global_`**（平台通用知识自动参与召回）。
+> **命名空间自动定位**：在项目根目录放一个 `.axon-project` 文件（内容为命名空间名，如 `gaia`），`remember_knowledge` 时省略 `project` 参数即可自动路由到对应命名空间。`search_knowledge` 省略 `project` 时**默认搜索所有命名空间**，确保信息完整不遗漏；如需限定范围，传逗号分隔的命名空间（如 `"gaia,gaiac"`）。也可以用 `set_scope` 在会话中锁定范围。
 
 `axon-mcp` 是一个独立二进制，不依赖 GUI，直接读 GUI 建好的 `graphs/` 与 `graphcache/`，与 App 共用 `internal/retrieve` 里的召回核心。
 
