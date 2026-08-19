@@ -229,11 +229,12 @@ func expandAlongRelations(g *graph.Graph, hit map[string]bool, hops int) {
 		frontier := map[string]bool{}
 		for _, r := range g.Relations {
 			from, to := strings.ToLower(r.From), strings.ToLower(r.To)
+			// Only expand forward: if From is hit, pull in To.
+			// Do NOT expand backward (hitting To should not pull in From),
+			// because relations are directional — "A contains B" does not mean
+			// mentioning B should bring all of A's knowledge into context.
 			if hit[from] && !hit[to] {
 				frontier[to] = true
-			}
-			if hit[to] && !hit[from] {
-				frontier[from] = true
 			}
 		}
 		if len(frontier) == 0 {
