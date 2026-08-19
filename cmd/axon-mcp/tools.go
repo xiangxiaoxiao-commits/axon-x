@@ -116,7 +116,7 @@ func (h *toolHandler) list() map[string]interface{} {
 						},
 						"relations": map[string]interface{}{
 							"type":        "array",
-							"description": "可选：实体间的关系。每条：from(实体A) + to(实体B) + label(关系，如 依赖/调用/属于)。",
+							"description": "可选：实体间的有向关系。每条：from(主语) + to(宾语) + label(动词/关系)。方向必须清晰：from 是动作发起方，to 是接收方。例：A —调用→ B（A调B）、A —依赖→ B（A靠B）、A —包含→ B（A里有B）、A —属于→ B（A是B的一部分）、A —部署于→ B（A跑在B上）。",
 							"items": map[string]interface{}{
 								"type": "object",
 								"properties": map[string]interface{}{
