@@ -1,5 +1,33 @@
 # Changelog
 
+## v0.3.1 (2026-08-18)
+
+### 新特性
+
+- **会话级范围锁定**：新增 `set_scope`/`clear_scope` MCP 工具，可在会话中锁定只操作指定命名空间，用完恢复全量搜索。
+- **跨命名空间实体移动**：新增 `move_entity` MCP 工具，把误放的实体从一个命名空间移到另一个。
+- **默认搜索全量**：`search_knowledge` 省略 `project` 时搜索所有命名空间，确保信息完整不遗漏。
+- **多 Agent 会话浏览**：会话列表同时展示 Claude Code、Codex、WorkBuddy、CodeBuddy 的会话，按工作目录分组。
+- **多 Agent 一键接入 UI**：设置页展示 4 个 Agent 状态，一键全部注册。
+
+### 修复
+
+- **关系方向性**：召回扩展改为只沿正向（From→To），不再反向拉入无关实体。修复了"搜 glite 误拉出客户仓"类问题。
+- **关系写入约束**：`remember_knowledge` 的 relations 描述强化方向性语义（from=主语, to=宾语, label=动词）。
+- **49 条"部署"关系**：label 从语义模糊的"部署"改为方向明确的"承载"。
+- **MCP type=stdio**：修复 installJSON 写入空 type 导致 Claude Code 拒绝连接。
+- **会话恢复分派**：按 agent 类型生成正确的 resume 命令（claude/codex/cd only）。
+- **终端 unicode11 addon**：try-catch 保护，避免 addon 加载失败导致终端无法启动。
+- **Windows 兼容**：resume 命令使用平台感知的引号、cd /d、链接符。
+
+### 改进
+
+- 会话列表按工作目录分组展示，不再按时间分桶。
+- `delete_entity` 工具支持从图谱中删除噪音实体。
+- WorkBuddy 会话解析修复 timestamp 数字类型和 `<user_query>` 标签提取。
+
+---
+
 ## v0.3.0 (2026-08-18)
 
 ### 新特性

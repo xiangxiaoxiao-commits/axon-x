@@ -52,7 +52,7 @@ Axon-x 把这些知识固化下来，让 AI 主动来查，而不是等你手动
    - **历史对话**：Claude Code 的会话记录，蒸馏出设计决策与结论。
    - **Obsidian 笔记**：把 vault 里的知识并入图谱。
 
-2. **检索（Recall）** — **HybridRAG 双通道**：实体结构通道（语义 seed + 关系扩展）与原文 chunk 通道并行召回，用 **RRF（Reciprocal Rank Fusion）** 融合排序。embedding 默认走云端（OpenAI-compatible），无 key 时自动降级到**本地词面兜底**，保证离线可用。
+2. **检索（Recall）** — **HybridRAG 双通道**：实体结构通道（语义 seed + **正向**关系扩展）与原文 chunk 通道并行召回，用 **RRF（Reciprocal Rank Fusion）** 融合排序。关系扩展尊重方向性——命中 A 时只沿 `A→B` 方向拉入 B，不会反向把所有指向 A 的父级都带出来。embedding 默认走云端（OpenAI-compatible），无 key 时自动降级到**本地词面兜底**，保证离线可用。
 
 3. **注入（Inject）** — 通过 stdio MCP server 把知识图谱暴露给所有 AI Agent（Claude Code、Codex、WorkBuddy、CodeBuddy），AI 在会话中直接调用工具查询，带**来源溯源**。
 
@@ -87,7 +87,7 @@ codex mcp add axon-knowledge -- /path/to/axon-mcp
 
 接入后 Axon 的建索引功能会自动扫描所有 Agent 的会话记录，将属于当前项目的对话蒸馏进图谱——**所有 Agent 共享同一张知识图谱**。
 
-接入后，AI 在会话中可调用六个工具：
+接入后，AI 在会话中可调用九个工具：
 
 | 工具 | 作用 |
 | --- | --- |
@@ -96,6 +96,9 @@ codex mcp add axon-knowledge -- /path/to/axon-mcp
 | `get_entity` | 查看某实体的全部 observations（事实）+ 关系 + 别名，支持别名与大小写不敏感匹配 |
 | `remember_knowledge` | 把本次对话学到的持久知识写回图谱（实体/关系），通过别名归一并入已有节点 |
 | `delete_entity` | 从图谱中删除一个实体及其所有关系，用于清理噪音或过期知识 |
+| `set_scope` | 锁定本次会话的图谱范围到指定命名空间，后续操作只在范围内进行 |
+| `clear_scope` | 清除范围锁定，恢复搜索全部命名空间 |
+| `move_entity` | 把一个实体从源命名空间移动到目标命名空间，用于纠正归属 |
 | `list_projects` | 列出所有已建图谱的命名空间（名称 + 实体数），并标出当前项目 |
 
 > **命名空间自动定位**：在项目根目录放一个 `.axon-project` 文件（内容为命名空间名，如 `gaia`），调用时省略 `project` 参数即可自动路由。支持从子目录向上查找。跨命名空间查询传逗号分隔的多个（`"gaia,gaiac"`），或 `"*"` 搜索全部。**省略 `project` 时默认搜当前项目 + `_global_`**（平台通用知识自动参与召回）。
