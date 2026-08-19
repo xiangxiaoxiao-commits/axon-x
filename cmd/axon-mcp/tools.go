@@ -15,7 +15,7 @@ import (
 
 // toolHandler owns everything a tool call needs: the data directory (where
 // graphs/ and graphcache/ live), config + secrets to build an embedder, and a
-// context for embedding calls. It is stateless across calls beyond that.
+// context for embedding calls.
 type toolHandler struct {
 	ctx     context.Context
 	dataDir string
@@ -24,6 +24,10 @@ type toolHandler struct {
 	// probe memoizes cloud-embedder availability so recall doesn't re-probe the
 	// network on every call.
 	probe *embed.ProbeCache
+	// activeScope holds the session-level namespace scope. When non-empty,
+	// search/remember/get_entity are restricted to these namespaces only.
+	// Set by set_scope, cleared by clear_scope.
+	activeScope []string
 }
 
 // toolDef is one entry in the tools/list response.
@@ -139,6 +143,43 @@ func (h *toolHandler) list() map[string]interface{} {
 					"required": []string{"name"},
 				},
 			},
+			{
+				Name: "set_scope",
+				Description: "锁定本次会话的知识图谱范围。设置后，search_knowledge/remember_knowledge/get_entity 只在指定命名空间内操作。" +
+					"用于聚焦特定项目避免干扰。用 clear_scope 恢复全量搜索。",
+				InputSchema: map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"projects": map[string]interface{}{
+							"type":        "array",
+							"items":       map[string]interface{}{"type": "string"},
+							"description": "要激活的命名空间列表，如 [\"gaia\", \"gaiac\"]",
+						},
+					},
+					"required": []string{"projects"},
+				},
+			},
+			{
+				Name:        "clear_scope",
+				Description: "清除会话范围锁定，恢复为默认搜索全部命名空间。",
+				InputSchema: map[string]interface{}{
+					"type":       "object",
+					"properties": map[string]interface{}{},
+				},
+			},
+			{
+				Name: "move_entity",
+				Description: "把一个实体从源命名空间移动到目标命名空间。用于纠正实体归属——比如把误写到 gaia 的实体移到 gaiac。",
+				InputSchema: map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"name": strProp("要移动的实体名"),
+						"from": strProp("源命名空间"),
+						"to":   strProp("目标命名空间"),
+					},
+					"required": []string{"name", "from", "to"},
+				},
+			},
 		},
 	}
 }
@@ -184,6 +225,12 @@ func (h *toolHandler) call(raw json.RawMessage) (*toolResult, error) {
 		return h.rememberKnowledge(p.Arguments)
 	case "delete_entity":
 		return h.deleteEntity(p.Arguments)
+	case "set_scope":
+		return h.setScope(p.Arguments)
+	case "clear_scope":
+		return h.clearScope()
+	case "move_entity":
+		return h.moveEntity(p.Arguments)
 	default:
 		return nil, fmt.Errorf("unknown tool %q", p.Name)
 	}
@@ -297,7 +344,10 @@ func (h *toolHandler) searchKnowledge(raw json.RawMessage) (*toolResult, error) 
 func (h *toolHandler) resolveSearchSlugs(project string) []string {
 	project = strings.TrimSpace(project)
 	if project == "" {
-		// Default: search ALL namespaces so knowledge is never missed.
+		// If a scope is active, use it; otherwise search all.
+		if len(h.activeScope) > 0 {
+			return h.activeScope
+		}
 		return h.namespaceDirs()
 	}
 	if project == "*" {
