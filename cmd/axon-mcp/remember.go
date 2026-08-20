@@ -61,6 +61,7 @@ func (h *toolHandler) rememberKnowledge(raw json.RawMessage) (*toolResult, error
 	// cache file (and .tmp) and clobber each other's knowledge.
 	source := fmt.Sprintf("mcp:%d-%s", time.Now().UnixMilli(), randSuffix())
 	var ents []graph.Entity
+	var filteredSnapshots int
 	for _, e := range a.Entities {
 		name := strings.TrimSpace(e.Name)
 		if name == "" {
@@ -68,12 +69,17 @@ func (h *toolHandler) rememberKnowledge(raw json.RawMessage) (*toolResult, error
 		}
 		var obs []string
 		for _, o := range e.Observations {
-			if o = strings.TrimSpace(o); o != "" {
-				obs = append(obs, o)
+			if o = strings.TrimSpace(o); o == "" {
+				continue
 			}
+			if isSnapshotObs(o) {
+				filteredSnapshots++
+				continue // reject snapshot observations at write time
+			}
+			obs = append(obs, o)
 		}
 		if len(obs) == 0 {
-			continue // an entity with no facts adds nothing durable
+			continue // an entity with no durable facts adds nothing
 		}
 		src := make([]string, len(obs))
 		for i := range src {
@@ -175,10 +181,16 @@ func (h *toolHandler) rememberKnowledge(raw json.RawMessage) (*toolResult, error
 		}
 	}
 
+	// Snapshot filter notice.
+	snapshotNotice := ""
+	if filteredSnapshots > 0 {
+		snapshotNotice = fmt.Sprintf("\n\n🗑 已过滤 %d 条快照类记录（特定 pipeline ID/镜像 tag/commit hash/部署状态等时效性内容不应进入知识图谱）。", filteredSnapshots)
+	}
+
 	return textResult(fmt.Sprintf(
-		"已记住 %d 个实体（%s）%s，写入项目 `%s` 的知识图谱。下次 search_knowledge / get_entity 即可召回。%s",
+		"已记住 %d 个实体（%s）%s，写入项目 `%s` 的知识图谱。下次 search_knowledge / get_entity 即可召回。%s%s",
 		len(ents), strings.Join(names, "、"),
-		relCountSuffix(len(rels)), a.Project, vagueWarning,
+		relCountSuffix(len(rels)), a.Project, vagueWarning, snapshotNotice,
 	)), nil
 }
 

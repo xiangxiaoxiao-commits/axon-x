@@ -16,8 +16,22 @@ import json
 import os
 import re
 import glob
+import platform
+import sys
 
-DATA_DIR = os.path.expanduser("~/Library/Application Support/axon")
+
+def resolve_data_dir():
+    """Resolve the axon data directory (cross-platform)."""
+    if sys.platform == "win32":
+        base = os.environ.get("APPDATA", os.path.expanduser("~\\AppData\\Roaming"))
+    elif sys.platform == "darwin":
+        base = os.path.expanduser("~/Library/Application Support")
+    else:
+        base = os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config"))
+    return os.path.join(base, "axon")
+
+
+DATA_DIR = resolve_data_dir()
 GC_DIR = os.path.join(DATA_DIR, "graphcache")
 
 # --- Snapshot detection patterns ---
