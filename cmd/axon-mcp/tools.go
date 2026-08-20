@@ -301,8 +301,13 @@ func (h *toolHandler) searchKnowledge(raw json.RawMessage) (*toolResult, error) 
 	var b strings.Builder
 	b.WriteString("> 以下知识来自历史对话蒸馏和手动记录，仅供参考。涉及具体实现细节时以代码为准；标注⚠️的条目超过90天可能已过时。\n\n")
 	anyHit := false
+	const maxTotalChars = 8000 // cap total output to avoid overwhelming the agent
 
 	for _, slug := range slugs {
+		if b.Len() >= maxTotalChars {
+			b.WriteString("\n> （结果已截断，如需更多请指定具体 project 参数缩小范围）\n")
+			break
+		}
 		g, err := retrieve.AssembleGraph(h.dataDir, slug)
 		if err != nil || len(g.Entities) == 0 {
 			continue

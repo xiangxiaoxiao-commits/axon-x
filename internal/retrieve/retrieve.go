@@ -194,21 +194,21 @@ func semanticSeeds(qv []float32, g *graph.Graph, minScore float32) []string {
 }
 
 // EntityKeywordHits returns the canonical names of entities whose name or any
-// alias appears literally in the text (case-insensitive substring), in graph
-// order.
+// alias appears literally in the text (case-insensitive substring). Names
+// shorter than 3 runes are skipped to avoid false positives on common words.
 func EntityKeywordHits(g *graph.Graph, text string) []string {
 	lt := strings.ToLower(text)
 	var hits []string
 	for _, e := range g.Entities {
 		n := strings.TrimSpace(e.Name)
-		if n == "" {
-			continue
+		if n == "" || len([]rune(n)) < 3 {
+			continue // skip very short names to avoid noise
 		}
 		matched := strings.Contains(lt, strings.ToLower(n))
 		if !matched {
 			for _, al := range e.Aliases {
 				al = strings.TrimSpace(al)
-				if al != "" && strings.Contains(lt, strings.ToLower(al)) {
+				if al != "" && len([]rune(al)) >= 3 && strings.Contains(lt, strings.ToLower(al)) {
 					matched = true
 					break
 				}
@@ -286,14 +286,24 @@ func chunkKeywordHits(chunks []graph.Chunk, text string) []graph.Chunk {
 	if len(terms) == 0 {
 		return nil
 	}
+	// Require a chunk to contain the majority of query terms (at least half,
+	// minimum 1) to be considered a keyword hit. This prevents single common
+	// words like "更新" from pulling in unrelated chunks.
+	threshold := len(terms) / 2
+	if threshold < 1 {
+		threshold = 1
+	}
 	var out []graph.Chunk
 	for _, ch := range chunks {
 		lc := strings.ToLower(ch.Text)
+		matched := 0
 		for _, t := range terms {
-			if strings.Contains(lc, t) {
-				out = append(out, ch)
-				break
+			if len([]rune(t)) >= 2 && strings.Contains(lc, t) {
+				matched++
 			}
+		}
+		if matched >= threshold {
+			out = append(out, ch)
 		}
 	}
 	return out
@@ -352,7 +362,8 @@ func RRFFuse(lists ...[]string) []string {
 	return fused
 }
 
-// QueryTerms lowercases and splits a query into de-duplicated tokens >= 2 chars.
+// QueryTerms lowercases and splits a query into de-duplicated tokens >= 2 chars,
+// filtering out common stop words that cause noise in keyword matching.
 func QueryTerms(text string) []string {
 	seen := map[string]bool{}
 	var out []string
@@ -361,10 +372,28 @@ func QueryTerms(text string) []string {
 		if len([]rune(f)) < 2 || seen[f] {
 			continue
 		}
+		if isStopWord(f) {
+			continue
+		}
 		seen[f] = true
 		out = append(out, f)
 	}
 	return out
+}
+
+// isStopWord returns true for common Chinese/English words that are too generic
+// to be useful as search terms and would cause false positive matches.
+func isStopWord(w string) bool {
+	switch w {
+	case "的", "了", "是", "在", "有", "和", "就", "不", "也", "都",
+		"这", "那", "要", "会", "对", "能", "把", "到", "从", "被",
+		"更新", "修改", "处理", "使用", "需要", "进行", "通过", "如何",
+		"查看", "检查", "确认", "获取", "设置", "添加", "删除", "创建",
+		"the", "is", "in", "to", "of", "and", "for", "on", "at",
+		"how", "what", "this", "that", "with", "from", "can", "do":
+		return true
+	}
+	return false
 }
 
 // lowerAll lowercases every element of a slice (normalizing entity names into
