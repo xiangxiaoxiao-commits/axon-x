@@ -112,12 +112,12 @@ Axon-x 把这些知识固化下来，让 AI 主动来查，而不是等你手动
 在项目根目录放一个 `.axon-project` 文件（内容为命名空间名），即可声明归属：
 
 ```bash
-echo "gaia" > ~/projects/monorepo-gaia/.axon-project
-echo "glite" > ~/projects/mono-glite/.axon-project
+echo "wanlian" > ~/projects/monorepo-gaia/.axon-project
+echo "wanlian" > ~/projects/mono-glite/.axon-project
 echo "axon" > ~/projects/axon/.axon-project
 ```
 
-- 同一命名空间可以对应多个目录（多仓库一个逻辑项目）
+- 同一命名空间可以对应多个目录（业务耦合深的多仓库用同一个命名空间，如万联业务域下的所有仓库统一用 `wanlian`）
 - `_global_` 命名空间存放跨项目的平台通用知识（部署规范、CI 约束等）
 - `search_knowledge` 默认搜索所有命名空间；可传 `project` 参数限定范围
 - `remember_knowledge` 写入时从 `.axon-project` 自动路由到正确命名空间
