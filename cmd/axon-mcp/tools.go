@@ -108,7 +108,7 @@ func (h *toolHandler) list() map[string]interface{} {
 								"properties": map[string]interface{}{
 									"name":         strProp("实体名"),
 									"type":         strProp("module|service|concept|decision|constraint"),
-									"observations": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "关于它的持久事实，一句话一条"},
+									"observations": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "关于它的明确事实陈述，一句话一条。要求：用确定性语言（'已决定X'/'必须Y'/'不能Z'），避免模糊词（可能/大概/也许）；如果是决策写明理由；如果是约束写明原因。"},
 									"aliases":      map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "别名（同一事物的其他叫法），没有就省略"},
 								},
 								"required": []string{"name", "observations"},
@@ -299,6 +299,7 @@ func (h *toolHandler) searchKnowledge(raw json.RawMessage) (*toolResult, error) 
 	}
 
 	var b strings.Builder
+	b.WriteString("> 以下知识来自历史对话蒸馏和手动记录，仅供参考。涉及具体实现细节时以代码为准；标注⚠️的条目超过90天可能已过时。\n\n")
 	anyHit := false
 
 	for _, slug := range slugs {

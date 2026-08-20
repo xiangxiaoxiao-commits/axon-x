@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"axon/internal/claudedata"
 	"axon/internal/graph"
@@ -95,7 +96,8 @@ func sessionTitleMap(projectSlug string) map[string]string {
 
 // renderSource resolves a chunk/observation source id to a display label,
 // mirroring the App's provenance rendering for code/task/obsidian prefixes and
-// session titles.
+// session titles. For MCP-written knowledge (mcp:<timestamp>-<rand>), shows
+// the age in days so the reader can judge timeliness.
 func renderSource(id string, titles map[string]string) string {
 	switch {
 	case strings.HasPrefix(id, "code:"):
@@ -104,11 +106,44 @@ func renderSource(id string, titles map[string]string) string {
 		return "任务 " + strings.TrimPrefix(id, "task:")
 	case strings.HasPrefix(id, "obsidian:"):
 		return "笔记 " + strings.TrimPrefix(id, "obsidian:")
+	case strings.HasPrefix(id, "mcp:"):
+		return "MCP写入" + ageFromMCPSource(id)
+	case strings.HasPrefix(id, "moved:"):
+		return "迁移"
 	}
 	if t := strings.TrimSpace(titles[id]); t != "" {
 		return t
 	}
 	return id
+}
+
+// ageFromMCPSource parses the timestamp from "mcp:<millis>-<rand>" and returns
+// a human-readable age string like " (3天前)" or " (>90天⚠️)".
+func ageFromMCPSource(id string) string {
+	// Format: mcp:1786602946922-0d231da5
+	parts := strings.SplitN(strings.TrimPrefix(id, "mcp:"), "-", 2)
+	if len(parts) == 0 {
+		return ""
+	}
+	ts := int64(0)
+	for _, c := range parts[0] {
+		if c >= '0' && c <= '9' {
+			ts = ts*10 + int64(c-'0')
+		} else {
+			break
+		}
+	}
+	if ts == 0 {
+		return ""
+	}
+	days := (time.Now().UnixMilli() - ts) / 86400000
+	if days <= 0 {
+		return " (今天)"
+	}
+	if days > 90 {
+		return fmt.Sprintf(" (%d天前⚠️)", days)
+	}
+	return fmt.Sprintf(" (%d天前)", days)
 }
 
 // obsSourceAt returns src[i] or "" when out of range (parallel-array safety for

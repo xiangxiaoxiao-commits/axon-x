@@ -153,10 +153,32 @@ func (h *toolHandler) rememberKnowledge(raw json.RawMessage) (*toolResult, error
 	for i, e := range ents {
 		names[i] = e.Name
 	}
+
+	// Quality check: warn if observations contain vague/uncertain language.
+	vagueWarning := ""
+	vagueWords := []string{"可能", "大概", "也许", "好像", "似乎", "应该是", "maybe", "probably", "might"}
+	for _, e := range ents {
+		for _, o := range e.Observations {
+			ol := strings.ToLower(o)
+			for _, w := range vagueWords {
+				if strings.Contains(ol, w) {
+					vagueWarning = "\n\n⚠️ 注意：部分 observation 措辞不够确定（含「" + w + "」等），知识图谱作为事实依据使用，建议改为明确陈述（如：'已决定X' / '必须Y' / '不能Z'）。"
+					break
+				}
+			}
+			if vagueWarning != "" {
+				break
+			}
+		}
+		if vagueWarning != "" {
+			break
+		}
+	}
+
 	return textResult(fmt.Sprintf(
-		"已记住 %d 个实体（%s）%s，写入项目 `%s` 的知识图谱。下次 search_knowledge / get_entity 即可召回。",
+		"已记住 %d 个实体（%s）%s，写入项目 `%s` 的知识图谱。下次 search_knowledge / get_entity 即可召回。%s",
 		len(ents), strings.Join(names, "、"),
-		relCountSuffix(len(rels)), a.Project,
+		relCountSuffix(len(rels)), a.Project, vagueWarning,
 	)), nil
 }
 
