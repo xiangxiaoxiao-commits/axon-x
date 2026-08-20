@@ -1,3 +1,5 @@
+//go:build !windows
+
 // Package term runs a real login shell behind a PTY so the app can host an
 // embedded terminal alongside the AI chat. Output is streamed to a callback
 // (wired to a Wails event); input, resize and close are driven from the UI.
