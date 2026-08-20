@@ -167,15 +167,49 @@ codex mcp add axon-knowledge -- /path/to/axon-mcp
 
 ### 让图谱越用越全
 
-1. **让 agent 主动写回** — 在项目指令文件里加一条：
+1. **让 agent 主动查/写/改** — 在项目指令文件（CLAUDE.md / Codex instructions / WorkBuddy rules）里加以下内容：
 
    ```markdown
    ## 项目知识图谱（axon-knowledge MCP）
 
-   - 开工前先用 search_knowledge 查既有决策和约束，不要臆测历史设计。
-   - 敲定非显然的持久知识后，用 remember_knowledge 写回。
-   - 关系要有方向：from=主语, to=宾语, label=动词。
-   - 不要写回临时调试、寒暄、能从代码直接看出的事实。
+   ### 查（动手前）
+
+   用 search_knowledge 查相关知识，query 用模块名、功能关键词或接口名。
+
+   - 图谱是参考，与代码冲突时以代码为准。⚠️标记（>90天）需验证时效性。
+   - 查无结果不代表没约束，正常继续。
+
+   ### 写（结论敲定后立即写，不攒不拖）
+
+   触发时机：
+   - "用 X 方案（因为 Y，放弃 Z）"→ 写
+   - "这里不能 W（因为会导致 V）"→ 写
+   - "A 调 B 的接口是 /path，字段含义是 ..."→ 写
+
+   规范：
+   - 一实体一概念（判断：两条事实如果会独立过时就拆开）
+   - observations 用断言：`已决定X（理由：Y）`/`必须X`/`不能X（因为Y）`
+   - 禁止：可能/大概/也许/好像
+   - 关系有方向，读成通顺的话：from=主语 —label(动词)→ to=宾语
+     - ✅ `gaia-lite —部署于→ sit-14`
+     - ❌ `sit-14 —部署→ gaia-lite`
+   - 给别名：`aliases: ["OrderService", "订单服务"]`
+
+   不写：pipeline/镜像tag/commit/部署状态（自动过滤）、临时调试、代码里能看到的事实、
+   通用技术常识、讨论中间态。
+
+   ### 改（发现过时知识）
+
+   delete_entity 删旧的 → remember_knowledge 写修正后的完整版本。不追加矛盾 observation。
+   归属错误用 move_entity 迁移。
+
+   ### 范围
+
+   通常不需要操作。用户明确说"只关注 X"时 set_scope(["wanlian"])，完成后 clear_scope。
+
+   ### 原则
+
+   只沉淀"代码里看不出来、忘了会重复踩坑"的知识。宁少而准。
    ```
 
 2. **定期建索引** — 增量蒸馏新会话，不重复烧 token。
