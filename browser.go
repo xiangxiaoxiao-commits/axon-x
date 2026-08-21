@@ -16,15 +16,21 @@ func (a *App) ListClaudeProjects() ([]claudedata.Project, error) {
 	return claudedata.ListProjects()
 }
 
-// ListClaudeSessions returns session summaries for a project, including all
-// agent sources (Claude Code, Codex, WorkBuddy, CodeBuddy).
+// ListClaudeSessions returns session summaries from all agents, merged and
+// sorted newest first. The projectSlug parameter is ignored for filtering
+// because namespace names don't match Claude Code's path-encoded directory
+// names. The GUI handles display filtering on its own.
 func (a *App) ListClaudeSessions(projectSlug string) ([]claudedata.SessionMeta, error) {
-	// Claude Code sessions (uses path-encoded slug directly).
-	claude, _ := claudedata.ListSessions(projectSlug)
-	// Codex and buddy sessions use named namespace slugs. Pass empty string to
-	// get ALL sessions from these agents (no filter), since the GUI already
-	// filters by the selected project in the sidebar.
+	// Claude Code: list ALL projects' sessions (slug-based dirs don't match namespaces).
+	var claude []claudedata.SessionMeta
+	projects, _ := claudedata.ListProjects()
+	for _, p := range projects {
+		sessions, _ := claudedata.ListSessions(p.Slug)
+		claude = append(claude, sessions...)
+	}
+	// Codex sessions.
 	codex, _ := claudedata.ListCodexSessions("")
+	// WorkBuddy + CodeBuddy sessions.
 	buddy, _ := claudedata.ListBuddySessions("")
 
 	all := make([]claudedata.SessionMeta, 0, len(claude)+len(codex)+len(buddy))
