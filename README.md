@@ -1,12 +1,28 @@
-# Axon-x
+# Axon-x — AI Agent 的项目记忆层
 
-> 让 AI 在动手前，先读懂你这个项目的**业务背景**和**代码结构**。
+[![Release](https://img.shields.io/github/v/release/xiangxiaoxiao-commits/axon-x)](https://github.com/xiangxiaoxiao-commits/axon-x/releases/latest)
+[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-blue)]()
+[![MCP](https://img.shields.io/badge/protocol-MCP%20(Model%20Context%20Protocol)-green)]()
 
-Axon-x 是一个跨平台桌面应用（macOS + Windows），它把散落在历史对话、代码仓库、Obsidian 笔记里的"隐性项目知识"，沉淀成**按命名空间隔离的知识图谱**，再通过 **MCP（Model Context Protocol）** 暴露给所有主流 AI 编码助手（Claude Code、OpenAI Codex、WorkBuddy、CodeBuddy）。AI 每次干活时，都能自动召回"这个项目以前的设计决策、踩过的坑、接口约定、业务约束"，而不是每次从零开始。
+> **让 AI 编码助手拥有项目长期记忆** — 设计决策、业务约束、踩过的坑，查一次全想起来。
 
-它的角色是**给 agent 用的上下文增强器**：你在 GUI 里养知识图谱，一键接入所有 Agent，agent 就懂你的项目。
+Axon-x 是一个**跨平台知识图谱管理工具**，专为 AI 编码助手（Claude Code / OpenAI Codex / WorkBuddy / CodeBuddy）打造。它从历史对话、代码仓库、笔记中自动提炼项目知识，通过 **MCP（Model Context Protocol）** 让 AI Agent 在每次会话中都能查询和积累项目知识——**解决 AI 编码时"不懂上下文、反复踩坑"的核心痛点**。
 
-一句话：**用得越多越懂你的项目。**
+### 核心能力
+
+- 🧠 **知识图谱** — 实体 + 有向关系 + 原文溯源，比散落的文档和记忆更结构化
+- 🔌 **MCP 一键接入** — 支持 Claude Code、Codex、WorkBuddy、CodeBuddy，一键注册
+- 🔍 **HybridRAG 召回** — 语义 + 关键词双通道，自动召回相关知识
+- ✍️ **越用越懂** — Agent 在对话中学到新知识后实时写回图谱，形成闭环
+- 🛡️ **质量把关** — 自动过滤快照数据、模糊措辞警告、方向性约束
+- 📦 **多 Agent 会话归档** — 自动蒸馏 4 种 Agent 的历史对话为结构化知识
+
+### 适用场景
+
+- 多人协作的大型项目，新人接手时 AI 能快速了解历史决策
+- 微服务/多仓库架构，跨服务的接口约定和依赖关系不丢失
+- 长期迭代的项目，三个月前的设计决策 AI 还能想起来
+- 同时用多个 AI 工具，知识在所有 Agent 间共享
 
 ---
 
