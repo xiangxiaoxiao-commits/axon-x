@@ -45,7 +45,7 @@ const (
 const extractPrompt = `你是一个知识提炼器。从下面的对话中，只提炼「下次处理这个项目还用得上」的持久知识，构建知识图谱。
 
 【只保留有价值的】
-- 项目/模块/服务/概念，及它们之间的关系（依赖、调用、属于等）
+- 项目/模块/服务/概念，及它们之间明确存在的关系（依赖、调用、属于等）
 - 关键决策及其理由（为什么这么设计/选型）
 - 踩过的坑、约束、教训（如"这里不能用X，因为Y"）
 - 稳定事实：接口约定、数据结构、依赖关系
@@ -58,6 +58,13 @@ const extractPrompt = `你是一个知识提炼器。从下面的对话中，只
 
 宁可少而准，不要多而杂。若这段对话没有值得入图的知识，返回空数组。
 
+【关系抽取的严格规则】
+- 只有对话中有明确证据、且两个实体之间确实存在直接业务/技术关系时才输出 relation。
+- 不要因为两个实体同时出现、属于同一项目/模块，或可以“推测有关”就连边。
+- 无法确认关系类型、方向或关系强度时，宁可不输出关系；实体本身仍可保留。
+- 不要为了让图谱连通、完整或好看而补关系。关系数量少是正常的。
+- 如果确实存在“可能有关但证据不足”的上下文关联，只有在它对人工探索有帮助时才输出，并将 inferred 设为 true；这类关系必须使用虚线展示，不能当作事实。
+
 【实体别名】
 - 为每个实体给出 aliases：同一事物的其他叫法（全称/简称/中英文名）。
 - 例如「支付服务」的 aliases 可能是 ["PaymentService","payment"]。
@@ -65,7 +72,7 @@ const extractPrompt = `你是一个知识提炼器。从下面的对话中，只
 - 没有别名就给空数组 []。
 
 只输出如下 JSON，不要任何解释：
-{"entities":[{"name":"实体名","type":"module|service|concept|decision|constraint","aliases":["别名"],"observations":["关于它的事实"]}],"relations":[{"from":"实体A","to":"实体B","label":"关系"}]}`
+{"entities":[{"name":"实体名","type":"module|service|concept|decision|constraint","aliases":["别名"],"observations":["关于它的事实"]}],"relations":[{"from":"实体A","to":"实体B","label":"关系","inferred":false}]}`
 
 // Namespace is one named knowledge-graph namespace returned by ListNamespaces.
 type Namespace struct {
@@ -511,13 +518,14 @@ func focusPrompt(term string) string {
 
 只提炼与这个主题【直接相关】的持久知识，构建一张聚焦的小图。与主题无关的一律不要。
 
-保留：与「` + term + `」相关的模块/概念/服务、它们的关系、关键决策及理由、踩过的坑与约束。
+保留：与「` + term + `」直接相关的模块/概念/服务、明确存在的关系、关键决策及理由、踩过的坑与约束。
+关系必须有原文明确证据；仅仅同时出现、同属一个项目，或可以推测有关，都不要连实线。确有探索价值但证据不足的关联可输出 inferred=true（虚线），但不要把它当作事实。无法确认且无探索价值时只保留实体和事实，宁缺毋滥。
 丢弃：寒暄、日志、报错堆栈、一次性操作、与主题无关的内容。
 
 宁可少而准。若这段对话与「` + term + `」无关，返回空数组。
 
 只输出 JSON，不要解释：
-{"entities":[{"name":"实体名","type":"module|service|concept|decision|constraint","observations":["事实"]}],"relations":[{"from":"A","to":"B","label":"关系"}]}`
+{"entities":[{"name":"实体名","type":"module|service|concept|decision|constraint","observations":["事实"]}],"relations":[{"from":"A","to":"B","label":"关系","inferred":false}]}`
 }
 
 // BuildGraphFocused returns a term-focused subgraph assembled from the cache —
@@ -584,8 +592,9 @@ const articlePrompt = `下面是从一个项目的历史对话里提炼出的结
 
 要求：
 - 用小标题分段（## 概览、## 核心模块、## 关键决策与理由、## 踩过的坑与约束 等，按实际内容调整）
-- 把零散事实串成连贯的叙述，说明模块之间的关系
+- 把零散事实串成连贯的叙述；只有给定数据明确支持时才说明模块之间的关系
 - 忠于给定知识，不要编造没有的内容
+- 不要为了行文连贯而臆测实体之间的关系；没有明确关系就分开描述
 - 用 Markdown 输出，正文为主，避免大段罗列
 
 只输出文章正文。`

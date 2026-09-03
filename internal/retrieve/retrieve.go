@@ -228,6 +228,11 @@ func expandAlongRelations(g *graph.Graph, hit map[string]bool, hops int) {
 	for h := 0; h < hops; h++ {
 		frontier := map[string]bool{}
 		for _, r := range g.Relations {
+			// Inferred/contextual edges are visual hints, not evidence for
+			// expanding factual recall.
+			if r.Inferred {
+				continue
+			}
 			from, to := strings.ToLower(r.From), strings.ToLower(r.To)
 			// Only expand forward: if From is hit, pull in To.
 			// Do NOT expand backward (hitting To should not pull in From),

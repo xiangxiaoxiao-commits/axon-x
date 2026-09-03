@@ -65,22 +65,49 @@ func (g *Graph) Merge(entities []Entity, relations []Relation) {
 		}
 	}
 
+	// Resolve relation endpoints through the same name/alias index used for
+	// entities. This prevents alias spellings from creating parallel edges and
+	// drops model hallucinations that point at entities which were not emitted.
+	canonical := make(map[string]string, len(g.Entities)*2)
+	for _, e := range g.Entities {
+		for _, k := range entityKeys(e) {
+			canonical[k] = e.Name
+		}
+	}
+	resolve := func(name string) (string, bool) {
+		c, ok := canonical[normKey(name)]
+		return c, ok
+	}
+
 	// De-dupe relations by (from,to,label), normalized.
 	seen := make(map[string]bool, len(g.Relations))
-	for _, r := range g.Relations {
-		seen[relKey(r)] = true
-	}
-	for _, nr := range relations {
-		if normKey(nr.From) == "" || normKey(nr.To) == "" {
+	clean := make([]Relation, 0, len(g.Relations)+len(relations))
+	for _, r := range append(g.Relations, relations...) {
+		from, fromOK := resolve(r.From)
+		to, toOK := resolve(r.To)
+		if !fromOK || !toOK || from == to {
 			continue
 		}
-		k := relKey(nr)
+		r.From, r.To = from, to
+		k := relKey(r)
 		if seen[k] {
+			// Prefer an explicit relation when the same edge was previously
+			// stored as an inferred hint.
+			if r.Inferred {
+				continue
+			}
+			for i := range clean {
+				if relKey(clean[i]) == k && clean[i].Inferred {
+					clean[i] = r
+					break
+				}
+			}
 			continue
 		}
 		seen[k] = true
-		g.Relations = append(g.Relations, nr)
+		clean = append(clean, r)
 	}
+	g.Relations = clean
 }
 
 // entityKeys returns the normalized lookup keys for an entity: its name plus

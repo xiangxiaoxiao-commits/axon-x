@@ -21,7 +21,7 @@
 
   let ready = false;
   let showAbout = false;
-  onMount(async () => { ready = true; await loadNamespaces(); await loadProjects(); });
+  onMount(async () => { ready = true; await loadProjects(); await loadNamespaces(); });
   function refreshProviders() {}
 
   function go(v: View) { $activeView = v; }
@@ -30,6 +30,13 @@
     // Single-select: each namespace is an independent graph, click to switch.
     selectedNamespaces.set([name]);
     currentProject.set(name);
+  }
+
+  function chooseProject(slug: string) {
+    currentProject.set(slug);
+    // A project picked explicitly should drive the graph. Clear the optional
+    // namespace override so GraphView loads this project's graph.
+    selectedNamespaces.set([]);
   }
 </script>
 
@@ -47,6 +54,13 @@
           {/each}
         </div>
         <div class="ns-pick">
+          <label class="proj-pick">
+            <span class="proj-label">项目</span>
+            <select value={$currentProject} on:change={(e) => chooseProject((e.currentTarget as HTMLSelectElement).value)}>
+              <option value="">请选择项目</option>
+              {#each $projects as p}<option value={p.slug}>{p.path}</option>{/each}
+            </select>
+          </label>
           <span class="ns-label">图谱</span>
           <div class="ns-tags">
             {#each $namespaces as ns}
@@ -114,6 +128,19 @@
     display: flex; flex-direction: column; gap: 4px;
     padding: 10px 12px; border-top: 1px solid var(--border);
   }
+  .proj-pick {
+    display: flex; flex-direction: column; gap: 4px;
+    padding-bottom: 8px; margin-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+  }
+  .proj-label { font-size: 11px; color: var(--text-muted); font-family: var(--font-mono); }
+  .proj-pick select {
+    width: 100%; min-width: 0;
+    background: var(--bg-elevated); color: var(--text-primary);
+    border: 1px solid var(--border); border-radius: var(--radius-control);
+    font-family: var(--font-mono); font-size: 11px; padding: 4px 6px; outline: none;
+  }
+  .proj-pick select:focus { border-color: var(--accent); }
   .ns-label { font-size: 11px; color: var(--text-muted); font-family: var(--font-mono); }
   .ns-tags { display: flex; flex-wrap: wrap; gap: 4px; }
   .ns-tag {

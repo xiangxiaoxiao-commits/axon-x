@@ -43,7 +43,10 @@ func ReadSession(projectSlug, sessionID string) ([]SessionMessage, error) {
 	if err != nil {
 		return nil, err
 	}
-	path := filepath.Join(root, "projects", filepath.Base(projectSlug), filepath.Base(sessionID)+".jsonl")
+	path := findClaudeSessionFile(root, projectSlug, sessionID)
+	if path == "" {
+		return nil, fmt.Errorf("open session: transcript %q not found", sessionID)
+	}
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("open session: %w", err)
@@ -86,7 +89,10 @@ func ReadProgress(projectSlug, sessionID string) (SessionProgress, error) {
 	if err != nil {
 		return SessionProgress{}, err
 	}
-	path := filepath.Join(root, "projects", filepath.Base(projectSlug), filepath.Base(sessionID)+".jsonl")
+	path := findClaudeSessionFile(root, projectSlug, sessionID)
+	if path == "" {
+		return SessionProgress{}, fmt.Errorf("open session: transcript %q not found", sessionID)
+	}
 	f, err := os.Open(path)
 	if err != nil {
 		return SessionProgress{}, fmt.Errorf("open session: %w", err)
@@ -125,6 +131,31 @@ func ReadProgress(projectSlug, sessionID string) (SessionProgress, error) {
 		return p, fmt.Errorf("scan session: %w", err)
 	}
 	return p, nil
+}
+
+// findClaudeSessionFile checks the traditional top-level location first, then
+// nested subagent directories. Matching the exact basename avoids confusing a
+// parent UUID with another filename that merely contains it.
+func findClaudeSessionFile(root, projectSlug, sessionID string) string {
+	projectDir := filepath.Join(root, "projects", filepath.Base(projectSlug))
+	name := filepath.Base(sessionID) + ".jsonl"
+	direct := filepath.Join(projectDir, name)
+	if info, err := os.Stat(direct); err == nil && !info.IsDir() {
+		return direct
+	}
+
+	var found string
+	_ = filepath.Walk(projectDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return nil
+		}
+		if info.Name() == name {
+			found = path
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	return found
 }
 
 // extractText handles content that is either a JSON string or an array of

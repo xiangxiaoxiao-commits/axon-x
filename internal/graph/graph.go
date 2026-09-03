@@ -37,6 +37,9 @@ type Relation struct {
 	From  string `json:"from"`
 	To    string `json:"to"`
 	Label string `json:"label"` // e.g. "依赖", "调用", "属于"
+	// Inferred marks a weak/contextual association. It is shown as a dashed
+	// edge, but recall must not treat it as a factual relation by default.
+	Inferred bool `json:"inferred,omitempty"`
 }
 
 // Graph is one project's knowledge graph.

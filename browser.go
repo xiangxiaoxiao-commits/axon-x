@@ -25,13 +25,13 @@ func (a *App) ListClaudeSessions(projectSlug string) ([]claudedata.SessionMeta, 
 	var claude []claudedata.SessionMeta
 	projects, _ := claudedata.ListProjects()
 	for _, p := range projects {
-		sessions, _ := claudedata.ListSessions(p.Slug)
+		sessions, _ := claudedata.ListAllSessions(p.Slug)
 		claude = append(claude, sessions...)
 	}
 	// Codex sessions.
 	codex, _ := claudedata.ListCodexSessions("")
 	// WorkBuddy + CodeBuddy sessions.
-	buddy, _ := claudedata.ListBuddySessions("")
+	buddy, _ := claudedata.ListAllBuddySessions("")
 
 	all := make([]claudedata.SessionMeta, 0, len(claude)+len(codex)+len(buddy))
 	all = append(all, claude...)

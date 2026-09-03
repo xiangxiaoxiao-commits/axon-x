@@ -184,6 +184,7 @@ export namespace graph {
 	    from: string;
 	    to: string;
 	    label: string;
+	    inferred: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new Relation(source);
@@ -194,6 +195,7 @@ export namespace graph {
 	        this.from = source["from"];
 	        this.to = source["to"];
 	        this.label = source["label"];
+	        this.inferred = source["inferred"] ?? false;
 	    }
 	}
 	export class Graph {
@@ -759,4 +761,3 @@ export namespace task {
 	}
 
 }
-

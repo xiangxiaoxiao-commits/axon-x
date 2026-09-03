@@ -49,9 +49,20 @@ type buddyContentBlock struct {
 // ListBuddySessions returns all WorkBuddy + CodeBuddy sessions as SessionMeta.
 // If projectSlug is non-empty, filters by .axon-project resolution.
 func ListBuddySessions(projectSlug string) ([]SessionMeta, error) {
+	return listBuddySessions(projectSlug, false)
+}
+
+// ListAllBuddySessions includes nested subagent transcripts for the session
+// browser. Knowledge indexing continues to use ListBuddySessions so parent and
+// subagent content are not both distilled.
+func ListAllBuddySessions(projectSlug string) ([]SessionMeta, error) {
+	return listBuddySessions(projectSlug, true)
+}
+
+func listBuddySessions(projectSlug string, recursive bool) ([]SessionMeta, error) {
 	var all []SessionMeta
 	for _, agent := range buddyAgents {
-		sessions, err := listBuddyAgentSessions(agent, projectSlug)
+		sessions, err := listBuddyAgentSessions(agent, projectSlug, recursive)
 		if err != nil {
 			continue // agent not installed, skip
 		}
@@ -61,7 +72,7 @@ func ListBuddySessions(projectSlug string) ([]SessionMeta, error) {
 	return all, nil
 }
 
-func listBuddyAgentSessions(agent buddyAgent, projectSlug string) ([]SessionMeta, error) {
+func listBuddyAgentSessions(agent buddyAgent, projectSlug string, recursive bool) ([]SessionMeta, error) {
 	root, err := buddyRoot(agent)
 	if err != nil {
 		return nil, err
@@ -78,12 +89,8 @@ func listBuddyAgentSessions(agent buddyAgent, projectSlug string) ([]SessionMeta
 			continue
 		}
 		pdir := filepath.Join(projDir, projEntry.Name())
-		files, _ := os.ReadDir(pdir)
-		for _, f := range files {
-			if !strings.HasSuffix(f.Name(), ".jsonl") {
-				continue
-			}
-			fpath := filepath.Join(pdir, f.Name())
+		files, _ := sessionFiles(pdir, recursive)
+		for _, fpath := range files {
 			meta := scanBuddyMeta(fpath, agent)
 			if meta.ID == "" {
 				continue

@@ -42,11 +42,13 @@ export async function loadNamespaces(): Promise<void> {
     const list: NamespaceInfo[] = await ListNamespaces();
     namespaces.set(list);
     const current = get(selectedNamespaces);
-    if (current.length === 0 && list.length > 0) {
+    if (current.length === 0 && !get(currentProject) && list.length > 0) {
       // Default: select the first non-global namespace, or just the first.
       const first = list.find((ns) => ns.name !== "_global_") || list[0];
       selectedNamespaces.set([first.name]);
-      currentProject.set(first.name);
+      // Keep project selection independent from graph namespace selection.
+      // The app may already have selected a Claude project; in that case the
+      // project picker must not be overwritten by the namespace bootstrap.
     }
   } catch (e) {
     console.error("load namespaces", e);

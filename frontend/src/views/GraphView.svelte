@@ -65,7 +65,7 @@
     x: number; y: number; vx: number; vy: number;
     r: number; fixed: boolean; i: number;
   };
-  type Edge = { a: number; b: number; label: string };
+  type Edge = { a: number; b: number; label: string; inferred: boolean };
   let nodes: Node[] = [];
   let edges: Edge[] = [];
   const W = 900, H = 640;
@@ -258,7 +258,11 @@
       const ai = idx.get(r.from), bi = idx.get(r.to);
       if (ai === undefined || bi === undefined || ai === bi) continue;
       const key = ai < bi ? `${ai}-${bi}` : `${bi}-${ai}`;
-      if (!emap.has(key)) emap.set(key, { a: ai, b: bi, label: r.label });
+      const prior = emap.get(key);
+      // If both forms exist, the explicit relation wins over the weak hint.
+      if (!prior || (prior.inferred && !r.inferred)) {
+        emap.set(key, { a: ai, b: bi, label: r.label, inferred: !!r.inferred });
+      }
     }
     edges = [...emap.values()];
     startSim();
@@ -388,7 +392,7 @@
   // Edge endpoints resolved to live node positions (reactive on nodes).
   $: edgeViews = edges.map((e) => {
     const a = nodes[e.a], b = nodes[e.b];
-    return a && b ? { a: a.name, b: b.name, label: e.label, x1: a.x, y1: a.y, x2: b.x, y2: b.y } : null;
+    return a && b ? { a: a.name, b: b.name, label: e.label, inferred: e.inferred, x1: a.x, y1: a.y, x2: b.x, y2: b.y } : null;
   }).filter((x): x is NonNullable<typeof x> => x !== null);
 
   // Legend: only the types actually visible right now.
@@ -586,7 +590,7 @@
         <!-- edges -->
         {#each edgeViews as e (e.a + '|' + e.b)}
           <line x1={e.x1} y1={e.y1} x2={e.x2} y2={e.y2}
-            class="axon" class:fire={firing === e.a || firing === e.b} class:hot={edgeHot(e.a, e.b)} />
+            class="axon" class:inferred={e.inferred} class:fire={firing === e.a || firing === e.b} class:hot={edgeHot(e.a, e.b)} />
         {/each}
         {#each edgeViews as e (e.a + '|' + e.b)}
           {#if e.label && edgeHot(e.a, e.b)}
@@ -709,6 +713,7 @@
   .empty-scroll { position: absolute; inset: 0; overflow-y: auto; }
 
   .axon { stroke: var(--border); stroke-width: 1.2; }
+  .axon.inferred { stroke-dasharray: 4 4; opacity: .58; }
   .axon.hot { stroke: #FDE68A; stroke-width: 1.6; }
   .axon.fire { stroke: #FBBF24; stroke-width: 3; filter: drop-shadow(0 0 4px #FBBF24); }
   .axon-label { fill: var(--text-muted); font-size: 9px; text-anchor: middle; }

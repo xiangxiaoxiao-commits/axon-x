@@ -26,32 +26,42 @@ type rawEvent struct {
 // rawMessage is the subset of an assistant event's "message" object we read: the
 // model id that produced the reply.
 type rawMessage struct {
-	Model string `json:"model"`
+	Model   string          `json:"model"`
+	Content json.RawMessage `json:"content"`
 }
 
 // ListSessions returns session summaries for a project, newest first.
 func ListSessions(projectSlug string) ([]SessionMeta, error) {
+	return listSessions(projectSlug, false)
+}
+
+// ListAllSessions returns every Claude Code transcript in a project, including
+// nested subagent transcripts. It is intended for the session browser; graph
+// indexing deliberately keeps using ListSessions so subagent work is not
+// distilled a second time alongside its parent session.
+func ListAllSessions(projectSlug string) ([]SessionMeta, error) {
+	return listSessions(projectSlug, true)
+}
+
+func listSessions(projectSlug string, recursive bool) ([]SessionMeta, error) {
 	root, err := Root()
 	if err != nil {
 		return nil, err
 	}
 	dir := filepath.Join(root, "projects", filepath.Base(projectSlug))
-	files, err := os.ReadDir(dir)
+	files, err := sessionFiles(dir, recursive)
 	if err != nil {
 		return nil, fmt.Errorf("read project dir: %w", err)
 	}
 
 	out := make([]SessionMeta, 0)
-	for _, f := range files {
-		if !strings.HasSuffix(f.Name(), ".jsonl") {
-			continue
-		}
-		info, err := f.Info()
+	for _, path := range files {
+		info, err := os.Stat(path)
 		if err != nil {
 			continue
 		}
-		id := strings.TrimSuffix(f.Name(), ".jsonl")
-		title, msgs, cwd, model := scanTitleAndCount(filepath.Join(dir, f.Name()))
+		id := strings.TrimSuffix(filepath.Base(path), ".jsonl")
+		title, msgs, cwd, model := scanTitleAndCount(path)
 		out = append(out, SessionMeta{
 			ID:           id,
 			ProjectSlug:  projectSlug,
@@ -67,6 +77,34 @@ func ListSessions(projectSlug string) ([]SessionMeta, error) {
 	return out, nil
 }
 
+func sessionFiles(dir string, recursive bool) ([]string, error) {
+	if recursive {
+		var files []string
+		err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+			if !info.IsDir() && strings.HasSuffix(info.Name(), ".jsonl") {
+				files = append(files, path)
+			}
+			return nil
+		})
+		return files, err
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	files := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".jsonl") {
+			files = append(files, filepath.Join(dir, entry.Name()))
+		}
+	}
+	return files, nil
+}
+
 // scanTitleAndCount streams a session file to pull the latest ai-title, count
 // user/assistant turns, capture the working directory, and note the last real
 // model that answered — all without loading the whole file into memory.
@@ -77,7 +115,7 @@ func scanTitleAndCount(path string) (title string, count int, cwd, model string)
 	}
 	defer f.Close()
 
-	var lastPrompt string
+	var firstPrompt, lastPrompt string
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
 	for sc.Scan() {
@@ -99,6 +137,12 @@ func scanTitleAndCount(path string) (title string, count int, cwd, model string)
 			}
 		case "user":
 			count++
+			if firstPrompt == "" && len(ev.Message) > 0 {
+				var m rawMessage
+				if json.Unmarshal(ev.Message, &m) == nil {
+					firstPrompt = extractText(m.Content)
+				}
+			}
 		case "assistant":
 			count++
 			// Track the last non-synthetic model that produced a reply. Synthetic
@@ -115,6 +159,9 @@ func scanTitleAndCount(path string) (title string, count int, cwd, model string)
 	// was generated yet, so short/new sessions still show something meaningful.
 	if title == "" {
 		title = firstLine(lastPrompt, 60)
+	}
+	if title == "" {
+		title = firstLine(firstPrompt, 60)
 	}
 	return title, count, cwd, model
 }

@@ -31,6 +31,7 @@ type codexSessionEntry struct {
 
 // codexSessionMeta is the payload of a session_meta entry.
 type codexSessionMeta struct {
+	ID        string `json:"id"`
 	SessionID string `json:"session_id"`
 	Cwd       string `json:"cwd"`
 }
@@ -118,7 +119,10 @@ func scanCodexMeta(path string) SessionMeta {
 		case "session_meta":
 			var meta codexSessionMeta
 			_ = json.Unmarshal(entry.Payload, &meta)
-			sessionID = meta.SessionID
+			sessionID = meta.ID
+			if sessionID == "" {
+				sessionID = meta.SessionID
+			}
 			cwd = meta.Cwd
 		case "response_item":
 			msgs++
