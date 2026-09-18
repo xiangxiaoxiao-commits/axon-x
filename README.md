@@ -15,7 +15,9 @@ Axon-x 是一个**跨平台知识图谱管理工具**，专为 AI 编码助手�
 - 🔌 **MCP 一键接入** — 支持 Claude Code、Codex、WorkBuddy、CodeBuddy，一键注册
 - 🔍 **HybridRAG 召回** — 语义 + 关键词双通道，自动召回相关知识
 - ✍️ **越用越懂** — Agent 在对话中学到新知识后实时写回图谱，形成闭环
-- 🛡️ **质量把关** — 自动过滤快照数据、模糊措辞警告、方向性约束
+- 🚦 **质量把关** — 自动过滤快照数据、模糊措辞警告、方向性约束
+- 🧾 **可治理** — 每条事实带状态与置信度，自动检测互相冲突的断言，图谱有健康度评分
+- 🤝 **知识包共享** — 一个命名空间导出成单个文件交给同事，本地路径 / 密钥 / 账号等信息自动剪除
 - 📦 **多 Agent 会话归档** — 自动蒸馏 4 种 Agent 的历史对话为结构化知识
 
 ### 适用场景
@@ -24,6 +26,7 @@ Axon-x 是一个**跨平台知识图谱管理工具**，专为 AI 编码助手�
 - 微服务/多仓库架构，跨服务的接口约定和依赖关系不丢失
 - 长期迭代的项目，三个月前的设计决策 AI 还能想起来
 - 同时用多个 AI 工具，知识在所有 Agent 间共享
+- 团队交接：把某个项目的知识整理成知识包发给同事，导入即用，不必重读历史对话
 
 ---
 
@@ -141,6 +144,35 @@ echo "axon" > ~/projects/axon/.axon-project
 
 ---
 
+## 知识共享（导出 / 导入）
+
+图谱是私有的，但知识可以有限度地流动：把一个命名空间导出成单个文件交给同事，
+对方导入后即可复用你整理好的决策、约束与接口约定。
+
+**导出只带走知识本体。** 原始对话片段、向量、来源会话 ID、审核与剔除历史都不会离开本机——
+它们描述的是你自己的机器和工作过程，不构成共享内容。
+
+**自动剪除个人信息。** 导出时按规则去掉：
+
+| 剪除内容 | 处理方式 |
+| --- | --- |
+| 本地绝对路径（家目录 / 盘符 / UNC / 临时目录） | 只保留最后一级名字：`/Users/me/projects/mono-glite` → `<本地路径>/mono-glite` |
+| API key、token、JWT | 替换为 `<已脱敏>` |
+| 连接串内嵌密码、`password=` 等字段值 | 保留字段名，值替换 |
+| 邮箱、手机号、账号 / 工号、UUID 与会话 ID、私网地址 | 替换为对应占位符 |
+
+两档级别：**标准**去个人与机器信息；**严格**额外去工单号、内部主机名与端口。
+导出前可先预览：每类规则命中多少次、逐条「脱敏前 → 脱敏后」的真实片段、
+哪些内容不随文件走、哪些知识因剪除而损失。
+
+**导入不破坏任何东西。** 知识包写成一份独立知识（`import:<内容指纹>`），不覆盖、不修改你已有的任何内容；
+同一份文件重复导入是幂等的，也可以随时整包移除。导入时默认在本机重新生成向量，让语义召回同样生效。
+
+**跨平台。** 同一份文件在 macOS 与 Windows 上算出相同的内容指纹；文件名按两端文件系统规则生成，
+导入也容忍 UTF-8 BOM 与 CRLF 行尾。导出全程不影响本地图谱（只读操作）。
+
+---
+
 ## 接入 AI Agent（MCP）
 
 在 **设置 → 接入 AI Agent** 里点**「一键接入所有 Agent」**即可。
@@ -247,9 +279,9 @@ codex mcp add axon-knowledge -- /path/to/axon-mcp
 
 界面四个入口——**知识**、**会话**、**终端**、**设置**：
 
-- **知识图谱**：力导向可视化，按命名空间切换查看；支持节点交互、事实编辑、实体删除。
+- **知识图谱**：力导向可视化，按命名空间切换查看；支持节点交互、事实编辑、实体删除；健康度面板给出可信 / 候选 / 过期 / 冲突事实的统计，并可撤销最近一次审核。
 - **建索引**：从代码建图 / 从历史对话蒸馏 / 吸收 Obsidian。支持 Claude Code、Codex、WorkBuddy、CodeBuddy 四种 Agent 的会话；会话按自己记录的 `cwd` 归属到最近的 `.axon-project` 命名空间（一个命名空间可横跨多个仓库目录），开始前会先报告发现多少会话、多少会话未归属任何命名空间。
-- **会话浏览**：所有 Agent 的历史会话按工作目录分组展示，带 model 标签（Opus / GPT / WorkBuddy 等）；详情页展示最后进度；点「▶ 恢复」在内置终端新开标签恢复会话。
+- **会话浏览**：所有 Agent 的历史会话按工作目录分组展示，带 model 标签（Opus / GPT / WorkBuddy 等）；详情页展示最后进度；点「▶ 恢复」在内置终端新开标签恢复会话。几百个会话首次读取数秒，之后靠元数据缓存在毫秒级打开。
 - **会话溯源与知识剔除**：看到每个会话产出了哪些知识；对噪音知识「✕ 剔除」，重建索引也不会回来。
 - **导出 / 导入知识图谱**：把一个命名空间的知识整理成单个 `<命名空间>.axon-graph.json` 交给同事。导出**只带走知识本体**（实体、事实、关系），原始对话、向量、来源会话 ID、审核与剔除历史都不出本机；并对本地绝对路径、密钥凭据、邮箱手机、账号 ID、内网地址自动脱敏，规则可切换「标准 / 严格」，导出前可逐条预览命中次数与「脱敏前 → 脱敏后」的真实片段。导入写入一份独立知识（`import:<内容指纹>`），**不覆盖**任何既有内容、可整包移除。Mac 与 Windows 之间可互相导入（文件名、UTF-8/BOM、CRLF 均已兼容）。导出全程不影响本地图谱。
 - **多标签内置终端**：PTY 驱动的真实 shell，多个会话在 app 内并排跑。
@@ -282,9 +314,10 @@ codex mcp add axon-knowledge -- /path/to/axon-mcp
 
 | 模块 | 职责 |
 | --- | --- |
-| `graph` | 知识图谱模型：实体 / 有向关系 / 别名归一 / 溯源 / embedding |
+| `graph` | 知识图谱模型：实体 / 有向关系 / 别名归一 / 溯源 / embedding；断言治理（状态、置信度、有效期）、冲突检测、健康度、可移植知识包 |
 | `retrieve` | 召回核心：HybridRAG 双通道 + RRF 融合 + 正向关系扩展 |
-| `claudedata` | 读取 Claude Code / Codex / WorkBuddy / CodeBuddy 会话数据 |
+| `claudedata` | 读取 Claude Code / Codex / WorkBuddy / CodeBuddy 会话数据；会话按 `cwd` 归属命名空间；并行 + 带缓存的元数据扫描 |
+| `sanitize` | 导出前的规则化脱敏（本地路径 / 凭据 / 账号 / 邮箱手机 / 内网地址），命中可审计 |
 | `codegraph` | 从代码仓库抽取结构骨架 |
 | `embed` | embedding 接口（云端 + 本地兜底） |
 | `mcpinstall` | 多 Agent 一键接入（JSON/TOML 配置读写） |
@@ -299,12 +332,20 @@ codex mcp add axon-knowledge -- /path/to/axon-mcp
 # 实时开发
 wails dev
 
-# 生产构建
-wails build -clean
+# 生产构建（本机架构）
+wails build
 
-# 编译 MCP server
-go build -o build/bin/axon-mcp ./cmd/axon-mcp          # macOS/Linux
-GOOS=windows go build -o build/bin/axon-mcp.exe ./cmd/axon-mcp  # Windows
+# macOS 通用二进制（Intel + Apple Silicon）
+wails build -platform darwin/universal
+
+# 打包 dmg：会把 axon-mcp 一并编译进 app 包并重新签名
+# 注意 wails build 单独产出的 .app 里【没有】axon-mcp，
+# 只跑 wails build 就分发，Agent 的一键接入会找不到它
+bash scripts/make-dmg.sh "$(git describe --tags --abbrev=0 | tr -d v)"
+
+# 单独编译 MCP server
+go build -o build/bin/axon-mcp ./cmd/axon-mcp                    # macOS/Linux
+GOOS=windows go build -o build/bin/axon-mcp.exe ./cmd/axon-mcp   # Windows
 
 # 测试
 go test ./...
@@ -316,4 +357,5 @@ go test ./...
 
 - 所有图谱、会话、配置存于用户级数据目录，升级不丢。
 - API key **只存 OS 凭证库**，不落明文。
-- 单机单用户，无云同步、无多人协作。
+- 单机单用户，无云同步。
+- **唯一会离开本机的是你主动导出的知识包**，且已按上述规则剪除个人信息；导出是只读操作，不影响本地图谱。
