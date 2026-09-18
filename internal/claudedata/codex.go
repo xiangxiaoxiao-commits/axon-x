@@ -76,16 +76,22 @@ func ListCodexSessions(namespace string) ([]SessionMeta, error) {
 		}
 	}
 
-	var out []SessionMeta
-	for _, f := range files {
-		// Cheap reject: the leading session_meta record carries the cwd, so a
-		// session belonging to another namespace never pays for a full parse.
-		if namespace != "" {
+	// When a namespace is requested, reject cheaply first: the leading
+	// session_meta record carries the cwd, so a session belonging to another
+	// namespace never pays for a full parse. Survivors are parsed in parallel.
+	candidates := files
+	if namespace != "" {
+		candidates = make([]string, 0, len(files))
+		for _, f := range files {
 			if cwd := probeCodexCwd(f); cwd != "" && ResolveNamespace(cwd) != namespace {
 				continue
 			}
+			candidates = append(candidates, f)
 		}
-		meta := scanCodexMeta(f)
+	}
+
+	var out []SessionMeta
+	for _, meta := range scanFiles(candidates, scanCodexMeta) {
 		if meta.ID == "" {
 			continue
 		}
@@ -129,20 +135,47 @@ func probeCodexCwd(path string) string {
 	return ""
 }
 
-// scanCodexMeta reads a Codex session file to extract metadata.
+// scanCodexMeta reads a Codex session file to extract metadata. The parse is
+// cached by path + mtime + size: listing the browser re-reads every session in
+// the Codex store, which is the slowest part of opening the page.
 func scanCodexMeta(path string) SessionMeta {
-	f, err := os.Open(path)
-	if err != nil {
+	_, mtime, size, ok := statForScan(path)
+	if !ok {
 		return SessionMeta{}
 	}
-	defer f.Close()
-
-	info, _ := f.Stat()
-	var mtime, size int64
-	if info != nil {
-		mtime = info.ModTime().UnixMilli()
-		size = info.Size()
+	const kind = "codex|"
+	if m, hit := lookupScan(kind+path, mtime, size); hit {
+		return newCodexMeta(path, mtime, size, m)
 	}
+	m := parseCodexMeta(path)
+	storeScan(kind+path, mtime, size, m)
+	return newCodexMeta(path, mtime, size, m)
+}
+
+func newCodexMeta(path string, mtime, size int64, m sessionBrowserMeta) SessionMeta {
+	slug := ResolveNamespace(m.Cwd)
+	return SessionMeta{
+		ID:           "codex:" + m.ID,
+		ProjectSlug:  slug,
+		Title:        m.Title,
+		MessageCount: m.Msgs,
+		UpdatedAt:    mtime,
+		SizeBytes:    size,
+		Cwd:          m.Cwd,
+		Model:        "codex",
+		File:         path,
+		Namespace:    slug,
+	}
+}
+
+// parseCodexMeta is the expensive half: it walks the transcript to collect the
+// session id, working directory, a title and a message count.
+func parseCodexMeta(path string) sessionBrowserMeta {
+	f, err := os.Open(path)
+	if err != nil {
+		return sessionBrowserMeta{}
+	}
+	defer f.Close()
 
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
@@ -190,21 +223,7 @@ func scanCodexMeta(path string) SessionMeta {
 	if sessionID == "" {
 		sessionID = codexIDFromFileName(filepath.Base(path))
 	}
-
-	slug := ResolveNamespace(cwd)
-
-	return SessionMeta{
-		ID:           "codex:" + sessionID,
-		ProjectSlug:  slug,
-		Title:        title,
-		MessageCount: msgs,
-		UpdatedAt:    mtime,
-		SizeBytes:    size,
-		Cwd:          cwd,
-		Model:        "codex",
-		File:         path,
-		Namespace:    slug,
-	}
+	return sessionBrowserMeta{ID: sessionID, Title: title, Msgs: msgs, Cwd: cwd}
 }
 
 // codexIDFromFileName recovers a session id from a transcript file name when the

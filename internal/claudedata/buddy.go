@@ -91,16 +91,22 @@ func listBuddyAgentSessions(agent buddyAgent, namespace string, recursive bool) 
 		}
 		pdir := filepath.Join(projDir, projEntry.Name())
 		files, _ := sessionFiles(pdir, recursive)
-		for _, fpath := range files {
-			// Cheap reject before the full parse, same as the Claude and Codex
-			// scanners: a session from another namespace should cost one small read,
-			// not a full transcript parse.
-			if namespace != "" {
-				if cwd := probeBuddyCwd(fpath); cwd != "" && ResolveNamespace(cwd) != namespace {
+		// Cheap reject before the full parse, same as the Claude and Codex
+		// scanners: a session from another namespace should cost one small read,
+		// not a full transcript parse. Survivors are parsed in parallel.
+		candidates := files
+		if namespace != "" {
+			candidates = make([]string, 0, len(files))
+			for _, f := range files {
+				if cwd := probeBuddyCwd(f); cwd != "" && ResolveNamespace(cwd) != namespace {
 					continue
 				}
+				candidates = append(candidates, f)
 			}
-			meta := scanBuddyMeta(fpath, agent)
+		}
+		for _, meta := range scanFiles(candidates, func(p string) SessionMeta {
+			return scanBuddyMeta(p, agent)
+		}) {
 			if meta.ID == "" {
 				continue
 			}
@@ -139,20 +145,49 @@ func probeBuddyCwd(path string) string {
 	return ""
 }
 
-// scanBuddyMeta reads the first few lines to extract metadata.
+// scanBuddyMeta returns a session's metadata. The parse is cached by
+// path + mtime + size; only a fresh (or changed) file is read.
 func scanBuddyMeta(path string, agent buddyAgent) SessionMeta {
-	f, err := os.Open(path)
-	if err != nil {
+	_, mtime, size, ok := statForScan(path)
+	if !ok {
 		return SessionMeta{}
 	}
-	defer f.Close()
-
-	info, _ := f.Stat()
-	var mtime, size int64
-	if info != nil {
-		mtime = info.ModTime().UnixMilli()
-		size = info.Size()
+	const kind = "buddy|"
+	if m, hit := lookupScan(kind+path, mtime, size); hit {
+		return newBuddyMeta(path, agent, mtime, size, m)
 	}
+	m := parseBuddyMeta(path)
+	storeScan(kind+path, mtime, size, m)
+	return newBuddyMeta(path, agent, mtime, size, m)
+}
+
+func newBuddyMeta(path string, agent buddyAgent, mtime, size int64, m sessionBrowserMeta) SessionMeta {
+	id := m.ID
+	if id == "" {
+		id = strings.TrimSuffix(filepath.Base(path), ".jsonl")
+	}
+	slug := ResolveNamespace(m.Cwd)
+	return SessionMeta{
+		ID:           agent.Name + ":" + id,
+		ProjectSlug:  slug,
+		Title:        m.Title,
+		MessageCount: m.Msgs,
+		UpdatedAt:    mtime,
+		SizeBytes:    size,
+		Cwd:          m.Cwd,
+		Model:        agent.Name,
+		File:         path,
+		Namespace:    slug,
+	}
+}
+
+// parseBuddyMeta is the expensive half of scanBuddyMeta.
+func parseBuddyMeta(path string) sessionBrowserMeta {
+	f, err := os.Open(path)
+	if err != nil {
+		return sessionBrowserMeta{}
+	}
+	defer f.Close()
 
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
@@ -179,24 +214,7 @@ func scanBuddyMeta(path string, agent buddyAgent) SessionMeta {
 		}
 	}
 
-	if sessionID == "" {
-		sessionID = strings.TrimSuffix(filepath.Base(path), ".jsonl")
-	}
-
-	slug := ResolveNamespace(cwd)
-
-	return SessionMeta{
-		ID:           agent.Name + ":" + sessionID,
-		ProjectSlug:  slug,
-		Title:        title,
-		MessageCount: msgs,
-		UpdatedAt:    mtime,
-		SizeBytes:    size,
-		Cwd:          cwd,
-		Model:        agent.Name,
-		File:         path,
-		Namespace:    slug,
-	}
+	return sessionBrowserMeta{ID: sessionID, Title: title, Msgs: msgs, Cwd: cwd}
 }
 
 // ReadBuddySession loads a buddy session as ordered messages.

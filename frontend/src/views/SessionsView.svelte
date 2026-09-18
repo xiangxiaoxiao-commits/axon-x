@@ -17,6 +17,11 @@
   let curCwd = "";
   let filter = "";
   let loading = false;
+  // Loading the session list is not instant (a few hundred transcripts are read
+  // from disk), so the list needs its own flag: without it the page claimed
+  // "无会话" for several seconds, which reads as a broken feature.
+  let sessionsLoading = false;
+  let sessionsLoaded = false;
   // Active model filter: "" = all models. Set from the top dropdown.
   let modelFilter = "";
 
@@ -74,7 +79,16 @@
   async function loadSessions() {
     curSession = ""; messages = []; progress = null; sessions = [];
     if (!$currentProject) return; // "all projects" has no single session list
-    try { sessions = await ListClaudeSessions($currentProject); } catch (e) { console.error(e); }
+    sessionsLoading = true;
+    try {
+      sessions = (await ListClaudeSessions($currentProject)) || [];
+    } catch (e) {
+      console.error(e);
+      sessions = [];
+    } finally {
+      sessionsLoading = false;
+      sessionsLoaded = true;
+    }
   }
 
   async function selectSession(s: claudedata.SessionMeta) {
@@ -242,7 +256,19 @@
       {/each}
     {/each}
     {#if !$currentProject}<div class="empty">在顶部选择一个项目查看它的会话</div>
-    {:else if shownSessions.length === 0}<div class="empty">无会话</div>{/if}
+    {:else if sessionsLoading}
+      <div class="empty">正在读取会话…<span class="empty-sub">首次需要几秒（本机 {sessions.length || "数百"} 个会话）；之后会立刻打开</span></div>
+    {:else if shownSessions.length === 0}
+      <div class="empty">
+        {#if filter || modelFilter}
+          没有匹配的会话<span class="empty-sub">共 {sessions.length} 个会话，试试清空搜索或切回「全部」模型</span>
+        {:else if sessionsLoaded}
+          无会话<span class="empty-sub">没读到任何 {modelFamily("codex")}/Claude 会话记录</span>
+        {:else}
+          正在读取会话…
+        {/if}
+      </div>
+    {/if}
   </div>
 
   <div class="col transcript">
@@ -444,6 +470,8 @@
     border-bottom: 1px solid var(--border);
   }
   .gh-n { opacity: .5; font-weight: 400; }
+  .empty-sub { display: block; margin-top: 6px; font-size: 12px; opacity: .7; }
+
   .empty { padding: 16px; color: var(--text-muted); font-size: 12px; }
   .progress-card {
     border: 1px solid var(--border);

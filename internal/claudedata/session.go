@@ -58,12 +58,24 @@ func listSessions(projectSlug string, recursive bool) ([]SessionMeta, error) {
 		return nil, fmt.Errorf("read project dir: %w", err)
 	}
 
-	out := make([]SessionMeta, 0, len(files))
-	for _, path := range files {
-		out = append(out, scanClaudeMeta(path, projectSlug))
-	}
+	out := scanFiles(files, func(path string) SessionMeta {
+		return scanClaudeMeta(path, projectSlug)
+	})
+	out = dropEmpty(out)
 	sort.Slice(out, func(i, j int) bool { return out[i].UpdatedAt > out[j].UpdatedAt })
 	return out, nil
+}
+
+// dropEmpty removes the zero entries scanFiles produces for unreadable files,
+// keeping the same "skip what we cannot read" behaviour the serial scan had.
+func dropEmpty(in []SessionMeta) []SessionMeta {
+	out := in[:0]
+	for _, m := range in {
+		if m.ID != "" {
+			out = append(out, m)
+		}
+	}
+	return out
 }
 
 // ListSessionsForNamespace returns the top-level transcripts of every Claude
@@ -165,25 +177,36 @@ func projectDir(projectSlug string) (string, error) {
 }
 
 // scanClaudeMeta builds a SessionMeta for one transcript, resolving the
-// namespace from the cwd the transcript records.
+// namespace from the cwd the transcript records. The parsed part is cached by
+// path + mtime + size (see scan_cache.go), because the session browser reads
+// every transcript on the machine just to list them.
 func scanClaudeMeta(path, projectSlug string) SessionMeta {
-	var meta SessionMeta
-	info, err := os.Stat(path)
-	if err != nil {
-		return meta
+	_, mtime, size, ok := statForScan(path)
+	if !ok {
+		return SessionMeta{}
+	}
+	const kind = "claude|"
+	if m, hit := lookupScan(kind+path, mtime, size); hit {
+		return newClaudeMeta(path, projectSlug, mtime, size, m)
 	}
 	title, msgs, cwd, model := scanTitleAndCount(path)
+	m := sessionBrowserMeta{Title: title, Msgs: msgs, Cwd: cwd, Model: model}
+	storeScan(kind+path, mtime, size, m)
+	return newClaudeMeta(path, projectSlug, mtime, size, m)
+}
+
+func newClaudeMeta(path, projectSlug string, mtime, size int64, m sessionBrowserMeta) SessionMeta {
 	return SessionMeta{
 		ID:           strings.TrimSuffix(filepath.Base(path), ".jsonl"),
 		ProjectSlug:  projectSlug,
-		Title:        title,
-		MessageCount: msgs,
-		UpdatedAt:    info.ModTime().UnixMilli(),
-		SizeBytes:    info.Size(),
-		Cwd:          cwd,
-		Model:        model,
+		Title:        m.Title,
+		MessageCount: m.Msgs,
+		UpdatedAt:    mtime,
+		SizeBytes:    size,
+		Cwd:          m.Cwd,
+		Model:        m.Model,
 		File:         path,
-		Namespace:    ResolveNamespace(cwd),
+		Namespace:    ResolveNamespace(m.Cwd),
 	}
 }
 
