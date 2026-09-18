@@ -116,13 +116,16 @@ func (h *toolHandler) list() map[string]interface{} {
 						},
 						"relations": map[string]interface{}{
 							"type":        "array",
-							"description": "可选：实体间的有向关系。每条：from(主语) + to(宾语) + label(动词/关系)。方向必须清晰：from 是动作发起方，to 是接收方。例：A —调用→ B（A调B）、A —依赖→ B（A靠B）、A —包含→ B（A里有B）、A —属于→ B（A是B的一部分）、A —部署于→ B（A跑在B上）。",
+							"description": "可选：实体间有证据支持的有向关系。明确关系 inferred=false；仅有探索价值但证据不足的候选关系 inferred=true 且 confidence<=0.60。不要为了连通图谱而创建关系。",
 							"items": map[string]interface{}{
 								"type": "object",
 								"properties": map[string]interface{}{
-									"from":  strProp("实体A"),
-									"to":    strProp("实体B"),
-									"label": strProp("关系，如 依赖/调用/属于"),
+									"from":       strProp("实体A"),
+									"to":         strProp("实体B"),
+									"label":      strProp("关系，如 依赖/调用/属于"),
+									"inferred":   map[string]interface{}{"type": "boolean", "description": "是否为待验证的弱关联，默认 false"},
+									"confidence": map[string]interface{}{"type": "number", "minimum": 0, "maximum": 1, "description": "关系置信度；明确关系应 >=0.65，候选关系应 <=0.60"},
+									"evidence":   map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "支持此关系的简短依据，禁止编造"},
 								},
 								"required": []string{"from", "to", "label"},
 							},
@@ -168,7 +171,7 @@ func (h *toolHandler) list() map[string]interface{} {
 				},
 			},
 			{
-				Name: "move_entity",
+				Name:        "move_entity",
 				Description: "把一个实体从源命名空间移动到目标命名空间。用于纠正实体归属——比如把误写到 gaia 的实体移到 gaiac。",
 				InputSchema: map[string]interface{}{
 					"type": "object",
@@ -411,19 +414,24 @@ func (h *toolHandler) getEntity(raw json.RawMessage) (*toolResult, error) {
 	}
 	if len(e.Observations) > 0 {
 		b.WriteString("\n## 事实\n")
-		for i, o := range e.Observations {
-			if src := obsSourceAt(e.ObsSources, i); src != "" {
-				fmt.Fprintf(&b, "- %s （来源：%s）\n", o, renderSource(src, titles))
-			} else {
-				fmt.Fprintf(&b, "- %s\n", o)
+		for _, assertion := range e.Assertions {
+			fmt.Fprintf(&b, "- %s [%s, %.0f%%]", assertion.Text, assertion.State, assertion.Confidence*100)
+			if len(assertion.Sources) > 0 {
+				fmt.Fprintf(&b, "（来源：%s）", renderSource(assertion.Sources[0], titles))
 			}
+			b.WriteString("\n")
 		}
 	}
 	rels := relationsOf(g, e.Name)
 	if len(rels) > 0 {
 		b.WriteString("\n## 关系\n")
 		for _, r := range rels {
-			fmt.Fprintf(&b, "- %s —%s→ %s\n", r.From, r.Label, r.To)
+			r = graph.NormalizeRelation(r)
+			fmt.Fprintf(&b, "- %s —%s→ %s [%s, %.0f%%]", r.From, r.Label, r.To, r.State, r.Confidence*100)
+			if len(r.Evidence) > 0 {
+				fmt.Fprintf(&b, "：%s", strings.Join(r.Evidence, "；"))
+			}
+			b.WriteString("\n")
 		}
 	}
 	return textResult(b.String()), nil

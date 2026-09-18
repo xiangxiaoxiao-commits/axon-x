@@ -2,7 +2,7 @@
   // Minimal REPL: one full-screen flow, a "❯" input at the bottom, slash
   // commands for everything else. No sidebar / topbar / panels.
   import { onMount, onDestroy, tick } from "svelte";
-  import { conversations, currentConversationID, messages, streaming, activeView, currentProject, projects } from "../lib/stores";
+  import { conversations, currentConversationID, messages, streaming, activeView, currentProject, projects, findProject } from "../lib/stores";
   import type { model } from "../../wailsjs/go/models";
   import {
     ListConversations, ListMessages, NewConversation,
@@ -26,7 +26,7 @@
   let models: string[] = [];
   // Knowledge injection: match against the globally-selected project's graph.
   let useKnowledge = true;
-  $: curProjectPath = $projects.find((p) => p.slug === $currentProject)?.path ?? "";
+  $: curProjectPath = findProject($projects, $currentProject)?.path ?? "";
   let streamingMsgID = -1;
   let value = "";
   let scroller: HTMLElement;

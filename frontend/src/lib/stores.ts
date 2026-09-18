@@ -27,6 +27,46 @@ export const currentProject = writable<string>("");
 // The Claude Code project list, loaded once on startup.
 export const projects = writable<claudedata.Project[]>([]);
 
+// The key a project is addressed by: its .axon-project namespace when it has
+// one, otherwise its Claude Code directory name. A namespace usually spans many
+// Claude directories (one per repository), so several projects collapse onto one
+// key — which is exactly what indexing and the graph want.
+export function projectKey(p: claudedata.Project): string {
+  return p.namespace || p.slug;
+}
+
+// Resolve a currentProject value back to the project it came from. Tolerates a
+// bare Claude directory slug as well, so a stale selection keeps working.
+export function findProject(list: claudedata.Project[], key: string): claudedata.Project | undefined {
+  return list.find((p) => projectKey(p) === key) || list.find((p) => p.slug === key);
+}
+
+// One entry per distinct key, newest activity first, with the session count
+// summed across the directories that share it.
+export type ProjectOption = { key: string; label: string; sessions: number; updatedAt: number };
+
+export function projectOptions(list: claudedata.Project[]): ProjectOption[] {
+  const byKey = new Map<string, ProjectOption>();
+  for (const p of list) {
+    const key = projectKey(p);
+    const cur = byKey.get(key);
+    if (cur) {
+      cur.sessions += p.sessionCount;
+      cur.updatedAt = Math.max(cur.updatedAt, p.updatedAt);
+      continue;
+    }
+    byKey.set(key, {
+      key,
+      // For a namespace, show it plus the first directory it covers, so the
+      // picker says both "which knowledge" and "where on disk".
+      label: p.namespace ? `${p.namespace} · ${p.path}` : p.path,
+      sessions: p.sessionCount,
+      updatedAt: p.updatedAt,
+    });
+  }
+  return [...byKey.values()].sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
 // --- Named namespaces (new) -------------------------------------------
 // All available knowledge-graph namespaces. Populated on startup from
 // ListNamespaces (scans graphcache/).
@@ -55,13 +95,13 @@ export async function loadNamespaces(): Promise<void> {
   }
 }
 
-// Load the project list from disk and default the selection to the first
-// project (unless one is already chosen). Safe to call more than once.
+// Load the project list from disk and default the selection to the newest one
+// (unless one is already chosen). Safe to call more than once.
 export async function loadProjects(): Promise<void> {
   try {
     const list = await ListClaudeProjects();
     projects.set(list);
-    if (!get(currentProject) && list.length) currentProject.set(list[0].slug);
+    if (!get(currentProject) && list.length) currentProject.set(projectKey(list[0]));
   } catch (e) {
     console.error("load projects", e);
   }

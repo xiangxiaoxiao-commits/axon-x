@@ -82,6 +82,15 @@ func (a *App) BuildGraphFromObsidian(vaultDir, projectSlug string) error {
 		}
 		content := string(data)
 		ents, rels := parseNote(rel, content)
+		// Wikilinks are explicit human-authored links, so they are trusted at
+		// source level and remain traceable to the originating note.
+		for j := range rels {
+			rels[j].State = graph.RelationVerified
+			rels[j].Confidence = 1
+			rels[j].Sources = []string{sessionID}
+			rels[j].Evidence = []string{"[[wikilink]] in " + rel}
+			rels[j] = graph.NormalizeRelation(rels[j])
+		}
 		chunks := chunkNote(sessionID, content)
 		if emb != nil {
 			a.embedEntities(emb, ents) // fills each entity's Embedding in place

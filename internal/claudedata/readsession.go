@@ -47,6 +47,14 @@ func ReadSession(projectSlug, sessionID string) ([]SessionMessage, error) {
 	if path == "" {
 		return nil, fmt.Errorf("open session: transcript %q not found", sessionID)
 	}
+	return ReadSessionFile(path)
+}
+
+// ReadSessionFile loads a transcript by its absolute path. Prefer this over
+// ReadSession whenever the caller already holds a SessionMeta (which carries
+// File): it skips re-deriving the project directory and the recursive fallback
+// walk, which matters when indexing hundreds of sessions.
+func ReadSessionFile(path string) ([]SessionMessage, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("open session: %w", err)

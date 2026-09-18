@@ -21,6 +21,7 @@ export namespace claudedata {
 	export class Project {
 	    slug: string;
 	    path: string;
+	    namespace: string;
 	    sessionCount: number;
 	    updatedAt: number;
 	
@@ -32,6 +33,7 @@ export namespace claudedata {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.slug = source["slug"];
 	        this.path = source["path"];
+	        this.namespace = source["namespace"];
 	        this.sessionCount = source["sessionCount"];
 	        this.updatedAt = source["updatedAt"];
 	    }
@@ -59,6 +61,8 @@ export namespace claudedata {
 	    sizeBytes: number;
 	    cwd: string;
 	    model: string;
+	    file: string;
+	    namespace: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new SessionMeta(source);
@@ -74,6 +78,8 @@ export namespace claudedata {
 	        this.sizeBytes = source["sizeBytes"];
 	        this.cwd = source["cwd"];
 	        this.model = source["model"];
+	        this.file = source["file"];
+	        this.namespace = source["namespace"];
 	    }
 	}
 	export class SessionProgress {
@@ -158,12 +164,69 @@ export namespace gitx {
 
 export namespace graph {
 	
+	export class Assertion {
+	    text: string;
+	    state?: string;
+	    confidence?: number;
+	    sources?: string[];
+	    observedAt?: number;
+	    validUntil?: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new Assertion(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.text = source["text"];
+	        this.state = source["state"];
+	        this.confidence = source["confidence"];
+	        this.sources = source["sources"];
+	        this.observedAt = source["observedAt"];
+	        this.validUntil = source["validUntil"];
+	    }
+	}
+	export class BundleStats {
+	    entities: number;
+	    relations: number;
+	    observations: number;
+	    consideredEntities?: number;
+	    omittedChunks?: number;
+	    omittedEmbeddings?: number;
+	    omittedProvenance?: number;
+	    omittedReviews?: number;
+	    droppedRelations?: number;
+	    droppedAssertions?: number;
+	    droppedEntities?: number;
+	    mergedAfterScrub?: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new BundleStats(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.entities = source["entities"];
+	        this.relations = source["relations"];
+	        this.observations = source["observations"];
+	        this.consideredEntities = source["consideredEntities"];
+	        this.omittedChunks = source["omittedChunks"];
+	        this.omittedEmbeddings = source["omittedEmbeddings"];
+	        this.omittedProvenance = source["omittedProvenance"];
+	        this.omittedReviews = source["omittedReviews"];
+	        this.droppedRelations = source["droppedRelations"];
+	        this.droppedAssertions = source["droppedAssertions"];
+	        this.droppedEntities = source["droppedEntities"];
+	        this.mergedAfterScrub = source["mergedAfterScrub"];
+	    }
+	}
 	export class Entity {
 	    name: string;
 	    type: string;
 	    observations: string[];
 	    aliases?: string[];
 	    obsSources?: string[];
+	    assertions?: Assertion[];
 	    embedding?: number[];
 	
 	    static createFrom(source: any = {}) {
@@ -177,14 +240,37 @@ export namespace graph {
 	        this.observations = source["observations"];
 	        this.aliases = source["aliases"];
 	        this.obsSources = source["obsSources"];
+	        this.assertions = this.convertValues(source["assertions"], Assertion);
 	        this.embedding = source["embedding"];
 	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class Relation {
 	    from: string;
 	    to: string;
 	    label: string;
-	    inferred: boolean;
+	    inferred?: boolean;
+	    confidence?: number;
+	    state?: string;
+	    sources?: string[];
+	    evidence?: string[];
 	
 	    static createFrom(source: any = {}) {
 	        return new Relation(source);
@@ -195,7 +281,11 @@ export namespace graph {
 	        this.from = source["from"];
 	        this.to = source["to"];
 	        this.label = source["label"];
-	        this.inferred = source["inferred"] ?? false;
+	        this.inferred = source["inferred"];
+	        this.confidence = source["confidence"];
+	        this.state = source["state"];
+	        this.sources = source["sources"];
+	        this.evidence = source["evidence"];
 	    }
 	}
 	export class Graph {
@@ -236,11 +326,136 @@ export namespace graph {
 		    return a;
 		}
 	}
+	export class HealthIssue {
+	    code: string;
+	    level: string;
+	    count: number;
+	    message: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new HealthIssue(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.code = source["code"];
+	        this.level = source["level"];
+	        this.count = source["count"];
+	        this.message = source["message"];
+	    }
+	}
+	export class GraphHealth {
+	    score: number;
+	    entities: number;
+	    assertions: number;
+	    trustedAssertions: number;
+	    candidateAssertions: number;
+	    expiredAssertions: number;
+	    conflictingAssertions: number;
+	    sourcelessAssertions: number;
+	    relations: number;
+	    trustedRelations: number;
+	    candidateRelations: number;
+	    sourcelessRelations: number;
+	    isolatedEntities: number;
+	    governanceActions: number;
+	    canUndo: boolean;
+	    issues: HealthIssue[];
+	
+	    static createFrom(source: any = {}) {
+	        return new GraphHealth(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.score = source["score"];
+	        this.entities = source["entities"];
+	        this.assertions = source["assertions"];
+	        this.trustedAssertions = source["trustedAssertions"];
+	        this.candidateAssertions = source["candidateAssertions"];
+	        this.expiredAssertions = source["expiredAssertions"];
+	        this.conflictingAssertions = source["conflictingAssertions"];
+	        this.sourcelessAssertions = source["sourcelessAssertions"];
+	        this.relations = source["relations"];
+	        this.trustedRelations = source["trustedRelations"];
+	        this.candidateRelations = source["candidateRelations"];
+	        this.sourcelessRelations = source["sourcelessRelations"];
+	        this.isolatedEntities = source["isolatedEntities"];
+	        this.governanceActions = source["governanceActions"];
+	        this.canUndo = source["canUndo"];
+	        this.issues = this.convertValues(source["issues"], HealthIssue);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	
 
 }
 
 export namespace main {
 	
+	export class BundleInfo {
+	    path: string;
+	    title: string;
+	    version: number;
+	    exportedAt: number;
+	    scrubLevel: string;
+	    stats: graph.BundleStats;
+	    redactions: sanitize.Hit[];
+	    notes: string[];
+	    suggestedNamespace: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new BundleInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.path = source["path"];
+	        this.title = source["title"];
+	        this.version = source["version"];
+	        this.exportedAt = source["exportedAt"];
+	        this.scrubLevel = source["scrubLevel"];
+	        this.stats = this.convertValues(source["stats"], graph.BundleStats);
+	        this.redactions = this.convertValues(source["redactions"], sanitize.Hit);
+	        this.notes = source["notes"];
+	        this.suggestedNamespace = source["suggestedNamespace"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class CommitDraft {
 	    message: string;
 	    prTitle: string;
@@ -330,6 +545,211 @@ export namespace main {
 	        this.mode = source["mode"];
 	    }
 	}
+	export class FactPair {
+	    before: string;
+	    after: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new FactPair(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.before = source["before"];
+	        this.after = source["after"];
+	    }
+	}
+	export class PreviewEntity {
+	    name: string;
+	    type: string;
+	    aliases?: string[];
+	    facts: FactPair[];
+	    redacted: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new PreviewEntity(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.type = source["type"];
+	        this.aliases = source["aliases"];
+	        this.facts = this.convertValues(source["facts"], FactPair);
+	        this.redacted = source["redacted"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class ExportPreview {
+	    namespace: string;
+	    title: string;
+	    level: string;
+	    stats: graph.BundleStats;
+	    redactions: sanitize.Hit[];
+	    entities: PreviewEntity[];
+	    notes: string[];
+	    suggestedName: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ExportPreview(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.namespace = source["namespace"];
+	        this.title = source["title"];
+	        this.level = source["level"];
+	        this.stats = this.convertValues(source["stats"], graph.BundleStats);
+	        this.redactions = this.convertValues(source["redactions"], sanitize.Hit);
+	        this.entities = this.convertValues(source["entities"], PreviewEntity);
+	        this.notes = source["notes"];
+	        this.suggestedName = source["suggestedName"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class ExportResult {
+	    canceled: boolean;
+	    path: string;
+	    namespace: string;
+	    level: string;
+	    stats: graph.BundleStats;
+	    redactions: sanitize.Hit[];
+	    sizeBytes: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ExportResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.canceled = source["canceled"];
+	        this.path = source["path"];
+	        this.namespace = source["namespace"];
+	        this.level = source["level"];
+	        this.stats = this.convertValues(source["stats"], graph.BundleStats);
+	        this.redactions = this.convertValues(source["redactions"], sanitize.Hit);
+	        this.sizeBytes = source["sizeBytes"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	
+	export class ImportResult {
+	    namespace: string;
+	    bundleId: string;
+	    title: string;
+	    added: graph.BundleStats;
+	    redactions: sanitize.Hit[];
+	    replaced: boolean;
+	    mergedInto: boolean;
+	    embeddedCount: number;
+	    embedError?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ImportResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.namespace = source["namespace"];
+	        this.bundleId = source["bundleId"];
+	        this.title = source["title"];
+	        this.added = this.convertValues(source["added"], graph.BundleStats);
+	        this.redactions = this.convertValues(source["redactions"], sanitize.Hit);
+	        this.replaced = source["replaced"];
+	        this.mergedInto = source["mergedInto"];
+	        this.embeddedCount = source["embeddedCount"];
+	        this.embedError = source["embedError"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class ImportedBundle {
+	    id: string;
+	    sessionId: string;
+	    entities: number;
+	    relations: number;
+	    observations: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ImportedBundle(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.sessionId = source["sessionId"];
+	        this.entities = source["entities"];
+	        this.relations = source["relations"];
+	        this.observations = source["observations"];
+	    }
+	}
 	export class InjectedChunk {
 	    text: string;
 	    source: string;
@@ -404,6 +824,7 @@ export namespace main {
 	        this.entities = source["entities"];
 	    }
 	}
+	
 	export class ProviderInfo {
 	    name: string;
 	    protocol: string;
@@ -616,6 +1037,61 @@ export namespace provider {
 
 }
 
+export namespace sanitize {
+	
+	export class Sample {
+	    before: string;
+	    after: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Sample(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.before = source["before"];
+	        this.after = source["after"];
+	    }
+	}
+	export class Hit {
+	    rule: string;
+	    description: string;
+	    count: number;
+	    samples?: Sample[];
+	
+	    static createFrom(source: any = {}) {
+	        return new Hit(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.rule = source["rule"];
+	        this.description = source["description"];
+	        this.count = source["count"];
+	        this.samples = this.convertValues(source["samples"], Sample);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+
+}
+
 export namespace search {
 	
 	export class Hit {
@@ -761,3 +1237,4 @@ export namespace task {
 	}
 
 }
+

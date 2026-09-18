@@ -59,6 +59,7 @@ func (a *App) writeBackTaskKnowledge(t task.Task, result string) {
 	// ("code:") sources when the UI resolves source titles.
 	source := "task:" + t.ID
 	stampObsSources(ex.Entities, source)
+	stampRelationMetadata(ex.Relations, source)
 
 	// Raw-context channel: chunk the task transcript so its verbatim decisions and
 	// result are recallable alongside the distilled entities.

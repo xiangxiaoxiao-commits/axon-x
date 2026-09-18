@@ -74,6 +74,10 @@ export function ExcludeSession(arg1, arg2) {
   return window['go']['main']['App']['ExcludeSession'](arg1, arg2);
 }
 
+export function ExportGraph(arg1, arg2) {
+  return window['go']['main']['App']['ExportGraph'](arg1, arg2);
+}
+
 export function GenerateArticle(arg1, arg2) {
   return window['go']['main']['App']['GenerateArticle'](arg1, arg2);
 }
@@ -90,8 +94,16 @@ export function GetGraph(arg1) {
   return window['go']['main']['App']['GetGraph'](arg1);
 }
 
+export function GetGraphHealth(arg1) {
+  return window['go']['main']['App']['GetGraphHealth'](arg1);
+}
+
 export function GetTask(arg1) {
   return window['go']['main']['App']['GetTask'](arg1);
+}
+
+export function ImportBundle(arg1, arg2, arg3) {
+  return window['go']['main']['App']['ImportBundle'](arg1, arg2, arg3);
 }
 
 export function IndexProject(arg1) {
@@ -100,6 +112,10 @@ export function IndexProject(arg1) {
 
 export function IndexSearch() {
   return window['go']['main']['App']['IndexSearch']();
+}
+
+export function InspectBundle() {
+  return window['go']['main']['App']['InspectBundle']();
 }
 
 export function InstallMCP() {
@@ -116,6 +132,10 @@ export function ListClaudeSessions(arg1) {
 
 export function ListConversations() {
   return window['go']['main']['App']['ListConversations']();
+}
+
+export function ListImportedBundles(arg1) {
+  return window['go']['main']['App']['ListImportedBundles'](arg1);
 }
 
 export function ListMemoryFiles(arg1) {
@@ -170,8 +190,16 @@ export function NewConversation(arg1, arg2, arg3) {
   return window['go']['main']['App']['NewConversation'](arg1, arg2, arg3);
 }
 
+export function PreviewExport(arg1, arg2) {
+  return window['go']['main']['App']['PreviewExport'](arg1, arg2);
+}
+
 export function ReadClaudeSession(arg1, arg2) {
   return window['go']['main']['App']['ReadClaudeSession'](arg1, arg2);
+}
+
+export function RemoveImportedBundle(arg1, arg2) {
+  return window['go']['main']['App']['RemoveImportedBundle'](arg1, arg2);
 }
 
 export function RenameConversation(arg1, arg2) {
@@ -188,6 +216,14 @@ export function RepoStatus(arg1) {
 
 export function ResumeCommand(arg1, arg2) {
   return window['go']['main']['App']['ResumeCommand'](arg1, arg2);
+}
+
+export function ReviewAssertion(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['ReviewAssertion'](arg1, arg2, arg3, arg4);
+}
+
+export function ReviewRelation(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['main']['App']['ReviewRelation'](arg1, arg2, arg3, arg4, arg5);
 }
 
 export function ReviewTask(arg1, arg2, arg3) {
@@ -252,6 +288,10 @@ export function TermWrite(arg1, arg2) {
 
 export function TestEmbedding() {
   return window['go']['main']['App']['TestEmbedding']();
+}
+
+export function UndoLastGraphReview(arg1) {
+  return window['go']['main']['App']['UndoLastGraphReview'](arg1);
 }
 
 export function UnexcludeObservation(arg1, arg2, arg3) {

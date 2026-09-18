@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { activeView, currentProject, projects, loadProjects, namespaces, selectedNamespaces, loadNamespaces, type View } from "./lib/stores";
+  import { activeView, currentProject, projects, loadProjects, namespaces, selectedNamespaces, loadNamespaces, projectOptions, type ProjectOption, type View } from "./lib/stores";
   import GraphView from "./views/GraphView.svelte";
   import SettingsView from "./views/SettingsView.svelte";
   import AboutView from "./views/AboutView.svelte";
@@ -26,17 +26,24 @@
 
   function go(v: View) { $activeView = v; }
 
+  // One option per namespace (or per unmanaged Claude directory). A namespace is
+  // the unit both the graph and the indexer work in, so the picker must not offer
+  // the same namespace once per repository directory.
+  $: options = projectOptions($projects);
+
   function toggleNs(name: string) {
     // Single-select: each namespace is an independent graph, click to switch.
     selectedNamespaces.set([name]);
     currentProject.set(name);
   }
 
-  function chooseProject(slug: string) {
-    currentProject.set(slug);
-    // A project picked explicitly should drive the graph. Clear the optional
-    // namespace override so GraphView loads this project's graph.
-    selectedNamespaces.set([]);
+  function chooseProject(key: string) {
+    currentProject.set(key);
+    // Align the graph with the picker: when the chosen key is a namespace the
+    // graph view knows about, select it, so 「建索引」 and the graph describe the
+    // same body of work. An unmanaged directory keeps the graph empty-selected.
+    if ($namespaces.some((ns) => ns.name === key)) selectedNamespaces.set([key]);
+    else selectedNamespaces.set([]);
   }
 </script>
 
@@ -58,7 +65,7 @@
             <span class="proj-label">项目</span>
             <select value={$currentProject} on:change={(e) => chooseProject((e.currentTarget as HTMLSelectElement).value)}>
               <option value="">请选择项目</option>
-              {#each $projects as p}<option value={p.slug}>{p.path}</option>{/each}
+              {#each options as o}<option value={o.key}>{o.label}（{o.sessions} 个会话）</option>{/each}
             </select>
           </label>
           <span class="ns-label">图谱</span>

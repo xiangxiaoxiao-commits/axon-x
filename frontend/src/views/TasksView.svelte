@@ -5,7 +5,7 @@
   // switching the detail selection never touches background work.
   import { onMount, onDestroy, tick } from "svelte";
   import { marked } from "marked";
-  import { currentProject, projects } from "../lib/stores";
+  import { currentProject, projects, findProject, projectOptions } from "../lib/stores";
   import type { task } from "../../wailsjs/go/models";
   import {
     ListTasks, GetTask, CreateTask, EnrichTask, UpdateSpec, RunTask,
@@ -28,6 +28,9 @@
   let draftProvider = "";
   let draftModel = "";
   let draftProject = "";
+  // Same namespace-collapsed list the header picker uses, so a task is linked to
+  // the namespace its knowledge is recalled from.
+  $: taskProjectOptions = projectOptions($projects);
 
   // --- Editable spec (review_spec) ------------------------------------------
   type EditSpec = {
@@ -263,7 +266,7 @@
     try { return marked.parse(s || "", { async: false, breaks: true }) as string; }
     catch { return (s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
   }
-  function projPath(slug: string): string { return $projects.find((p) => p.slug === slug)?.path ?? slug; }
+  function projPath(key: string): string { return findProject($projects, key)?.path ?? key; }
 
   onMount(async () => {
     EventsOn("task:status", onStatus);
@@ -331,7 +334,7 @@
             <span class="lbl">业务项目（可选）</span>
             <select bind:value={draftProject}>
               <option value="">不关联</option>
-              {#each $projects as p}<option value={p.slug}>{p.path}</option>{/each}
+              {#each taskProjectOptions as o}<option value={o.key}>{o.label}</option>{/each}
             </select>
           </label>
         {:else if selected}

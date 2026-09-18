@@ -29,18 +29,18 @@ func writeStructure(b *strings.Builder, g *graph.Graph, hit map[string]bool, tit
 		}
 		wrote = true
 		fmt.Fprintf(&body, "\n### %s（%s）\n", e.Name, e.Type)
-		for i, o := range e.Observations {
-			if src := obsSourceAt(e.ObsSources, i); src != "" {
-				fmt.Fprintf(&body, "- %s （来源：%s）\n", o, renderSource(src, titles))
-			} else {
-				fmt.Fprintf(&body, "- %s\n", o)
+		for _, assertion := range graph.UsableAssertions(e, time.Now()) {
+			fmt.Fprintf(&body, "- %s（置信度 %.0f%%", assertion.Text, assertion.Confidence*100)
+			if len(assertion.Sources) > 0 {
+				fmt.Fprintf(&body, "，来源：%s", renderSource(assertion.Sources[0], titles))
 			}
+			body.WriteString("）\n")
 		}
 	}
 	var rels []string
 	for _, r := range g.Relations {
-		if hit[strings.ToLower(r.From)] && hit[strings.ToLower(r.To)] {
-			rels = append(rels, fmt.Sprintf("%s —%s→ %s", r.From, r.Label, r.To))
+		if graph.RelationUsableForRecall(r) && hit[strings.ToLower(r.From)] && hit[strings.ToLower(r.To)] {
+			rels = append(rels, fmt.Sprintf("%s —%s→ %s（置信度 %.0f%%）", r.From, r.Label, r.To, r.Confidence*100))
 		}
 	}
 	if !wrote && len(rels) == 0 {

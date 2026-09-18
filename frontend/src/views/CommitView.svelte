@@ -4,7 +4,7 @@
   // project's knowledge graph, let the user edit it, then commit locally.
   // Never pushes.
   import { onMount } from "svelte";
-  import { currentProject, projects } from "../lib/stores";
+  import { currentProject, projects, findProject } from "../lib/stores";
   import type { gitx, main } from "../../wailsjs/go/models";
   import {
     RepoStatus, GenerateCommit, DoCommit, ListProviders, ListModels,
@@ -38,7 +38,7 @@
   let commitErr = "";
   let committedHash = "";
 
-  $: curProjectPath = $projects.find((p) => p.slug === $currentProject)?.path ?? "";
+  $: curProjectPath = findProject($projects, $currentProject)?.path ?? "";
   $: stagedCount = status?.changes?.filter((c) => c.staged).length ?? 0;
   $: noStaged = scope === "staged" && !status?.hasStaged;
   $: canGenerate = !!status?.isRepo && !generating && !noStaged;

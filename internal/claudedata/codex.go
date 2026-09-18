@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 )
 
 // codexRoot returns the Codex data directory.
@@ -50,9 +51,9 @@ type codexContentBlock struct {
 }
 
 // ListCodexSessions returns all Codex sessions (active + archived) as
-// SessionMeta, newest first. If projectSlug is non-empty, only sessions whose
-// cwd resolves (via .axon-project) to that slug are returned.
-func ListCodexSessions(projectSlug string) ([]SessionMeta, error) {
+// SessionMeta, newest first. If namespace is non-empty, only sessions whose cwd
+// resolves (via .axon-project) to that namespace are returned.
+func ListCodexSessions(namespace string) ([]SessionMeta, error) {
 	root, err := codexRoot()
 	if err != nil {
 		return nil, err
@@ -77,17 +78,55 @@ func ListCodexSessions(projectSlug string) ([]SessionMeta, error) {
 
 	var out []SessionMeta
 	for _, f := range files {
+		// Cheap reject: the leading session_meta record carries the cwd, so a
+		// session belonging to another namespace never pays for a full parse.
+		if namespace != "" {
+			if cwd := probeCodexCwd(f); cwd != "" && ResolveNamespace(cwd) != namespace {
+				continue
+			}
+		}
 		meta := scanCodexMeta(f)
 		if meta.ID == "" {
 			continue
 		}
-		if projectSlug != "" && meta.ProjectSlug != projectSlug {
+		if namespace != "" && meta.Namespace != namespace {
 			continue
 		}
 		out = append(out, meta)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].UpdatedAt > out[j].UpdatedAt })
 	return out, nil
+}
+
+// codexProbeLines bounds probeCodexCwd. Codex writes session_meta as the first
+// record, so this is normally a single-line read.
+const codexProbeLines = 20
+
+// probeCodexCwd returns the working directory recorded in the session_meta
+// record, or "" when no such record appears near the head of the file.
+func probeCodexCwd(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 16*1024), 1<<20)
+	for n := 0; n < codexProbeLines && sc.Scan(); n++ {
+		var entry codexSessionEntry
+		if json.Unmarshal(sc.Bytes(), &entry) != nil {
+			continue
+		}
+		if entry.Type != "session_meta" {
+			continue
+		}
+		var meta codexSessionMeta
+		if json.Unmarshal(entry.Payload, &meta) == nil {
+			return meta.Cwd
+		}
+	}
+	return ""
 }
 
 // scanCodexMeta reads a Codex session file to extract metadata.
@@ -149,17 +188,10 @@ func scanCodexMeta(path string) SessionMeta {
 	}
 
 	if sessionID == "" {
-		base := filepath.Base(path)
-		sessionID = strings.TrimSuffix(base, ".jsonl")
-		if strings.HasPrefix(sessionID, "rollout-") {
-			parts := strings.SplitN(sessionID, "-", 5)
-			if len(parts) >= 5 {
-				sessionID = parts[4]
-			}
-		}
+		sessionID = codexIDFromFileName(filepath.Base(path))
 	}
 
-	slug := resolveProjectFromCwd(cwd)
+	slug := ResolveNamespace(cwd)
 
 	return SessionMeta{
 		ID:           "codex:" + sessionID,
@@ -170,7 +202,22 @@ func scanCodexMeta(path string) SessionMeta {
 		SizeBytes:    size,
 		Cwd:          cwd,
 		Model:        "codex",
+		File:         path,
+		Namespace:    slug,
 	}
+}
+
+// codexIDFromFileName recovers a session id from a transcript file name when the
+// session_meta record is missing or lacks one. Rollout names look like
+// "rollout-2026-08-27T00-27-<uuid>"; the id is the trailing UUID, not the
+// dash-split remainder (which used to yield junk ids such as
+// "00-27-019e8b6c-…" that then keyed the knowledge cache).
+func codexIDFromFileName(name string) string {
+	name = strings.TrimSuffix(name, ".jsonl")
+	if m := uuidTail.FindString(name); m != "" {
+		return m
+	}
+	return name
 }
 
 // ReadCodexSession loads a Codex session as ordered messages.
@@ -219,25 +266,107 @@ func ReadCodexSession(sessionFile string) ([]SessionMessage, error) {
 	return msgs, nil
 }
 
+// ResolveNamespace classifies a session by the working directory it recorded:
+// the namespace of the nearest .axon-project marker at or above that directory,
+// or — for a workspace root that is not marked itself but whose immediate
+// subdirectories are marked repositories (the "~/projects/<repo>" layout) — the
+// single namespace those children share.
+//
+// A cwd whose marked children disagree stays unresolved instead of guessing, and
+// so does a cwd with no markers anywhere nearby; callers report those sessions
+// as unmanaged rather than filing their knowledge under the wrong namespace.
+func ResolveNamespace(cwd string) string {
+	if cwd == "" {
+		return ""
+	}
+	if ns := resolveProjectFromCwd(cwd); ns != "" {
+		return ns
+	}
+	return namespaceFromChildren(cwd)
+}
+
+// childNamespaceCache memoises namespaceFromChildren. Only non-empty results are
+// cached: a negative answer must not stick, because the user may drop a marker
+// into the tree later and re-index without restarting the app.
+var childNamespaceCache = struct {
+	sync.Mutex
+	m map[string]string
+}{m: map[string]string{}}
+
+func namespaceFromChildren(cwd string) string {
+	// A home directory is not a project container. It routinely has one marked
+	// child (a checkout living next to Desktop/Documents), and treating it as a
+	// workspace root would quietly file every scratch session in ~ under that
+	// project's namespace.
+	if home, err := os.UserHomeDir(); err == nil && home != "" && filepath.Clean(cwd) == filepath.Clean(home) {
+		return ""
+	}
+
+	entries, err := os.ReadDir(cwd)
+	if err != nil {
+		return ""
+	}
+
+	childNamespaceCache.Lock()
+	if ns, ok := childNamespaceCache.m[cwd]; ok {
+		childNamespaceCache.Unlock()
+		return ns
+	}
+	childNamespaceCache.Unlock()
+
+	found := ""
+	for _, e := range entries {
+		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
+			continue
+		}
+		ns := readMark(filepath.Join(cwd, e.Name()))
+		if ns == "" {
+			continue
+		}
+		if found == "" {
+			found = ns
+			continue
+		}
+		if found != ns {
+			return "" // ambiguous: several namespaces live under this root
+		}
+	}
+	if found != "" {
+		childNamespaceCache.Lock()
+		childNamespaceCache.m[cwd] = found
+		childNamespaceCache.Unlock()
+	}
+	return found
+}
+
 // resolveProjectFromCwd walks up from a directory looking for .axon-project.
 func resolveProjectFromCwd(cwd string) string {
 	if cwd == "" {
 		return ""
 	}
 	for dir := cwd; ; {
-		content, err := os.ReadFile(filepath.Join(dir, ".axon-project"))
-		if err == nil {
-			for _, line := range strings.Split(string(content), "\n") {
-				if s := strings.TrimSpace(line); s != "" {
-					return s
-				}
-			}
+		if ns := readMark(dir); ns != "" {
+			return ns
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
 			break
 		}
 		dir = parent
+	}
+	return ""
+}
+
+// readMark returns the first non-empty line of dir/.axon-project, or "".
+func readMark(dir string) string {
+	content, err := os.ReadFile(filepath.Join(dir, ".axon-project"))
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(content), "\n") {
+		if s := strings.TrimSpace(line); s != "" {
+			return s
+		}
 	}
 	return ""
 }

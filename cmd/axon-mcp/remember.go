@@ -27,9 +27,12 @@ type rememberArgs struct {
 		Aliases      []string `json:"aliases"`
 	} `json:"entities"`
 	Relations []struct {
-		From  string `json:"from"`
-		To    string `json:"to"`
-		Label string `json:"label"`
+		From       string   `json:"from"`
+		To         string   `json:"to"`
+		Label      string   `json:"label"`
+		Inferred   bool     `json:"inferred"`
+		Confidence float64  `json:"confidence"`
+		Evidence   []string `json:"evidence"`
 	} `json:"relations"`
 }
 
@@ -97,6 +100,7 @@ func (h *toolHandler) rememberKnowledge(raw json.RawMessage) (*toolResult, error
 			ObsSources:   src,
 		})
 	}
+	graph.StampEntityAssertions(ents, source, time.Now().UnixMilli(), graph.RelationAsserted, 0.85)
 	if len(ents) == 0 {
 		return nil, fmt.Errorf("没有可记录的实体（每个实体至少要有一条 observation）")
 	}
@@ -107,7 +111,15 @@ func (h *toolHandler) rememberKnowledge(raw json.RawMessage) (*toolResult, error
 		if from == "" || to == "" || label == "" {
 			continue
 		}
-		rels = append(rels, graph.Relation{From: from, To: to, Label: label})
+		state := graph.RelationAsserted
+		if r.Inferred {
+			state = graph.RelationCandidate
+		}
+		rels = append(rels, graph.NormalizeRelation(graph.Relation{
+			From: from, To: to, Label: label, Inferred: r.Inferred,
+			State: state, Confidence: r.Confidence,
+			Sources: []string{source}, Evidence: trimAll(r.Evidence),
+		}))
 	}
 
 	// Embed the new entities so they are semantically recallable, honoring the

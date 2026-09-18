@@ -67,6 +67,14 @@ func (a *App) BuildGraphFromCode(repoDir, projectSlug string) error {
 	if err != nil {
 		return fmt.Errorf("extract code skeleton: %w", err)
 	}
+	// Static parser relations are deterministic code facts. Mark them verified
+	// and retain their repository source separately from LLM-inferred edges.
+	for i := range rels {
+		rels[i].State = graph.RelationVerified
+		rels[i].Confidence = 1
+		rels[i].Sources = []string{codeCacheID}
+		rels[i] = graph.NormalizeRelation(rels[i])
+	}
 	a.emit(EventGraphProgress, map[string]any{
 		"projectSlug": projectSlug, "current": 0, "total": 0,
 		"phase": "code", "title": fmt.Sprintf("已抽取 %d 个代码实体", len(ents)),
@@ -87,6 +95,7 @@ func (a *App) BuildGraphFromCode(repoDir, projectSlug string) error {
 				continue // best-effort: one file failing must not abort the build
 			}
 			stampObsSourcesCode(biz.Entities, f)
+			stampRelationMetadata(biz.Relations, "code:"+f)
 			// Business entities carry the same names as skeleton entities, so
 			// appending lets graph.Merge fold observations/aliases onto them.
 			ents = append(ents, biz.Entities...)
@@ -220,4 +229,5 @@ func stampObsSourcesCode(entities []graph.Entity, rel string) {
 		}
 		entities[i].ObsSources = s
 	}
+	graph.StampEntityAssertions(entities, src, time.Now().UnixMilli(), graph.RelationAsserted, 0.85)
 }

@@ -76,6 +76,27 @@ func TestRecall_KeywordOnlyWithoutVectors(t *testing.T) {
 	}
 }
 
+func TestRecall_DoesNotExpandCandidateOrLowConfidenceRelations(t *testing.T) {
+	g := &graph.Graph{
+		Entities: []graph.Entity{
+			{Name: "Seed", Embedding: []float32{1, 0}},
+			{Name: "CandidateNeighbor", Embedding: []float32{0, 1}},
+			{Name: "WeakNeighbor", Embedding: []float32{0, 1}},
+		},
+		Relations: []graph.Relation{
+			{From: "Seed", To: "CandidateNeighbor", Label: "相关", State: graph.RelationCandidate, Confidence: 0.5},
+			{From: "Seed", To: "WeakNeighbor", Label: "依赖", State: graph.RelationAsserted, Confidence: 0.5},
+		},
+	}
+	res := Recall(g, nil, []float32{1, 0}, "unmatched query")
+	if !res.Hit["seed"] {
+		t.Fatalf("expected semantic seed, got %v", res.Hit)
+	}
+	if res.Hit["candidateneighbor"] || res.Hit["weakneighbor"] {
+		t.Fatalf("untrusted relations expanded recall: %v", res.Hit)
+	}
+}
+
 func TestRRFFuse_RanksSharedIDsHigher(t *testing.T) {
 	got := RRFFuse([]string{"a", "b", "c"}, []string{"b", "d"})
 	if len(got) != 4 {
@@ -83,5 +104,38 @@ func TestRRFFuse_RanksSharedIDsHigher(t *testing.T) {
 	}
 	if got[0] != "b" {
 		t.Errorf("top = %q, want b (high in both lists)", got[0])
+	}
+}
+
+func TestAssembleGraphAppliesGovernanceAndChunkSessionExclusion(t *testing.T) {
+	dataDir := t.TempDir()
+	slug := "project"
+	if err := graph.SaveCache(dataDir, slug, &graph.SessionCache{
+		SessionID: "s1", Mtime: 1, Schema: graph.CacheSchema,
+		Entities: []graph.Entity{
+			{Name: "A", Observations: []string{"from excluded session"}, ObsSources: []string{"s1"}},
+			{Name: "B", Observations: []string{"also excluded"}, ObsSources: []string{"s1"}},
+		},
+		Relations: []graph.Relation{{From: "A", To: "B", Label: "相关"}},
+		Chunks:    []graph.Chunk{{ID: "s1#0", Source: "s1", Text: "hidden", Embedding: []float32{1}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ex := &graph.Exclusions{
+		Obs: map[string]bool{}, Sessions: map[string]bool{"s1": true},
+		RelationReviews: map[string]string{graph.RelationKey("A", "B", "相关"): graph.RelationRejected},
+	}
+	if err := graph.SaveExclusions(dataDir, slug, ex); err != nil {
+		t.Fatal(err)
+	}
+	g, err := AssembleGraph(dataDir, slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(g.Entities) != 0 || len(g.Relations) != 0 {
+		t.Fatalf("governance not applied: %+v", g)
+	}
+	if chunks := LoadChunks(dataDir, slug); len(chunks) != 0 {
+		t.Fatalf("excluded session chunks leaked: %+v", chunks)
 	}
 }

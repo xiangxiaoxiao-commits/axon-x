@@ -74,6 +74,7 @@ func RecallOptsFor(local bool) RecallOpts {
 // Chunks are the top fused verbatim fragments from the raw-context channel.
 type Result struct {
 	Hit           map[string]bool
+	OrderedHits   []string
 	SemanticSeeds []string
 	KeywordHits   []string
 	Chunks        []graph.Chunk
@@ -97,11 +98,19 @@ func RecallWithOpts(g *graph.Graph, chunks []graph.Chunk, qv []float32, text str
 	semanticSeeds := semanticSeeds(qv, g, opts.SeedMinScore)
 	keywordHits := EntityKeywordHits(g, text)
 	hit := map[string]bool{}
-	for _, id := range RRFFuse(lowerAll(semanticSeeds), lowerAll(keywordHits)) {
+	orderedHits := RRFFuse(lowerAll(semanticSeeds), lowerAll(keywordHits))
+	for _, id := range orderedHits {
 		hit[id] = true
 	}
 	if len(semanticSeeds) > 0 {
 		expandAlongRelations(g, hit, expandHops)
+	}
+	// Preserve root ranking, then append expanded neighbors in stable graph order.
+	for _, e := range g.Entities {
+		id := strings.ToLower(strings.TrimSpace(e.Name))
+		if hit[id] && !containsString(orderedHits, id) {
+			orderedHits = append(orderedHits, id)
+		}
 	}
 
 	// --- Raw-context channel: vector recall + keyword hits, RRF-fused. Only runs
@@ -115,10 +124,20 @@ func RecallWithOpts(g *graph.Graph, chunks []graph.Chunk, qv []float32, text str
 
 	return Result{
 		Hit:           hit,
+		OrderedHits:   orderedHits,
 		SemanticSeeds: semanticSeeds,
 		KeywordHits:   keywordHits,
 		Chunks:        chunkRanked,
 	}
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }
 
 // AssembleGraph merges every cached session's distilled knowledge for a project
@@ -134,6 +153,12 @@ func AssembleGraph(dataDir, projectSlug string) (*graph.Graph, error) {
 	for _, c := range caches {
 		g.Merge(c.Entities, c.Relations)
 	}
+	// Governance is part of the canonical read model, not a GUI-only concern.
+	// Applying it here keeps MCP search/get consistent with the desktop graph and
+	// prevents rejected facts/relations from resurfacing after cache assembly.
+	if ex, exErr := graph.LoadExclusions(dataDir, projectSlug); exErr == nil {
+		graph.FilterExcluded(g, ex)
+	}
 	return g, nil
 }
 
@@ -145,9 +170,13 @@ func LoadChunks(dataDir, projectSlug string) []graph.Chunk {
 	if err != nil {
 		return nil
 	}
+	ex, _ := graph.LoadExclusions(dataDir, projectSlug)
 	var out []graph.Chunk
 	for _, c := range caches {
 		for _, ch := range c.Chunks {
+			if ex != nil && ex.Sessions[ch.Source] {
+				continue
+			}
 			if len(ch.Embedding) > 0 {
 				out = append(out, ch)
 			}
@@ -230,7 +259,7 @@ func expandAlongRelations(g *graph.Graph, hit map[string]bool, hops int) {
 		for _, r := range g.Relations {
 			// Inferred/contextual edges are visual hints, not evidence for
 			// expanding factual recall.
-			if r.Inferred {
+			if !graph.RelationUsableForRecall(r) {
 				continue
 			}
 			from, to := strings.ToLower(r.From), strings.ToLower(r.To)

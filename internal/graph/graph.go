@@ -26,6 +26,9 @@ type Entity struct {
 	// session X"). Optional and best-effort: empty or shorter than Observations
 	// on older caches, in which case the source is simply unknown.
 	ObsSources []string `json:"obsSources,omitempty"`
+	// Assertions is the governed form of Observations. Observations/ObsSources
+	// remain as a compatibility projection for old caches and MCP clients.
+	Assertions []Assertion `json:"assertions,omitempty"`
 	// Embedding is the dense vector of name+observations, used for semantic
 	// (HybridRAG) retrieval. Optional: empty when no embedder was available at
 	// index time, in which case matching falls back to substring lookup.
@@ -39,7 +42,11 @@ type Relation struct {
 	Label string `json:"label"` // e.g. "依赖", "调用", "属于"
 	// Inferred marks a weak/contextual association. It is shown as a dashed
 	// edge, but recall must not treat it as a factual relation by default.
-	Inferred bool `json:"inferred,omitempty"`
+	Inferred   bool     `json:"inferred,omitempty"`
+	Confidence float64  `json:"confidence,omitempty"` // 0..1; defaults depend on state
+	State      string   `json:"state,omitempty"`      // asserted | candidate | verified | rejected
+	Sources    []string `json:"sources,omitempty"`    // session/code/note/task/MCP provenance
+	Evidence   []string `json:"evidence,omitempty"`   // concise source-supported reasons
 }
 
 // Graph is one project's knowledge graph.

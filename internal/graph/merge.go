@@ -16,12 +16,14 @@ func (g *Graph) Merge(entities []Entity, relations []Relation) {
 	// entity matching any of those keys folds into it.
 	idx := make(map[string]int, len(g.Entities))
 	for i := range g.Entities {
+		NormalizeEntityAssertions(&g.Entities[i])
 		for _, k := range entityKeys(g.Entities[i]) {
 			idx[k] = i
 		}
 	}
 
 	for _, ne := range entities {
+		NormalizeEntityAssertions(&ne)
 		key := normKey(ne.Name)
 		if key == "" {
 			continue
@@ -36,6 +38,7 @@ func (g *Graph) Merge(entities []Entity, relations []Relation) {
 		}
 		if target >= 0 {
 			e := &g.Entities[target]
+			e.Assertions = append(e.Assertions, ne.Assertions...)
 			// Union observations and their sources in lockstep.
 			e.Observations, e.ObsSources = unionObs(
 				e.Observations, e.ObsSources, ne.Observations, ne.ObsSources)
@@ -50,12 +53,14 @@ func (g *Graph) Merge(entities []Entity, relations []Relation) {
 			if len(ne.Embedding) > 0 {
 				e.Embedding = ne.Embedding
 			}
+			NormalizeEntityAssertions(e)
 			// Register any newly-added keys so future entities collide with them.
 			for _, k := range entityKeys(*e) {
 				idx[k] = target
 			}
 		} else {
 			ne.Observations, ne.ObsSources = unionObs(nil, nil, ne.Observations, ne.ObsSources)
+			NormalizeEntityAssertions(&ne)
 			ne.Aliases = mergeAliases(ne.Name, nil, ne)
 			g.Entities = append(g.Entities, ne)
 			pos := len(g.Entities) - 1
@@ -80,7 +85,7 @@ func (g *Graph) Merge(entities []Entity, relations []Relation) {
 	}
 
 	// De-dupe relations by (from,to,label), normalized.
-	seen := make(map[string]bool, len(g.Relations))
+	positions := make(map[string]int, len(g.Relations))
 	clean := make([]Relation, 0, len(g.Relations)+len(relations))
 	for _, r := range append(g.Relations, relations...) {
 		from, fromOK := resolve(r.From)
@@ -89,22 +94,13 @@ func (g *Graph) Merge(entities []Entity, relations []Relation) {
 			continue
 		}
 		r.From, r.To = from, to
+		r = NormalizeRelation(r)
 		k := relKey(r)
-		if seen[k] {
-			// Prefer an explicit relation when the same edge was previously
-			// stored as an inferred hint.
-			if r.Inferred {
-				continue
-			}
-			for i := range clean {
-				if relKey(clean[i]) == k && clean[i].Inferred {
-					clean[i] = r
-					break
-				}
-			}
+		if pos, exists := positions[k]; exists {
+			clean[pos] = MergeRelationTrust(clean[pos], r)
 			continue
 		}
-		seen[k] = true
+		positions[k] = len(clean)
 		clean = append(clean, r)
 	}
 	g.Relations = clean

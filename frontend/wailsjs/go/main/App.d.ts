@@ -46,6 +46,8 @@ export function ExcludeObservation(arg1:string,arg2:string,arg3:string):Promise<
 
 export function ExcludeSession(arg1:string,arg2:string):Promise<void>;
 
+export function ExportGraph(arg1:string,arg2:string):Promise<main.ExportResult>;
+
 export function GenerateArticle(arg1:string,arg2:string):Promise<string>;
 
 export function GenerateCommit(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:boolean):Promise<main.CommitDraft>;
@@ -54,11 +56,17 @@ export function GetEmbeddingConfig():Promise<main.EmbeddingConfig>;
 
 export function GetGraph(arg1:string):Promise<graph.Graph>;
 
+export function GetGraphHealth(arg1:string):Promise<graph.GraphHealth>;
+
 export function GetTask(arg1:string):Promise<task.Task>;
+
+export function ImportBundle(arg1:string,arg2:string,arg3:boolean):Promise<main.ImportResult>;
 
 export function IndexProject(arg1:string):Promise<void>;
 
 export function IndexSearch():Promise<void>;
+
+export function InspectBundle():Promise<main.BundleInfo>;
 
 export function InstallMCP():Promise<mcpinstall.Status>;
 
@@ -67,6 +75,8 @@ export function ListClaudeProjects():Promise<Array<claudedata.Project>>;
 export function ListClaudeSessions(arg1:string):Promise<Array<claudedata.SessionMeta>>;
 
 export function ListConversations():Promise<Array<model.Conversation>>;
+
+export function ListImportedBundles(arg1:string):Promise<Array<main.ImportedBundle>>;
 
 export function ListMemoryFiles(arg1:string):Promise<Array<claudedata.MemoryFile>>;
 
@@ -94,7 +104,11 @@ export function MatchKnowledge(arg1:string,arg2:string):Promise<main.KnowledgeMa
 
 export function NewConversation(arg1:string,arg2:string,arg3:string):Promise<model.Conversation>;
 
+export function PreviewExport(arg1:string,arg2:string):Promise<main.ExportPreview>;
+
 export function ReadClaudeSession(arg1:string,arg2:string):Promise<Array<claudedata.SessionMessage>>;
+
+export function RemoveImportedBundle(arg1:string,arg2:string):Promise<void>;
 
 export function RenameConversation(arg1:string,arg2:string):Promise<void>;
 
@@ -103,6 +117,10 @@ export function RenameEntity(arg1:string,arg2:string,arg3:string):Promise<void>;
 export function RepoStatus(arg1:string):Promise<gitx.RepoStatus>;
 
 export function ResumeCommand(arg1:string,arg2:string):Promise<string>;
+
+export function ReviewAssertion(arg1:string,arg2:string,arg3:string,arg4:string):Promise<void>;
+
+export function ReviewRelation(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string):Promise<void>;
 
 export function ReviewTask(arg1:string,arg2:string,arg3:string):Promise<void>;
 
@@ -135,6 +153,8 @@ export function TermStop(arg1:string):Promise<void>;
 export function TermWrite(arg1:string,arg2:string):Promise<void>;
 
 export function TestEmbedding():Promise<void>;
+
+export function UndoLastGraphReview(arg1:string):Promise<string>;
 
 export function UnexcludeObservation(arg1:string,arg2:string,arg3:string):Promise<void>;
 

@@ -7,7 +7,19 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
+
+type ReviewEvent struct {
+	Kind             string `json:"kind"` // assertion | relation
+	Key              string `json:"key"`
+	Description      string `json:"description"`
+	PreviousState    string `json:"previousState,omitempty"`
+	PreviousExcluded bool   `json:"previousExcluded,omitempty"`
+	NewState         string `json:"newState"`
+	At               int64  `json:"at"`
+	Undone           bool   `json:"undone,omitempty"`
+}
 
 // Exclusions is the per-project set of observations the user has chosen to keep
 // OUT of the assembled graph. It survives re-indexing: assembleGraph applies it
@@ -18,14 +30,80 @@ import (
 // session, so "I don't want this fact" holds globally — if several sessions
 // distilled the same fact, excluding it once removes it everywhere.
 type Exclusions struct {
-	Obs      map[string]bool `json:"obs"`                // set of ObsKey -> true (single facts)
-	Sessions map[string]bool `json:"sessions,omitempty"` // set of session id -> true (whole sessions)
+	Obs              map[string]bool   `json:"obs"`                        // set of ObsKey -> true (single facts)
+	Sessions         map[string]bool   `json:"sessions,omitempty"`         // set of session id -> true (whole sessions)
+	AssertionReviews map[string]string `json:"assertionReviews,omitempty"` // ObsKey -> verified|rejected|candidate
+	RelationReviews  map[string]string `json:"relationReviews,omitempty"`  // RelationKey -> verified|rejected|candidate
+	ReviewHistory    []ReviewEvent     `json:"reviewHistory,omitempty"`
 }
 
 // ObsKey is the stable identity of an observation: sha1 of the normalized
 // entity name + the trimmed observation text.
 func ObsKey(entityName, obsText string) string {
 	h := sha1.Sum([]byte(normKey(entityName) + "\x00" + strings.TrimSpace(obsText)))
+	return hex.EncodeToString(h[:])
+}
+
+// RecordReview appends an auditable governance decision while keeping enough
+// prior state to reverse an accidental action.
+func (ex *Exclusions) RecordReview(kind, key, description, state string) {
+	previous := ""
+	if kind == "assertion" {
+		previous = ex.AssertionReviews[key]
+	} else {
+		previous = ex.RelationReviews[key]
+	}
+	ex.ReviewHistory = append(ex.ReviewHistory, ReviewEvent{
+		Kind: kind, Key: key, Description: description, PreviousState: previous,
+		PreviousExcluded: ex.Obs[key], NewState: state, At: time.Now().UnixMilli(),
+	})
+}
+
+// UndoLatestReview restores the most recent active governance decision and
+// marks its audit event undone instead of deleting history.
+func (ex *Exclusions) UndoLatestReview() (string, bool) {
+	for i := len(ex.ReviewHistory) - 1; i >= 0; i-- {
+		event := &ex.ReviewHistory[i]
+		if event.Undone {
+			continue
+		}
+		var reviews map[string]string
+		if event.Kind == "assertion" {
+			reviews = ex.AssertionReviews
+			if event.PreviousExcluded {
+				ex.Obs[event.Key] = true
+			} else {
+				delete(ex.Obs, event.Key)
+			}
+		} else {
+			reviews = ex.RelationReviews
+		}
+		if event.PreviousState == "" {
+			delete(reviews, event.Key)
+		} else {
+			reviews[event.Key] = event.PreviousState
+		}
+		event.Undone = true
+		return event.Description, true
+	}
+	return "", false
+}
+
+func (ex *Exclusions) UndoableReviews() int {
+	count := 0
+	for _, event := range ex.ReviewHistory {
+		if !event.Undone {
+			count++
+		}
+	}
+	return count
+}
+
+// RelationKey is the stable identity of a directed, labelled relationship.
+// It deliberately excludes confidence/evidence so a review survives later
+// re-extraction of the same semantic edge with richer metadata.
+func RelationKey(from, to, label string) string {
+	h := sha1.Sum([]byte(normKey(from) + "\x00" + normKey(to) + "\x00" + normKey(label)))
 	return hex.EncodeToString(h[:])
 }
 
@@ -38,7 +116,7 @@ func exclusionsPath(dataDir, slug string) string {
 
 // LoadExclusions returns the project's exclusion set (empty, never nil, if none).
 func LoadExclusions(dataDir, slug string) (*Exclusions, error) {
-	ex := &Exclusions{Obs: map[string]bool{}}
+	ex := &Exclusions{Obs: map[string]bool{}, Sessions: map[string]bool{}, AssertionReviews: map[string]string{}, RelationReviews: map[string]string{}}
 	data, err := os.ReadFile(exclusionsPath(dataDir, slug))
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -52,6 +130,12 @@ func LoadExclusions(dataDir, slug string) (*Exclusions, error) {
 	}
 	if ex.Sessions == nil {
 		ex.Sessions = map[string]bool{}
+	}
+	if ex.RelationReviews == nil {
+		ex.RelationReviews = map[string]string{}
+	}
+	if ex.AssertionReviews == nil {
+		ex.AssertionReviews = map[string]string{}
 	}
 	return ex, nil
 }
@@ -77,29 +161,51 @@ func SaveExclusions(dataDir, slug string, ex *Exclusions) error {
 // from g in place. An entity left with zero observations is dropped entirely,
 // along with any relation that referenced it.
 func FilterExcluded(g *Graph, ex *Exclusions) {
-	if ex == nil || (len(ex.Obs) == 0 && len(ex.Sessions) == 0) {
+	if ex == nil || (len(ex.Obs) == 0 && len(ex.Sessions) == 0 && len(ex.AssertionReviews) == 0 && len(ex.RelationReviews) == 0) {
 		return
 	}
 	keptEnts := g.Entities[:0]
 	dropped := map[string]bool{} // normKey of entities removed for being empty
 	for _, e := range g.Entities {
-		obs := e.Observations[:0]
-		var src []string
-		for i, o := range e.Observations {
-			if ex.Obs[ObsKey(e.Name, o)] {
+		NormalizeEntityAssertions(&e)
+		hadAssertions := len(e.Assertions) > 0
+		assertions := e.Assertions[:0]
+		for _, assertion := range e.Assertions {
+			assertionKey := ObsKey(e.Name, assertion.Text)
+			if ex.Obs[assertionKey] {
 				continue // single fact excluded
 			}
-			if s := obsSourceAt(e.ObsSources, i); s != "" && ex.Sessions[s] {
-				continue // its whole source session is excluded
+			if len(assertion.Sources) > 0 && len(ex.Sessions) > 0 {
+				activeSources := assertion.Sources[:0]
+				for _, source := range assertion.Sources {
+					if !ex.Sessions[source] {
+						activeSources = append(activeSources, source)
+					}
+				}
+				if len(activeSources) == 0 {
+					continue
+				}
+				assertion.Sources = activeSources
 			}
-			obs = append(obs, o)
-			if s := obsSourceAt(e.ObsSources, i); s != "" || len(e.ObsSources) > 0 {
-				src = append(src, s)
+			switch ex.AssertionReviews[assertionKey] {
+			case RelationRejected:
+				continue
+			case RelationVerified:
+				assertion.State = RelationVerified
+				assertion.Confidence = 1
+			case RelationCandidate:
+				assertion.State = RelationCandidate
+				if assertion.Confidence <= 0 || assertion.Confidence > 0.6 {
+					assertion.Confidence = 0.45
+				}
 			}
+			assertions = append(assertions, NormalizeAssertion(assertion))
 		}
-		e.Observations = obs
-		e.ObsSources = src
-		if len(e.Observations) == 0 {
+		e.Assertions = assertions
+		e.Observations = nil
+		e.ObsSources = nil
+		NormalizeEntityAssertions(&e)
+		if hadAssertions && len(e.Assertions) == 0 {
 			dropped[normKey(e.Name)] = true
 			continue
 		}
@@ -107,16 +213,40 @@ func FilterExcluded(g *Graph, ex *Exclusions) {
 	}
 	g.Entities = keptEnts
 
-	if len(dropped) > 0 {
-		rels := g.Relations[:0]
-		for _, r := range g.Relations {
-			if dropped[normKey(r.From)] || dropped[normKey(r.To)] {
+	rels := g.Relations[:0]
+	for _, r := range g.Relations {
+		if dropped[normKey(r.From)] || dropped[normKey(r.To)] {
+			continue
+		}
+		if len(r.Sources) > 0 && len(ex.Sessions) > 0 {
+			activeSources := r.Sources[:0]
+			for _, source := range r.Sources {
+				if !ex.Sessions[source] {
+					activeSources = append(activeSources, source)
+				}
+			}
+			if len(activeSources) == 0 {
 				continue
 			}
-			rels = append(rels, r)
+			r.Sources = activeSources
 		}
-		g.Relations = rels
+		switch ex.RelationReviews[RelationKey(r.From, r.To, r.Label)] {
+		case RelationRejected:
+			continue
+		case RelationVerified:
+			r.State = RelationVerified
+			r.Inferred = false
+			r.Confidence = 1
+		case RelationCandidate:
+			r.State = RelationCandidate
+			r.Inferred = true
+			if r.Confidence <= 0 || r.Confidence > 0.6 {
+				r.Confidence = 0.45
+			}
+		}
+		rels = append(rels, NormalizeRelation(r))
 	}
+	g.Relations = rels
 }
 
 // obsSourceAt safely reads ObsSources[i] (empty when shorter/absent).

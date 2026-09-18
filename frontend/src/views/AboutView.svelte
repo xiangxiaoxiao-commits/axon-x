@@ -111,7 +111,7 @@
             <li>对图谱里<strong>每个带向量的实体</strong>算 query 的余弦,过滤掉低于阈值的(云端 <code>0.30</code>,本地词面向量因分布偏低用 <code>0.12</code>)。</li>
             <li>按分数降序排序,<strong>取 top-<code>8</code></strong> 作为"语义种子"(<code>seedTopK=8</code>)。这就是 top-k:全量打分 → 排序 → 截断前 k 个。</li>
             <li>再叠加<strong>关键词通道</strong>:实体名/别名在 query 里字面出现即命中。</li>
-            <li>两路用 RRF 融合(见 ⑤),然后<strong>沿关系扩展一跳</strong>(<code>expandHops=1</code>,无向):把种子的直接邻居也拉进来,补上"相关但没被直接命中"的上下游节点。</li>
+            <li>两路用 RRF 融合(见 ⑤),然后只沿<strong>可信的正向关系</strong>扩展一跳(<code>expandHops=1</code>)。候选、低置信度和反向关系都不会扩大事实上下文。</li>
           </ul>
           <p><strong>通道 B — 原文片段</strong>(找可直接引用的原文):</p>
           <ul>
@@ -141,14 +141,36 @@
 
           <h4>建索引:从历史对话蒸馏(IndexProject)</h4>
           <p>
-            读 Claude Code 在 <code>~/.claude/projects</code> 下的会话记录,<strong>逐会话</strong>处理:
+            按<strong>项目/命名空间</strong>扫描四种 Agent 的本地会话记录(Claude Code 的
+            <code>~/.claude/projects</code>、Codex 的 <code>~/.codex</code>、WorkBuddy 与
+            CodeBuddy 的 <code>projects</code>),<strong>逐会话</strong>处理。归属靠会话自己记录的
+            <code>cwd</code> 找到最近的 <code>.axon-project</code> 标记,所以一个命名空间会横跨多个仓库目录;
+            目录名(Claude Code 的路径编码)不参与匹配。开始前会先报告发现了多少个会话、以及有多少个会话不属于任何命名空间。
           </p>
           <ul>
             <li><strong>拼接文本</strong>:把 user/assistant 消息拼成对话文本,上限 <code>16000</code> 字符;超了<strong>保留最新的轮次</strong>(结论通常在后面)。</li>
             <li><strong>LLM 蒸馏</strong>:用一个理解力强的模型(<code>gpt-5.6-sol</code>,温度 0.1)按固定提示词只提炼"下次还用得上"的持久知识——模块/服务/概念、关键决策及理由、踩过的坑与约束;<strong>丢弃</strong>寒暄、日志、报错、一次性操作、被否定的方案。强制输出严格 JSON:<code>entities</code>(name/type/aliases/observations)+ <code>relations</code>(from/label/to)。</li>
-            <li><strong>溯源打戳</strong>:每条 observation 记下来自哪个会话 id,后续注入时能显示"这条知识来自 xx 会话"。</li>
+            <li><strong>溯源打戳</strong>:每条 observation 和 relation 都记下来源；关系还带 evidence、confidence 与审核状态，后续注入时能解释“为什么存在、是否可信”。</li>
             <li><strong>原文分块</strong>:把整段会话切成 chunk 存入"原文通道",连同实体一起 embedding。</li>
             <li><strong>增量 + 缓存</strong>:结果按会话存成 cache 文件。再次建索引<strong>只处理新增/改动</strong>的会话(按文件 mtime 判断);已缓存的直接跳过,不重复烧 token。若只是缓存 schema 升级,会复用旧的蒸馏结果、只补新字段。</li>
+            <li><strong>快速筛除</strong>:先用每个会话文件开头的 <code>cwd</code> 判断归属,不匹配的只读几十行、不做全量解析,几百个会话也能秒级筛完。</li>
+          </ul>
+
+          <h4>导出 / 导入知识包(团队共享)</h4>
+          <p>
+            导出把一个命名空间的知识整理成单个 <code>&lt;命名空间&gt;.axon-graph.json</code>。<strong>只带走知识本体</strong>——实体、事实、关系;
+            原始对话片段、向量、来源会话 ID、审核与剔除历史都<strong>不出本机</strong>,因为它们描述的是你自己的机器和工作过程。
+          </p>
+          <ul>
+            <li><strong>自动剪除</strong>:本地绝对路径(家目录 / 盘符 / UNC / 临时目录)、API key 与 token、连接串内嵌密码、邮箱手机、
+              UUID 与会话 ID、账号工号、私网地址。路径<strong>只保留最后一级名字</strong>(<code>/Users/me/projects/mono-glite</code> →
+              <code>&lt;本地路径&gt;/mono-glite</code>),业务含义不丢,同时 Mac 与 Windows 互相导入都干净。</li>
+            <li><strong>两档级别</strong>:<code>标准</code> 去个人与机器信息;<code>严格</code> 额外去工单号、内部主机名与端口。</li>
+            <li><strong>导出前可核对</strong>:预览会列出每类规则命中多少次,并给出真实片段的「脱敏前 → 脱敏后」对照;
+              同时说明哪些内容不随文件走、哪些知识因剪除而损失。脱敏报告写进文件时会去掉样例——否则等于把刚删掉的内容又夹带回去。</li>
+            <li><strong>导入不破坏任何东西</strong>:知识包写成一份独立缓存(<code>import:&lt;内容指纹&gt;</code>),不覆盖既有知识;
+              同一份文件重复导入幂等,且可整包移除。</li>
+            <li><strong>导出是只读操作</strong>:本地图谱、会话缓存与剔除记录都不受影响。</li>
           </ul>
 
           <h4>从代码建图:静态骨架 + 业务富化(BuildGraphFromCode)</h4>
@@ -196,7 +218,7 @@
 
           <h4>人工校正:保证质量</h4>
           <p>
-            自动抽取难免有噪音。知识视图支持<strong>删实体、改 observations、合并别名</strong>——去噪和纠错后,别名归一会持续生效。<strong>图谱质量比数量重要</strong>:宁可少而准。
+            自动抽取难免有噪音。知识视图支持<strong>审核/删除事实与关系、编辑事实、删除实体</strong>,审核结果跨重新建图保留；健康度面板会提示候选、无来源、过期、冲突和孤立知识。<strong>图谱质量比数量重要</strong>:宁可少而准。
           </p>
         </div>
       </details>

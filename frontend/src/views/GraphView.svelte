@@ -5,12 +5,13 @@
   // node color encodes entity type (with a legend). Click a node to re-focus,
   // drag to nudge. The focus node's facts float beside the canvas.
   import { onMount, onDestroy } from "svelte";
-  import { BuildGraph, GetGraph, IndexProject, GenerateArticle, BuildGraphFromCode, BuildGraphFromObsidian, DeleteEntity, UpdateEntityObservations, ListProviders, MCPStatus, GetEmbeddingConfig, BuildMultiGraph } from "../../wailsjs/go/main/App.js";
+  import { BuildGraph, GetGraph, GetGraphHealth, IndexProject, GenerateArticle, BuildGraphFromCode, BuildGraphFromObsidian, DeleteEntity, UpdateEntityObservations, ReviewRelation, ReviewAssertion, UndoLastGraphReview, ListProviders, MCPStatus, GetEmbeddingConfig, BuildMultiGraph } from "../../wailsjs/go/main/App.js";
   import { EventsOn, EventsOff } from "../../wailsjs/runtime/runtime.js";
   import type { graph } from "../../wailsjs/go/models";
   import { currentProject, indexRequest, selectedNamespaces } from "../lib/stores";
   import { marked } from "marked";
   import Onboarding from "./Onboarding.svelte";
+  import PortablePanel from "../lib/PortablePanel.svelte";
 
   // Onboarding status (drives the empty-state checklist). Refreshed on mount and
   // whenever the graph reloads, so completed steps tick off as the user goes.
@@ -27,8 +28,20 @@
   }
 
   let g: graph.Graph | null = null;
+  let health: graph.GraphHealth | null = null;
+  let showHealth = false;
   let indexing = false;
   let progress = "";
+
+  // Human labels for the per-agent index phases the backend emits.
+  const AGENT_LABEL: Record<string, string> = {
+    claude: "Claude Code",
+    codex: "Codex",
+    buddy: "WorkBuddy / CodeBuddy",
+  };
+
+  // Export / import panel (hand a curated graph to a colleague, privacy-scrubbed).
+  let showPortable = false;
 
   // "+ 知识来源" dropdown: groups the three ingest actions (index sessions /
   // build from code / absorb Obsidian) so the toolbar stays uncluttered.
@@ -45,7 +58,8 @@
   let showVaultInput = false;
   let vaultDir = "";
 
-  type Ent = { name: string; type: string; obs: string[]; sources: string[] };
+  type AssertionView = { text: string; state: string; confidence: number; sources: string[]; observedAt: number; validUntil: number };
+  type Ent = { name: string; type: string; obs: string[]; sources: string[]; assertions: AssertionView[] };
   let byName: Record<string, Ent> = {};
 
   // Degree (connection count) per entity — drives node radius.
@@ -65,7 +79,10 @@
     x: number; y: number; vx: number; vy: number;
     r: number; fixed: boolean; i: number;
   };
-  type Edge = { a: number; b: number; label: string; inferred: boolean };
+  type Edge = {
+    a: number; b: number; label: string; inferred: boolean;
+    confidence: number; state: string; sources: string[]; evidence: string[];
+  };
   let nodes: Node[] = [];
   let edges: Edge[] = [];
   const W = 900, H = 640;
@@ -110,8 +127,21 @@
         progress = p.error ? `跳过: ${p.error}` : `正在从代码建图… 文件 ${p.current ?? ""}`;
       } else if (p?.phase === "obsidian") {
         progress = p.error ? `跳过: ${p.error}` : `正在吸收 Obsidian 笔记… ${p.current ?? ""}`;
+      } else if (p?.warning) {
+        progress = String(p.warning);
+      } else if (p?.phase === "discover") {
+        // Report what the scan found before any model call, and say out loud how
+        // many sessions belong to no namespace — otherwise "只找到几个会话" is
+        // indistinguishable from a scanner bug.
+        const parts = [`Claude ${p.claude ?? 0}`, `Codex ${p.codex ?? 0}`, `Buddy ${p.buddy ?? 0}`];
+        progress = `发现 ${p.total ?? 0} 个会话（${parts.join(" · ")}）` +
+          (p.unmanaged ? `；另有 ${p.unmanaged} 个会话不属于任何命名空间，已跳过` : "") +
+          `，开始蒸馏…`;
       } else {
-        progress = p.error ? `跳过一个会话: ${p.error}` : `建立索引中… ${p.current}/${p.total}`;
+        const who = AGENT_LABEL[p?.phase] ?? "";
+        progress = p.error
+          ? `跳过一个会话: ${p.error}`
+          : `建立索引中${who ? `（${who}）` : ""}… ${p.current}/${p.total}`;
       }
     });
     EventsOn("graph:done", async (p: any) => {
@@ -123,7 +153,11 @@
         obsBuilding = false; showVaultInput = false;
         progress = `吸收完成：${p.entities} 个节点`;
       } else {
-        indexing = false; progress = `完成：${p.entities} 个节点`;
+        indexing = false;
+        // The index pass emits processed/total, not an entity count — reading
+        // p.entities here used to print "完成：undefined 个节点".
+        progress = `完成：${p.namespace ?? $currentProject} 蒸馏了 ${p.processed ?? 0}/${p.total ?? 0} 个会话` +
+          (p.unmanaged ? `（有 ${p.unmanaged} 个会话不属于任何命名空间，未纳入）` : "");
       }
       await load();
       refreshOnboarding();
@@ -166,17 +200,29 @@
         const active = slugs[0];
         currentProject.set(active);
         g = fromStore ? await GetGraph(active) : await BuildGraph(active);
+        health = await GetGraphHealth(active);
       } else if ($currentProject) {
         g = fromStore ? await GetGraph($currentProject) : await BuildGraph($currentProject);
+        health = await GetGraphHealth($currentProject);
       } else {
         g = null;
+        health = null;
       }
     }
     catch (e) { console.error(e); g = null; }
     finally { loaded = true; }
     byName = {}; deg = {}; adj = new Map(); maxDeg = 0; colorOf = {};
     if (!g?.entities?.length) { focus = ""; nodes = []; edges = []; return; }
-    for (const e of g.entities) byName[e.name.toLowerCase()] = { name: e.name, type: e.type, obs: e.observations || [], sources: e.obsSources || [] };
+    for (const e of g.entities) {
+      const legacy = (e.observations || []).map((text, i) => ({
+        text, state: "asserted", confidence: .85,
+        sources: e.obsSources?.[i] ? [e.obsSources[i]] : [], observedAt: 0, validUntil: 0,
+      }));
+      byName[e.name.toLowerCase()] = {
+        name: e.name, type: e.type, obs: e.observations || [], sources: e.obsSources || [],
+        assertions: (e.assertions?.length ? e.assertions : legacy) as AssertionView[],
+      };
+    }
     // Degree + adjacency in one pass over relations.
     const touch = (n: string) => { if (!adj.has(n)) adj.set(n, new Set()); };
     for (const r of g.relations || []) {
@@ -261,7 +307,12 @@
       const prior = emap.get(key);
       // If both forms exist, the explicit relation wins over the weak hint.
       if (!prior || (prior.inferred && !r.inferred)) {
-        emap.set(key, { a: ai, b: bi, label: r.label, inferred: !!r.inferred });
+        emap.set(key, {
+          a: ai, b: bi, label: r.label, inferred: !!r.inferred,
+          confidence: r.confidence || (r.inferred ? 0.45 : 0.85),
+          state: r.state || (r.inferred ? "candidate" : "asserted"),
+          sources: r.sources || [], evidence: r.evidence || [],
+        });
       }
     }
     edges = [...emap.values()];
@@ -392,7 +443,7 @@
   // Edge endpoints resolved to live node positions (reactive on nodes).
   $: edgeViews = edges.map((e) => {
     const a = nodes[e.a], b = nodes[e.b];
-    return a && b ? { a: a.name, b: b.name, label: e.label, inferred: e.inferred, x1: a.x, y1: a.y, x2: b.x, y2: b.y } : null;
+    return a && b ? { ...e, a: a.name, b: b.name, x1: a.x, y1: a.y, x2: b.x, y2: b.y } : null;
   }).filter((x): x is NonNullable<typeof x> => x !== null);
 
   // Legend: only the types actually visible right now.
@@ -408,6 +459,15 @@
   }
 
   $: focusEnt = byName[focus.toLowerCase()];
+  $: focusRelations = (g?.relations || []).filter((r) => r.from === focus || r.to === focus);
+
+  // After an import (or a removal) the affected namespace's graph changed; if it
+  // is the one on screen, reload it so the new knowledge is immediately visible.
+  async function onPortableChanged(ns: string) {
+    if (ns === $currentProject || ($selectedNamespaces.length && $selectedNamespaces[0] === ns)) {
+      await load();
+    }
+  }
 
   async function indexProject() {
     if (indexing) return;
@@ -510,6 +570,37 @@
       await load(true); // deleted node is gone; focus falls back to the hub
     } catch (e: any) { editErr = "删除失败: " + (e?.message || e); saving = false; }
   }
+
+  async function reviewRelation(r: graph.Relation, state: "verified" | "candidate" | "rejected") {
+    if (saving) return;
+    saving = true; editErr = "";
+    try {
+      await ReviewRelation($currentProject, r.from, r.to, r.label, state);
+      await load(true);
+    } catch (e: any) { editErr = "关系审核失败: " + (e?.message || e); }
+    finally { saving = false; }
+  }
+
+  async function reviewAssertion(text: string, state: "verified" | "candidate" | "rejected") {
+    if (saving || !focusEnt) return;
+    saving = true; editErr = "";
+    try {
+      await ReviewAssertion($currentProject, focusEnt.name, text, state);
+      await load(true);
+    } catch (e: any) { editErr = "事实审核失败: " + (e?.message || e); }
+    finally { saving = false; }
+  }
+
+  async function undoLastReview() {
+    if (saving || !health?.canUndo) return;
+    saving = true; editErr = "";
+    try {
+      const target = await UndoLastGraphReview($currentProject);
+      progress = `已撤销：${target}`;
+      await load(true);
+    } catch (e: any) { editErr = "撤销失败: " + (e?.message || e); }
+    finally { saving = false; }
+  }
 </script>
 
 <div class="wrap neural-bg">
@@ -527,7 +618,7 @@
         <div class="src-pop">
           <button class="src-item" on:click={() => { showSources = false; indexProject(); }}>
             <span class="si-t">💬 从历史对话建索引</span>
-            <span class="si-d">读这个项目的 Claude Code 会话并提炼知识</span>
+            <span class="si-d">扫描这个项目/命名空间下 Claude Code、Codex、WorkBuddy 的历史会话并提炼知识</span>
           </button>
           <button class="src-item" on:click={() => { showSources = false; showVaultInput = false; if ($currentProject) showRepoInput = true; else progress = '先在左下角选一个项目'; }}>
             <span class="si-t">🧬 从代码建图</span>
@@ -540,6 +631,9 @@
         </div>
       {/if}
     </div>
+
+    <button class="b" on:click={() => (showPortable = true)} disabled={!$currentProject}
+      title="把一个命名空间的知识导出成文件，或导入同事给你的知识包">⇅ 导出 / 导入</button>
 
     {#if showRepoInput}
       <input class="term repo" placeholder="仓库绝对路径，如 /Users/me/project" bind:value={repoDir}
@@ -564,6 +658,32 @@
     {#if mode === "article"}<button class="b ghost" on:click={() => (mode = "graph")}>← 回图谱</button>{/if}
     {#if progress}<span class="prog">{progress}</span>{/if}
     <span class="spacer"></span>
+    {#if health}
+      <button class="health-chip" class:warn={health.score < 80} on:click={() => (showHealth = !showHealth)}>
+        健康度 {health.score}
+      </button>
+      {#if showHealth}
+        <div class="health-pop">
+          <div class="health-head"><b>图谱健康度 {health.score}/100</b><button on:click={() => (showHealth = false)}>×</button></div>
+          <div class="health-grid">
+            <span>事实 <b>{health.trustedAssertions}/{health.assertions}</b></span>
+            <span>关系 <b>{health.trustedRelations}/{health.relations}</b></span>
+            <span>候选关系 <b>{health.candidateRelations}</b></span>
+            <span>冲突事实 <b>{health.conflictingAssertions}</b></span>
+            <span>孤立实体 <b>{health.isolatedEntities}</b></span>
+          </div>
+          {#if health.issues.length}
+            <div class="health-issues">
+              {#each health.issues as issue}<div class:err={issue.level === "error"}>• {issue.message}（{issue.count}）</div>{/each}
+            </div>
+          {:else}<div class="health-ok">没有发现明显质量问题</div>{/if}
+          <div class="health-audit">
+            <span>治理记录 {health.governanceActions}</span>
+            <button on:click={undoLastReview} disabled={saving || !health.canUndo}>撤销上次审核</button>
+          </div>
+        </div>
+      {/if}
+    {/if}
     {#if g}<span class="stat">{g.entities?.length || 0} 神经元 · 显示 {nodes.length}</span>{/if}
   </div>
 
@@ -590,7 +710,9 @@
         <!-- edges -->
         {#each edgeViews as e (e.a + '|' + e.b)}
           <line x1={e.x1} y1={e.y1} x2={e.x2} y2={e.y2}
-            class="axon" class:inferred={e.inferred} class:fire={firing === e.a || firing === e.b} class:hot={edgeHot(e.a, e.b)} />
+            class="axon" class:inferred={e.inferred} class:fire={firing === e.a || firing === e.b} class:hot={edgeHot(e.a, e.b)}>
+            <title>{e.a} —{e.label}→ {e.b} · {Math.round(e.confidence * 100)}% · {e.state}{e.evidence.length ? ` · ${e.evidence.join("；")}` : ""}</title>
+          </line>
         {/each}
         {#each edgeViews as e (e.a + '|' + e.b)}
           {#if e.label && edgeHot(e.a, e.b)}
@@ -618,6 +740,8 @@
           {#each legend as l}
             <span class="l-item"><i style="background:{l.color}"></i>{l.type}</span>
           {/each}
+          <span class="rel-legend"><i class="rel-solid"></i>事实关系</span>
+          <span class="rel-legend"><i class="rel-dashed"></i>待验证关联</span>
         </div>
       {/if}
 
@@ -646,20 +770,50 @@
             </div>
           {:else}
             <ul>
-              {#each focusEnt.obs as o, i}
+              {#each focusEnt.assertions as assertion, i}
                 <li class="selectable">
-                  {o}
-                  {#if sourceLabel(focusEnt.sources[i] || "")}
-                    <span class="src" class:manual={focusEnt.sources[i] === "manual"}>{sourceLabel(focusEnt.sources[i] || "")}</span>
-                  {/if}
+                  <div>{assertion.text}</div>
+                  <div class="assert-meta">
+                    <span class="assert-trust" class:verified={assertion.state === "verified"}>{assertion.state} · {Math.round(assertion.confidence * 100)}%</span>
+                    {#if assertion.sources?.length && sourceLabel(assertion.sources[0])}
+                      <span class="src" class:manual={assertion.sources[0] === "manual"}>{sourceLabel(assertion.sources[0])}{assertion.sources.length > 1 ? ` +${assertion.sources.length - 1}` : ""}</span>
+                    {/if}
+                    <span class="assert-actions">
+                      {#if assertion.state !== "verified"}<button on:click={() => reviewAssertion(assertion.text, "verified")} disabled={saving}>确认</button>{/if}
+                      {#if assertion.state !== "candidate"}<button on:click={() => reviewAssertion(assertion.text, "candidate")} disabled={saving}>降级</button>{/if}
+                      <button class="danger" on:click={() => reviewAssertion(assertion.text, "rejected")} disabled={saving}>删除</button>
+                    </span>
+                  </div>
                 </li>
               {/each}
-              {#if focusEnt.obs.length === 0}<li class="muted">（这个神经元还没有记录的事实）</li>{/if}
+              {#if focusEnt.assertions.length === 0}<li class="muted">（这个神经元还没有记录的事实）</li>{/if}
             </ul>
             <div class="edit-actions">
               <button class="b sm ghost" on:click={startEdit}>✏️ 编辑事实</button>
               <span class="spacer"></span>
               <button class="b sm danger" on:click={removeEntity} disabled={saving}>🗑 删除此实体</button>
+            </div>
+          {/if}
+
+          {#if !editing && focusRelations.length}
+            <div class="rel-section">
+              <div class="rel-title">关系 · {focusRelations.length}</div>
+              {#each focusRelations as r (r.from + '|' + r.label + '|' + r.to)}
+                <div class="rel-card" class:candidate={r.inferred || r.state === "candidate"}>
+                  <div class="rel-line">{r.from} <b>—{r.label}→</b> {r.to}</div>
+                  <div class="rel-meta">
+                    <span>{r.state || (r.inferred ? "candidate" : "asserted")}</span>
+                    <span>{Math.round((r.confidence || (r.inferred ? .45 : .85)) * 100)}%</span>
+                    {#if r.sources?.length}<span>{r.sources.length} 个来源</span>{/if}
+                  </div>
+                  {#if r.evidence?.length}<div class="rel-evidence">依据：{r.evidence.join("；")}</div>{/if}
+                  <div class="rel-actions">
+                    {#if r.state !== "verified"}<button on:click={() => reviewRelation(r, "verified")} disabled={saving}>确认</button>{/if}
+                    {#if r.state !== "candidate"}<button on:click={() => reviewRelation(r, "candidate")} disabled={saving}>降为候选</button>{/if}
+                    <button class="danger" on:click={() => reviewRelation(r, "rejected")} disabled={saving}>删除</button>
+                  </div>
+                </div>
+              {/each}
             </div>
           {/if}
 
@@ -669,6 +823,11 @@
       {/if}
     {/if}
   </div>
+  {#if showPortable}
+    <PortablePanel namespace={$currentProject} onClose={() => (showPortable = false)}
+      onChanged={onPortableChanged} />
+  {/if}
+
 </div>
 
 <style>
@@ -707,6 +866,18 @@
   .si-t { font-size: 12.5px; color: var(--text-primary); font-weight: 600; }
   .si-d { font-size: 11px; color: var(--text-muted); }
   .spacer { flex: 1; }
+  .health-chip { border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--border)); background: transparent; color: var(--accent); border-radius: 999px; padding: 3px 9px; font-size: 10px; cursor: pointer; }
+  .health-chip.warn { color: #fb923c; border-color: #fb923c; }
+  .health-pop { position: absolute; right: 12px; top: 42px; width: 310px; z-index: 8; padding: 12px; background: var(--bg-surface); border: 1px solid var(--border); border-radius: var(--radius-card); box-shadow: 0 12px 32px rgba(0,0,0,.28); }
+  .health-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 9px; }
+  .health-head button { border: 0; background: transparent; color: var(--text-muted); cursor: pointer; }
+  .health-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; color: var(--text-muted); font-size: 11px; }
+  .health-grid b { color: var(--text-primary); }
+  .health-issues { margin-top: 9px; padding-top: 8px; border-top: 1px solid var(--border); color: var(--text-muted); font-size: 10.5px; line-height: 1.55; }
+  .health-issues .err { color: var(--danger); }
+  .health-ok { margin-top: 9px; color: var(--accent); font-size: 11px; }
+  .health-audit { display: flex; align-items: center; justify-content: space-between; margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border); color: var(--text-muted); font-size: 10px; }
+  .health-audit button { border: 1px solid var(--border); background: transparent; color: var(--text-muted); border-radius: 4px; padding: 2px 6px; font-size: 10px; }
   .stage { flex: 1; position: relative; min-height: 0; overflow: hidden; z-index: 1; }
   .canvas { width: 100%; height: 100%; }
   .empty { padding: 40px; color: var(--text-muted); max-width: 560px; line-height: 1.6; }
@@ -717,6 +888,9 @@
   .axon.hot { stroke: #FDE68A; stroke-width: 1.6; }
   .axon.fire { stroke: #FBBF24; stroke-width: 3; filter: drop-shadow(0 0 4px #FBBF24); }
   .axon-label { fill: var(--text-muted); font-size: 9px; text-anchor: middle; }
+  .rel-legend { display: inline-flex; align-items: center; gap: 5px; }
+  .rel-legend i { width: 18px; height: 0; border-top: 2px solid var(--text-muted); }
+  .rel-legend .rel-dashed { border-top-style: dashed; opacity: .65; }
 
   .neuron { cursor: pointer; }
   .neuron circle { transition: filter 0.2s; stroke: rgba(0,0,0,0.35); stroke-width: 1; }
@@ -748,6 +922,25 @@
   .facts ul { margin: 0; padding-left: 18px; }
   .facts li { font-size: 12.5px; line-height: 1.55; margin-bottom: 5px; }
   .facts li.muted { color: var(--text-muted); list-style: none; }
+  .assert-trust { display: inline-block; margin-left: 5px; color: var(--text-muted); font-size: 9px; border: 1px solid var(--border); border-radius: 3px; padding: 0 4px; }
+  .assert-trust.verified { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+  .assert-meta { display: flex; align-items: center; gap: 5px; margin-top: 4px; }
+  .assert-actions { display: inline-flex; gap: 4px; margin-left: auto; }
+  .assert-actions button { border: 1px solid var(--border); background: transparent; color: var(--text-muted); border-radius: 4px; padding: 1px 5px; font-size: 9px; cursor: pointer; }
+  .assert-actions button:hover { color: var(--text-primary); border-color: var(--accent); }
+  .assert-actions button.danger:hover { color: var(--danger); border-color: var(--danger); }
+  .rel-section { margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--border); }
+  .rel-title { font-size: 11px; color: var(--text-muted); margin-bottom: 7px; }
+  .rel-card { padding: 8px; margin-bottom: 7px; border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--bg-elevated); }
+  .rel-card.candidate { border-style: dashed; opacity: .82; }
+  .rel-line { font-size: 11.5px; overflow-wrap: anywhere; }
+  .rel-line b { color: var(--accent); font-weight: 500; }
+  .rel-meta { display: flex; gap: 8px; margin-top: 4px; color: var(--text-muted); font-size: 10px; }
+  .rel-evidence { margin-top: 5px; color: var(--text-muted); font-size: 10.5px; line-height: 1.45; }
+  .rel-actions { display: flex; justify-content: flex-end; gap: 5px; margin-top: 6px; }
+  .rel-actions button { border: 1px solid var(--border); background: transparent; color: var(--text-muted); border-radius: 4px; padding: 2px 6px; font-size: 10px; cursor: pointer; }
+  .rel-actions button:hover { color: var(--text-primary); border-color: var(--accent); }
+  .rel-actions button.danger:hover { color: var(--danger); border-color: var(--danger); }
   .f-hint { margin-top: 10px; font-size: 11px; color: var(--text-muted); }
 
   /* Provenance tag on each fact. */

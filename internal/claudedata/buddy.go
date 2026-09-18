@@ -47,22 +47,23 @@ type buddyContentBlock struct {
 }
 
 // ListBuddySessions returns all WorkBuddy + CodeBuddy sessions as SessionMeta.
-// If projectSlug is non-empty, filters by .axon-project resolution.
-func ListBuddySessions(projectSlug string) ([]SessionMeta, error) {
-	return listBuddySessions(projectSlug, false)
+// If namespace is non-empty, only sessions whose cwd resolves (via .axon-project)
+// to that namespace are returned.
+func ListBuddySessions(namespace string) ([]SessionMeta, error) {
+	return listBuddySessions(namespace, false)
 }
 
 // ListAllBuddySessions includes nested subagent transcripts for the session
 // browser. Knowledge indexing continues to use ListBuddySessions so parent and
 // subagent content are not both distilled.
-func ListAllBuddySessions(projectSlug string) ([]SessionMeta, error) {
-	return listBuddySessions(projectSlug, true)
+func ListAllBuddySessions(namespace string) ([]SessionMeta, error) {
+	return listBuddySessions(namespace, true)
 }
 
-func listBuddySessions(projectSlug string, recursive bool) ([]SessionMeta, error) {
+func listBuddySessions(namespace string, recursive bool) ([]SessionMeta, error) {
 	var all []SessionMeta
 	for _, agent := range buddyAgents {
-		sessions, err := listBuddyAgentSessions(agent, projectSlug, recursive)
+		sessions, err := listBuddyAgentSessions(agent, namespace, recursive)
 		if err != nil {
 			continue // agent not installed, skip
 		}
@@ -72,7 +73,7 @@ func listBuddySessions(projectSlug string, recursive bool) ([]SessionMeta, error
 	return all, nil
 }
 
-func listBuddyAgentSessions(agent buddyAgent, projectSlug string, recursive bool) ([]SessionMeta, error) {
+func listBuddyAgentSessions(agent buddyAgent, namespace string, recursive bool) ([]SessionMeta, error) {
 	root, err := buddyRoot(agent)
 	if err != nil {
 		return nil, err
@@ -91,17 +92,51 @@ func listBuddyAgentSessions(agent buddyAgent, projectSlug string, recursive bool
 		pdir := filepath.Join(projDir, projEntry.Name())
 		files, _ := sessionFiles(pdir, recursive)
 		for _, fpath := range files {
+			// Cheap reject before the full parse, same as the Claude and Codex
+			// scanners: a session from another namespace should cost one small read,
+			// not a full transcript parse.
+			if namespace != "" {
+				if cwd := probeBuddyCwd(fpath); cwd != "" && ResolveNamespace(cwd) != namespace {
+					continue
+				}
+			}
 			meta := scanBuddyMeta(fpath, agent)
 			if meta.ID == "" {
 				continue
 			}
-			if projectSlug != "" && meta.ProjectSlug != projectSlug {
+			if namespace != "" && meta.Namespace != namespace {
 				continue
 			}
 			out = append(out, meta)
 		}
 	}
 	return out, nil
+}
+
+// buddyProbeLines bounds probeBuddyCwd.
+const buddyProbeLines = 40
+
+// probeBuddyCwd returns the working directory recorded on a buddy session's
+// early records, or "" when none appears near the head of the file.
+func probeBuddyCwd(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 16*1024), 1<<20)
+	for n := 0; n < buddyProbeLines && sc.Scan(); n++ {
+		var entry buddyEntry
+		if json.Unmarshal(sc.Bytes(), &entry) != nil {
+			continue
+		}
+		if entry.Cwd != "" {
+			return entry.Cwd
+		}
+	}
+	return ""
 }
 
 // scanBuddyMeta reads the first few lines to extract metadata.
@@ -148,7 +183,7 @@ func scanBuddyMeta(path string, agent buddyAgent) SessionMeta {
 		sessionID = strings.TrimSuffix(filepath.Base(path), ".jsonl")
 	}
 
-	slug := resolveProjectFromCwd(cwd)
+	slug := ResolveNamespace(cwd)
 
 	return SessionMeta{
 		ID:           agent.Name + ":" + sessionID,
@@ -159,6 +194,8 @@ func scanBuddyMeta(path string, agent buddyAgent) SessionMeta {
 		SizeBytes:    size,
 		Cwd:          cwd,
 		Model:        agent.Name,
+		File:         path,
+		Namespace:    slug,
 	}
 }
 

@@ -63,7 +63,8 @@ const extractPrompt = `你是一个知识提炼器。从下面的对话中，只
 - 不要因为两个实体同时出现、属于同一项目/模块，或可以“推测有关”就连边。
 - 无法确认关系类型、方向或关系强度时，宁可不输出关系；实体本身仍可保留。
 - 不要为了让图谱连通、完整或好看而补关系。关系数量少是正常的。
-- 如果确实存在“可能有关但证据不足”的上下文关联，只有在它对人工探索有帮助时才输出，并将 inferred 设为 true；这类关系必须使用虚线展示，不能当作事实。
+- 如果确实存在“可能有关但证据不足”的上下文关联，只有在它对人工探索有帮助时才输出，并将 inferred 设为 true、state 设为 candidate、confidence 不得高于 0.60；这类关系不能当作事实。
+- 明确关系使用 state=asserted，confidence 按证据强度填写 0.65–1.00；evidence 写一条能说明关系为何成立的简短原文依据或忠实摘述，禁止编造。
 
 【实体别名】
 - 为每个实体给出 aliases：同一事物的其他叫法（全称/简称/中英文名）。
@@ -72,7 +73,7 @@ const extractPrompt = `你是一个知识提炼器。从下面的对话中，只
 - 没有别名就给空数组 []。
 
 只输出如下 JSON，不要任何解释：
-{"entities":[{"name":"实体名","type":"module|service|concept|decision|constraint","aliases":["别名"],"observations":["关于它的事实"]}],"relations":[{"from":"实体A","to":"实体B","label":"关系","inferred":false}]}`
+{"entities":[{"name":"实体名","type":"module|service|concept|decision|constraint","aliases":["别名"],"observations":["关于它的事实"]}],"relations":[{"from":"实体A","to":"实体B","label":"关系","inferred":false,"state":"asserted","confidence":0.9,"evidence":["关系依据"]}]}`
 
 // Namespace is one named knowledge-graph namespace returned by ListNamespaces.
 type Namespace struct {
@@ -143,6 +144,22 @@ func (a *App) GetGraph(projectSlug string) (*graph.Graph, error) {
 	return graph.Load(dataDir, projectSlug)
 }
 
+// GetGraphHealth returns actionable quality metrics for the governed graph.
+func (a *App) GetGraphHealth(projectSlug string) (graph.GraphHealth, error) {
+	g, err := a.assembleGraph(projectSlug, "")
+	if err != nil {
+		return graph.GraphHealth{}, err
+	}
+	health := graph.AssessHealth(g, time.Now())
+	if dataDir, dirErr := db.AppDataDir(); dirErr == nil {
+		if ex, exErr := graph.LoadExclusions(dataDir, projectSlug); exErr == nil {
+			health.GovernanceActions = len(ex.ReviewHistory)
+			health.CanUndo = ex.UndoableReviews() > 0
+		}
+	}
+	return health, nil
+}
+
 // extracted is the model's JSON output shape.
 type extracted struct {
 	Entities  []graph.Entity   `json:"entities"`
@@ -188,10 +205,130 @@ func parseExtracted(reply string) extracted {
 // that "newest content matters most for knowledge".
 const maxTranscriptChars = 16000
 
+// indexSource is one session queued for distillation plus the way to read it
+// back. Reading is deferred so a session that already has a fresh cache costs
+// nothing.
+type indexSource struct {
+	Meta  claudedata.SessionMeta
+	Agent string // "claude" | "codex" | "buddy"
+	read  func() ([]claudedata.SessionMessage, error)
+}
+
+// indexPlan is what one scan of the local session stores found for a target.
+type indexPlan struct {
+	Namespace string // namespace the distilled knowledge is filed under
+	Sources   []indexSource
+	Claude    int
+	Codex     int
+	Buddy     int
+	// Unmanaged counts transcripts on this machine whose cwd resolves to no
+	// namespace at all. Reported so that a small number is explainable ("these 6
+	// are the ones that belong here; the other 240 have no .axon-project
+	// marker") instead of looking like a scanner failure.
+	Unmanaged int
+}
+
+// planIndex turns the caller's selection into the concrete sessions to distill.
+//
+// The selection is either a knowledge namespace (what the graph tags and the
+// project dropdown hold) or a Claude Code project directory name, which is kept
+// for compatibility and for trees that carry no .axon-project marker. Both
+// resolve to a single namespace plus a set of sessions, because a namespace
+// normally spans many Claude directories — one per repository — and the only
+// reliable link from a session to its namespace is the cwd the transcript
+// records for itself.
+func planIndex(sel string) (indexPlan, error) {
+	sel = strings.TrimSpace(sel)
+	if sel == "" {
+		return indexPlan{}, fmt.Errorf("未指定项目或命名空间：先在左上角选一个项目再建索引")
+	}
+	plan := indexPlan{}
+	claudeDir := ""
+	if claudedata.HasProject(sel) {
+		claudeDir = filepath.Base(sel)
+	}
+	namespace := sel
+	if claudeDir != "" {
+		// A managed directory files its knowledge under its namespace; an
+		// unmanaged one (no .axon-project anywhere above it) has no namespace to
+		// file under, so it keeps its own directory name.
+		if namespace = claudedata.ProjectNamespace(claudeDir); namespace == "" {
+			namespace = claudeDir
+		}
+	}
+	plan.Namespace = namespace
+
+	seen := make(map[string]bool)
+	add := func(metas []claudedata.SessionMeta, agent string) {
+		for _, m := range metas {
+			key := m.File
+			if key == "" {
+				key = agent + "|" + m.ID
+			}
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			file := m.File
+			sid := m.ID
+			plan.Sources = append(plan.Sources, indexSource{
+				Meta:  m,
+				Agent: agent,
+				read: func() ([]claudedata.SessionMessage, error) {
+					if file == "" {
+						return nil, fmt.Errorf("session %s has no transcript path", sid)
+					}
+					return claudedata.ReadSessionFile(file)
+				},
+			})
+			switch agent {
+			case "claude":
+				plan.Claude++
+			case "codex":
+				plan.Codex++
+			default:
+				plan.Buddy++
+			}
+		}
+	}
+
+	if claudeDir != "" {
+		if s, err := claudedata.ListSessions(claudeDir); err == nil {
+			add(s, "claude")
+		}
+	}
+	if namespace != "" {
+		// Namespace-wide sweep across all four agents' stores.
+		if s, err := claudedata.ListSessionsForNamespace(namespace, false); err == nil {
+			add(s, "claude")
+		}
+		if s, err := claudedata.ListCodexSessions(namespace); err == nil {
+			add(s, "codex")
+		}
+		if s, err := claudedata.ListBuddySessions(namespace); err == nil {
+			add(s, "buddy")
+		}
+	}
+
+	// Census of what the sweep could not claim.
+	if projects, err := claudedata.ListProjects(); err == nil {
+		for _, p := range projects {
+			if p.Namespace == "" {
+				plan.Unmanaged += p.SessionCount
+			}
+		}
+	}
+	return plan, nil
+}
+
 // IndexProject builds the per-session distillation cache: for each session,
 // if there's no fresh cache it calls the model once and stores the result.
 // This is the slow, one-time pass; afterwards focus/full assembly is instant
 // and free. Re-running only processes new/changed sessions (incremental).
+//
+// projectSlug may be a namespace or a Claude Code project directory name; see
+// planIndex. Everything the scan discovers is reported before any model call, so
+// "found N sessions" is visible rather than inferred.
 func (a *App) IndexProject(projectSlug string) error {
 	dataDir, err := db.AppDataDir()
 	if err != nil {
@@ -206,11 +343,10 @@ func (a *App) IndexProject(projectSlug string) error {
 	if err != nil {
 		return err
 	}
-	sessions, err := claudedata.ListSessions(projectSlug)
+
+	plan, err := planIndex(projectSlug)
 	if err != nil {
-		// Named namespaces (like _global_, gaia, etc.) don't have a matching
-		// Claude Code project directory — that's fine, just no Claude sessions.
-		sessions = nil
+		return err
 	}
 
 	// Build an embedder per the user's mode. Keyword mode always returns the
@@ -221,27 +357,33 @@ func (a *App) IndexProject(projectSlug string) error {
 	if embErr != nil {
 		emb = nil
 	}
-
 	if emb == nil {
-		// Semantic mode with a broken cloud endpoint: skip vectors this run and
-		// tell the frontend exactly why, instead of silently degrading.
 		a.emit(EventGraphProgress, map[string]any{
 			"projectSlug": projectSlug, "phase": "index",
 			"warning": fmt.Sprintf("本次不生成向量与原文块：%v", embErr),
 		})
 	}
 
+	a.emit(EventGraphProgress, map[string]any{
+		"projectSlug": projectSlug, "phase": "discover",
+		"namespace": plan.Namespace,
+		"claude":    plan.Claude, "codex": plan.Codex, "buddy": plan.Buddy,
+		"total": len(plan.Sources), "unmanaged": plan.Unmanaged,
+	})
+
 	newly := 0
-	for i, s := range sessions {
-		if _, ok := graph.LoadCache(dataDir, projectSlug, s.ID, s.UpdatedAt); ok {
+	total := len(plan.Sources)
+	for i, src := range plan.Sources {
+		s := src.Meta
+		if _, ok := graph.LoadCache(dataDir, plan.Namespace, s.ID, s.UpdatedAt); ok {
 			continue // fresh cache at current schema, skip entirely
 		}
 		a.emit(EventGraphProgress, map[string]any{
-			"projectSlug": projectSlug, "current": i + 1, "total": len(sessions),
-			"title": s.Title, "phase": "index",
+			"projectSlug": projectSlug, "current": i + 1, "total": total,
+			"title": s.Title, "phase": src.Agent,
 		})
-		msgs, err := claudedata.ReadSession(projectSlug, s.ID)
-		if err != nil {
+		msgs, readErr := src.read()
+		if readErr != nil || len(msgs) == 0 {
 			continue
 		}
 
@@ -249,10 +391,12 @@ func (a *App) IndexProject(projectSlug string) error {
 		// stale due to a schema bump, reuse its distilled entities/relations (skip
 		// the LLM) and just add the new chunk field. This makes upgrades cost only
 		// embedding calls, never re-distillation.
-		if prev, ok := graph.LoadCacheRaw(dataDir, projectSlug, s.ID); ok && prev.Mtime == s.UpdatedAt {
+		if prev, ok := graph.LoadCacheRaw(dataDir, plan.Namespace, s.ID); ok && prev.Mtime == s.UpdatedAt {
+			graph.StampEntityAssertions(prev.Entities, s.ID, time.Now().UnixMilli(), graph.RelationAsserted, 0.85)
+			stampRelationMetadata(prev.Relations, s.ID)
 			chunks := chunkTranscript(s.ID, msgs)
 			a.embedChunks(emb, chunks)
-			_ = graph.SaveCache(dataDir, projectSlug, &graph.SessionCache{
+			_ = graph.SaveCache(dataDir, plan.Namespace, &graph.SessionCache{
 				SessionID: s.ID, Mtime: s.UpdatedAt, Schema: graph.CacheSchema,
 				Entities: prev.Entities, Relations: prev.Relations, Chunks: chunks,
 			})
@@ -266,8 +410,8 @@ func (a *App) IndexProject(projectSlug string) error {
 			ex, err = a.extractFromText(a.ctx, prov, transcript)
 			if err != nil {
 				a.emit(EventGraphProgress, map[string]any{
-					"projectSlug": projectSlug, "current": i + 1, "total": len(sessions),
-					"title": s.Title, "error": err.Error(),
+					"projectSlug": projectSlug, "current": i + 1, "total": total,
+					"title": s.Title, "error": err.Error(), "phase": src.Agent,
 				})
 				continue // skip; will retry next index run
 			}
@@ -275,127 +419,16 @@ func (a *App) IndexProject(projectSlug string) error {
 		// Stamp provenance: every observation distilled from this session is
 		// sourced to this session id, so merged knowledge stays traceable.
 		stampObsSources(ex.Entities, s.ID)
+		stampRelationMetadata(ex.Relations, s.ID)
 		// Raw-context channel: chunk the FULL session (not the bounded transcript)
 		// and embed the blocks so they are semantically recallable alongside
 		// entities.
 		chunks := chunkTranscript(s.ID, msgs)
-		// Attach embeddings so this session's entities and chunks are searchable.
 		if emb != nil {
 			a.embedEntities(emb, ex.Entities)
 			a.embedChunks(emb, chunks)
 		}
-		_ = graph.SaveCache(dataDir, projectSlug, &graph.SessionCache{
-			SessionID: s.ID, Mtime: s.UpdatedAt, Schema: graph.CacheSchema,
-			Entities: ex.Entities, Relations: ex.Relations, Chunks: chunks,
-		})
-		newly++
-	}
-
-	// --- Index Codex sessions that belong to this project ---
-	codexSessions, _ := claudedata.ListCodexSessions(projectSlug)
-	for i, s := range codexSessions {
-		if _, ok := graph.LoadCache(dataDir, projectSlug, s.ID, s.UpdatedAt); ok {
-			continue
-		}
-		a.emit(EventGraphProgress, map[string]any{
-			"projectSlug": projectSlug, "current": i + 1, "total": len(codexSessions),
-			"title": s.Title, "phase": "codex",
-		})
-		sessionFile := claudedata.FindCodexSessionFile(strings.TrimPrefix(s.ID, "codex:"))
-		if sessionFile == "" {
-			continue
-		}
-		msgs, err := claudedata.ReadCodexSession(sessionFile)
-		if err != nil || len(msgs) == 0 {
-			continue
-		}
-
-		// Incremental back-fill (same as Claude sessions).
-		if prev, ok := graph.LoadCacheRaw(dataDir, projectSlug, s.ID); ok && prev.Mtime == s.UpdatedAt {
-			chunks := chunkTranscript(s.ID, msgs)
-			a.embedChunks(emb, chunks)
-			_ = graph.SaveCache(dataDir, projectSlug, &graph.SessionCache{
-				SessionID: s.ID, Mtime: s.UpdatedAt, Schema: graph.CacheSchema,
-				Entities: prev.Entities, Relations: prev.Relations, Chunks: chunks,
-			})
-			newly++
-			continue
-		}
-
-		ex := extracted{}
-		transcript := buildTranscript(msgs)
-		if strings.TrimSpace(transcript) != "" {
-			ex, err = a.extractFromText(a.ctx, prov, transcript)
-			if err != nil {
-				a.emit(EventGraphProgress, map[string]any{
-					"projectSlug": projectSlug, "current": i + 1, "total": len(codexSessions),
-					"title": s.Title, "error": err.Error(), "phase": "codex",
-				})
-				continue
-			}
-		}
-		stampObsSources(ex.Entities, s.ID)
-		chunks := chunkTranscript(s.ID, msgs)
-		if emb != nil {
-			a.embedEntities(emb, ex.Entities)
-			a.embedChunks(emb, chunks)
-		}
-		_ = graph.SaveCache(dataDir, projectSlug, &graph.SessionCache{
-			SessionID: s.ID, Mtime: s.UpdatedAt, Schema: graph.CacheSchema,
-			Entities: ex.Entities, Relations: ex.Relations, Chunks: chunks,
-		})
-		newly++
-	}
-
-	// --- Index WorkBuddy + CodeBuddy sessions that belong to this project ---
-	buddySessions, _ := claudedata.ListBuddySessions(projectSlug)
-	for i, s := range buddySessions {
-		if _, ok := graph.LoadCache(dataDir, projectSlug, s.ID, s.UpdatedAt); ok {
-			continue
-		}
-		a.emit(EventGraphProgress, map[string]any{
-			"projectSlug": projectSlug, "current": i + 1, "total": len(buddySessions),
-			"title": s.Title, "phase": "buddy",
-		})
-		sessionFile := claudedata.FindBuddySessionFile(strings.TrimPrefix(strings.TrimPrefix(s.ID, "workbuddy:"), "codebuddy:"))
-		if sessionFile == "" {
-			continue
-		}
-		msgs, err := claudedata.ReadBuddySession(sessionFile)
-		if err != nil || len(msgs) == 0 {
-			continue
-		}
-
-		if prev, ok := graph.LoadCacheRaw(dataDir, projectSlug, s.ID); ok && prev.Mtime == s.UpdatedAt {
-			chunks := chunkTranscript(s.ID, msgs)
-			a.embedChunks(emb, chunks)
-			_ = graph.SaveCache(dataDir, projectSlug, &graph.SessionCache{
-				SessionID: s.ID, Mtime: s.UpdatedAt, Schema: graph.CacheSchema,
-				Entities: prev.Entities, Relations: prev.Relations, Chunks: chunks,
-			})
-			newly++
-			continue
-		}
-
-		ex := extracted{}
-		transcript := buildTranscript(msgs)
-		if strings.TrimSpace(transcript) != "" {
-			ex, err = a.extractFromText(a.ctx, prov, transcript)
-			if err != nil {
-				a.emit(EventGraphProgress, map[string]any{
-					"projectSlug": projectSlug, "current": i + 1, "total": len(buddySessions),
-					"title": s.Title, "error": err.Error(), "phase": "buddy",
-				})
-				continue
-			}
-		}
-		stampObsSources(ex.Entities, s.ID)
-		chunks := chunkTranscript(s.ID, msgs)
-		if emb != nil {
-			a.embedEntities(emb, ex.Entities)
-			a.embedChunks(emb, chunks)
-		}
-		_ = graph.SaveCache(dataDir, projectSlug, &graph.SessionCache{
+		_ = graph.SaveCache(dataDir, plan.Namespace, &graph.SessionCache{
 			SessionID: s.ID, Mtime: s.UpdatedAt, Schema: graph.CacheSchema,
 			Entities: ex.Entities, Relations: ex.Relations, Chunks: chunks,
 		})
@@ -403,7 +436,11 @@ func (a *App) IndexProject(projectSlug string) error {
 	}
 
 	a.emit(EventGraphDone, map[string]any{
-		"projectSlug": projectSlug, "processed": newly, "phase": "index",
+		"projectSlug": projectSlug, "phase": "index",
+		"namespace": plan.Namespace,
+		"processed": newly, "total": total,
+		"claude": plan.Claude, "codex": plan.Codex, "buddy": plan.Buddy,
+		"unmanaged": plan.Unmanaged,
 	})
 	return nil
 }
@@ -418,6 +455,17 @@ func stampObsSources(entities []graph.Entity, sessionID string) {
 			src[j] = sessionID
 		}
 		entities[i].ObsSources = src
+	}
+	graph.StampEntityAssertions(entities, sessionID, time.Now().UnixMilli(), graph.RelationAsserted, 0.85)
+}
+
+// stampRelationMetadata makes relationship provenance as auditable as entity
+// observations. Model-provided trust metadata is normalized; the current
+// source is always attached, including during schema-only cache backfills.
+func stampRelationMetadata(relations []graph.Relation, source string) {
+	for i := range relations {
+		relations[i].Sources = append(relations[i].Sources, source)
+		relations[i] = graph.NormalizeRelation(relations[i])
 	}
 }
 
@@ -519,13 +567,13 @@ func focusPrompt(term string) string {
 只提炼与这个主题【直接相关】的持久知识，构建一张聚焦的小图。与主题无关的一律不要。
 
 保留：与「` + term + `」直接相关的模块/概念/服务、明确存在的关系、关键决策及理由、踩过的坑与约束。
-关系必须有原文明确证据；仅仅同时出现、同属一个项目，或可以推测有关，都不要连实线。确有探索价值但证据不足的关联可输出 inferred=true（虚线），但不要把它当作事实。无法确认且无探索价值时只保留实体和事实，宁缺毋滥。
+关系必须有原文明确证据；仅仅同时出现、同属一个项目，或可以推测有关，都不要连实线。确有探索价值但证据不足的关联可输出 inferred=true、state=candidate、confidence<=0.60（虚线），但不要把它当作事实。明确关系使用 state=asserted、confidence>=0.65，并提供 evidence。无法确认且无探索价值时只保留实体和事实，宁缺毋滥。
 丢弃：寒暄、日志、报错堆栈、一次性操作、与主题无关的内容。
 
 宁可少而准。若这段对话与「` + term + `」无关，返回空数组。
 
 只输出 JSON，不要解释：
-{"entities":[{"name":"实体名","type":"module|service|concept|decision|constraint","observations":["事实"]}],"relations":[{"from":"A","to":"B","label":"关系","inferred":false}]}`
+{"entities":[{"name":"实体名","type":"module|service|concept|decision|constraint","observations":["事实"]}],"relations":[{"from":"A","to":"B","label":"关系","inferred":false,"state":"asserted","confidence":0.9,"evidence":["关系依据"]}]}`
 }
 
 // BuildGraphFocused returns a term-focused subgraph assembled from the cache —
@@ -625,16 +673,21 @@ func (a *App) GenerateArticle(projectSlug, term string) (string, error) {
 		fmt.Fprintf(&b, "关注主题：%s\n\n", term)
 	}
 	b.WriteString("实体与事实：\n")
+	now := time.Now()
 	for _, e := range g.Entities {
 		fmt.Fprintf(&b, "- %s（%s）\n", e.Name, e.Type)
-		for _, o := range e.Observations {
-			fmt.Fprintf(&b, "  · %s\n", o)
+		for _, assertion := range graph.UsableAssertions(e, now) {
+			fmt.Fprintf(&b, "  · %s（置信度 %.0f%%）\n", assertion.Text, assertion.Confidence*100)
 		}
 	}
 	if len(g.Relations) > 0 {
 		b.WriteString("\n关系：\n")
 		for _, r := range g.Relations {
-			fmt.Fprintf(&b, "- %s —%s→ %s\n", r.From, r.Label, r.To)
+			if !graph.RelationUsableForRecall(r) {
+				continue
+			}
+			r = graph.NormalizeRelation(r)
+			fmt.Fprintf(&b, "- %s —%s→ %s（置信度 %.0f%%）\n", r.From, r.Label, r.To, r.Confidence*100)
 		}
 	}
 
@@ -796,6 +849,7 @@ func queryTerms(text string) []string { return retrieve.QueryTerms(text) }
 // distinct session ids the observations came from.
 func buildStructureSection(g *graph.Graph, hit map[string]bool) (names []string, text string, srcIDs []string) {
 	srcSeen := map[string]bool{}
+	now := time.Now()
 	var b strings.Builder
 	for _, e := range g.Entities {
 		if !hit[strings.ToLower(strings.TrimSpace(e.Name))] {
@@ -806,19 +860,32 @@ func buildStructureSection(g *graph.Graph, hit map[string]bool) (names []string,
 		}
 		names = append(names, e.Name)
 		fmt.Fprintf(&b, "\n【%s】\n", e.Name)
-		for i, o := range e.Observations {
-			fmt.Fprintf(&b, "- %s\n", o)
-			if sid := obsSourceAt(e.ObsSources, i); sid != "" && !srcSeen[sid] {
-				srcSeen[sid] = true
-				srcIDs = append(srcIDs, sid)
+		for _, assertion := range graph.UsableAssertions(e, now) {
+			fmt.Fprintf(&b, "- %s（置信度 %.0f%%）\n", assertion.Text, assertion.Confidence*100)
+			for _, sid := range assertion.Sources {
+				if sid != "" && !srcSeen[sid] {
+					srcSeen[sid] = true
+					srcIDs = append(srcIDs, sid)
+				}
 			}
 		}
 	}
 	// Relations among matched entities add useful structure.
 	var rels []string
 	for _, r := range g.Relations {
-		if hit[strings.ToLower(r.From)] && hit[strings.ToLower(r.To)] {
-			rels = append(rels, fmt.Sprintf("%s —%s→ %s", r.From, r.Label, r.To))
+		if graph.RelationUsableForRecall(r) && hit[strings.ToLower(r.From)] && hit[strings.ToLower(r.To)] {
+			r = graph.NormalizeRelation(r)
+			rel := fmt.Sprintf("%s —%s→ %s（置信度 %.0f%%）", r.From, r.Label, r.To, r.Confidence*100)
+			if len(r.Evidence) > 0 {
+				rel += "，依据：" + strings.Join(r.Evidence, "；")
+			}
+			rels = append(rels, rel)
+			for _, sid := range r.Sources {
+				if sid != "" && !srcSeen[sid] {
+					srcSeen[sid] = true
+					srcIDs = append(srcIDs, sid)
+				}
+			}
 		}
 	}
 	if len(rels) > 0 {

@@ -13,7 +13,7 @@ import (
 // cache whose Schema is older than this as stale, forcing IndexProject to
 // reprocess it (which, for the chunk field, only re-runs local chunking + embed,
 // never the LLM — see IndexProject).
-const CacheSchema = 2
+const CacheSchema = 4
 
 // Chunk is one recall unit of verbatim source text plus its vector. It is the
 // core store of the "raw context" channel: unlike distilled entities (a lossy
