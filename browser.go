@@ -16,31 +16,75 @@ func (a *App) ListClaudeProjects() ([]claudedata.Project, error) {
 	return claudedata.ListProjects()
 }
 
-// ListClaudeSessions returns session summaries from all agents, merged and
-// sorted newest first. The projectSlug parameter is ignored for filtering
-// because namespace names don't match Claude Code's path-encoded directory
-// names. The GUI handles display filtering on its own.
-func (a *App) ListClaudeSessions(projectSlug string) ([]claudedata.SessionMeta, error) {
-	// Claude Code: list ALL projects' sessions (slug-based dirs don't match namespaces).
-	var claude []claudedata.SessionMeta
+// ScopeOption is one entry of the session browser's scope switcher.
+type ScopeOption struct {
+	Key   string `json:"key"`   // value to pass back as the scope
+	Label string `json:"label"` // human label ("wanlian", "未归属", "全部")
+	Count int    `json:"count"`
+}
+
+// SessionList is a scope's sessions plus the counts that label the switcher, so
+// the page can explain a filtered list without a second scan.
+type SessionList struct {
+	Sessions   []claudedata.SessionMeta `json:"sessions"`
+	Scopes     []ScopeOption            `json:"scopes"`
+	Total      int                      `json:"total"`
+	Unassigned int                      `json:"unassigned"`
+}
+
+// ListClaudeSessions returns the sessions the browser should show for one scope
+// (see claudedata: a namespace name, ScopeUnassigned, or ScopeAll).
+//
+// It used to ignore its parameter and always return every session on the
+// machine, on the grounds that a namespace name never matches Claude Code's
+// path-encoded directory name. That reasoning was right about the directory
+// names and wrong about the conclusion: each transcript records the working
+// directory it ran in, and that is a reliable bridge from a namespace to a
+// session. So the header's "which body of work" selection now actually governs
+// the list instead of being decorative.
+func (a *App) ListClaudeSessions(scope string) (SessionList, error) {
+	scope = claudedata.NormalizeScope(scope)
+
+	// One unfiltered pass, then filter and count in memory. The alternative —
+	// asking each agent for the scope and then again for the totals — would scan
+	// every transcript twice, and the whole point of the metadata cache is that a
+	// repeat scan is nearly free while a second one is not.
+	var all []claudedata.SessionMeta
 	projects, _ := claudedata.ListProjects()
 	for _, p := range projects {
 		sessions, _ := claudedata.ListAllSessions(p.Slug)
-		claude = append(claude, sessions...)
+		all = append(all, sessions...)
 	}
-	// Codex sessions.
-	codex, _ := claudedata.ListCodexSessions("")
-	// WorkBuddy + CodeBuddy sessions.
-	buddy, _ := claudedata.ListAllBuddySessions("")
-
-	all := make([]claudedata.SessionMeta, 0, len(claude)+len(codex)+len(buddy))
-	all = append(all, claude...)
+	codex, _ := claudedata.ListCodexSessions(claudedata.ScopeAll)
 	all = append(all, codex...)
+	buddy, _ := claudedata.ListAllBuddySessions(claudedata.ScopeAll)
 	all = append(all, buddy...)
 
-	// Sort newest first.
 	sort.Slice(all, func(i, j int) bool { return all[i].UpdatedAt > all[j].UpdatedAt })
-	return all, nil
+
+	res := SessionList{Total: len(all), Sessions: []claudedata.SessionMeta{}}
+	for _, s := range all {
+		if s.Namespace == "" {
+			res.Unassigned++
+		}
+		if claudedata.MatchesScope(s, scope) {
+			res.Sessions = append(res.Sessions, s)
+		}
+	}
+
+	// Only three reaches are worth a tab: the namespace the header selected (the
+	// page's default), the sessions no namespace claims, and everything. Other
+	// namespaces are reached through the header picker, not from here.
+	if claudedata.IsNamespaceScope(scope) {
+		res.Scopes = append(res.Scopes, ScopeOption{
+			Key: scope, Label: scope, Count: len(res.Sessions),
+		})
+	}
+	res.Scopes = append(res.Scopes,
+		ScopeOption{Key: claudedata.ScopeUnassigned, Label: "未归属", Count: res.Unassigned},
+		ScopeOption{Key: claudedata.ScopeAll, Label: "全部", Count: res.Total},
+	)
+	return res, nil
 }
 
 // ReadClaudeSession loads the full transcript of a session. Handles sessions

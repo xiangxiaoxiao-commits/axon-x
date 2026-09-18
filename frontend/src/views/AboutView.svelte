@@ -42,6 +42,7 @@
       <p><span class="tag">⊹ 知识</span>查看和养这张图谱。</p>
       <ul>
         <li><strong>建索引</strong>:读这个项目的 Claude Code 会话,提炼知识入图。</li>
+        <li><strong>会话浏览</strong>:默认只看顶部所选命名空间的会话,可在面板上切到「未归属」或「全部」。</li>
         <li><strong>🧬 从代码建图</strong>:扫一个仓库,抽出模块/文件/函数及依赖关系。</li>
         <li><strong>📓 吸收 Obsidian</strong>:把 vault 笔记并入图谱。</li>
         <li><strong>可视化 + 人工校正</strong>:看实体/关系/别名/溯源,可确认、修正、删除去噪——<strong>图谱质量比数量重要</strong>。</li>
@@ -154,6 +155,27 @@
             <li><strong>原文分块</strong>:把整段会话切成 chunk 存入"原文通道",连同实体一起 embedding。</li>
             <li><strong>增量 + 缓存</strong>:结果按会话存成 cache 文件。再次建索引<strong>只处理新增/改动</strong>的会话(按文件 mtime 判断);已缓存的直接跳过,不重复烧 token。若只是缓存 schema 升级,会复用旧的蒸馏结果、只补新字段。</li>
             <li><strong>快速筛除</strong>:先用每个会话文件开头的 <code>cwd</code> 判断归属,不匹配的只读几十行、不做全量解析,几百个会话也能秒级筛完。</li>
+          </ul>
+
+          <h4>会话浏览:怎么归类、怎么定位、怎么读得快</h4>
+          <p>
+            会话面板默认只显示<strong>顶部所选命名空间</strong>的会话,面板上的范围切换可以放宽到
+            <code>未归属</code>(不属于任何命名空间的会话)或<code>全部</code>。归属和建索引用的是同一条依据:
+            每个会话自己记录的 <code>cwd</code> 指向最近的 <code>.axon-project</code> 标记,所以一个命名空间会横跨
+            多个仓库目录,而目录名不参与匹配。切换范围时会一并给出各范围的会话数,免得"列表怎么和刚才不一样"变成疑问。
+          </p>
+          <ul>
+            <li><strong>身份只认第一条记录</strong>:Codex 在一次会话被压缩或续写时会再写一条 <code>session_meta</code>,
+              里面带的是<strong>祖先会话</strong>的 id。只认第一条(它总与文件名一致)才能让每个文件保持自己的身份——
+              否则几十个文件会报成同一个会话,列表里出现一批点开都是同一份内容的条目,建索引时还会把同一段对话重复蒸馏。</li>
+            <li><strong>定位:记忆 + 校验</strong>:转录文件路径按会话 id 记忆,命中时用一次 <code>stat</code> 确认文件还在;
+              文件被移动或删除就重新查找。找文件时<strong>精确匹配优先</strong>(ID 是文件名本身或是它的尾段),
+              名称里只是"包含"这个 id 只作兜底,避免会话 ID 互为前缀时读错文件。</li>
+            <li><strong>进度:只读文件尾部</strong>:「最后进度」只要最后一条用户输入和最后一条 AI 回复,它们就在文件末尾。
+              先读末尾 <code>256KB</code>,若窗口整个落在一条超长消息里就放大到 <code>1MB</code>,再不够才退回全量扫描。
+              实测 16MB 会话从约 <code>235ms</code> 降到约 <code>3ms</code>,结果与全量扫描<strong>逐字相同</strong>(有测试对照)。</li>
+            <li><strong>列表:并行 + 缓存</strong>:每个转录的解析结果按 <code>路径 + mtime + size</code> 记忆,
+              文件没变就直接复用;文件改了一定重读。几百个会话首次约 <code>4 秒</code>,之后几十毫秒。</li>
           </ul>
 
           <h4>导出 / 导入知识包(团队共享)</h4>

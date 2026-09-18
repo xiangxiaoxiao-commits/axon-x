@@ -41,7 +41,16 @@ func (a *App) IndexSearch() error {
 			if ix.HasSession(s.ID) {
 				continue
 			}
-			msgs, err := claudedata.ReadSession(p.Slug, s.ID)
+			// Read straight from the path the metadata already carries: resolving
+			// it again would re-derive the project directory (and, for a nested
+			// transcript, re-walk for it) once per session.
+			var msgs []claudedata.SessionMessage
+			var err error
+			if s.File != "" {
+				msgs, err = claudedata.ReadSessionFile(s.File)
+			} else {
+				msgs, err = claudedata.ReadSession(p.Slug, s.ID)
+			}
 			if err != nil {
 				continue
 			}

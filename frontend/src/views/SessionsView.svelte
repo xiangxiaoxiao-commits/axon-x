@@ -17,6 +17,16 @@
   let curCwd = "";
   let filter = "";
   let loading = false;
+  // The list's reach. Empty means "follow the project selected in the header",
+  // which is a namespace; the chips below can widen it to the sessions no
+  // namespace claims, or to everything.
+  let scopeOverride = "";
+  let scopeOptions: main.ScopeOption[] = [];
+  let listTotal = 0;
+  let listUnassigned = 0;
+  // Guards against an older request landing after a newer one: switching scope
+  // or session twice in quick succession must not let the first reply win.
+  let loadToken = 0;
   // Loading the session list is not instant (a few hundred transcripts are read
   // from disk), so the list needs its own flag: without it the page claimed
   // "无会话" for several seconds, which reads as a broken feature.
@@ -72,35 +82,65 @@
   }
   const BUCKET_ORDER = ["今天", "昨天", "近 7 天", "更早"];
 
-  // Reload the session list whenever the global project changes.
+  // The effective scope: the header project unless a chip overrides it.
+  $: scope = scopeOverride || $currentProject;
+
+  // Switching the project in the header is the primary control, so it drops any
+  // temporary widening — the page follows the header again. Written without
+  // reading scopeOverride so this cannot become a cyclic dependency.
+  let lastProject = "";
+  $: if ($currentProject !== lastProject) { lastProject = $currentProject; scopeOverride = ""; }
+
+  // Reload the session list whenever the effective scope changes.
   let loadedFor = " ";
-  $: if ($currentProject !== loadedFor) { loadedFor = $currentProject; loadSessions(); }
+  $: if (scope !== loadedFor) { loadedFor = scope; loadSessions(); }
 
   async function loadSessions() {
+    const mine = ++loadToken;
     curSession = ""; messages = []; progress = null; sessions = [];
-    if (!$currentProject) return; // "all projects" has no single session list
+    // A model filter chosen for one scope rarely means anything in the next one;
+    // keeping it would show an empty list that reads as a broken page.
+    modelFilter = "";
+    if (!scope) return; // nothing selected in the header and no override
     sessionsLoading = true;
     try {
-      sessions = (await ListClaudeSessions($currentProject)) || [];
+      const res = await ListClaudeSessions(scope);
+      if (mine !== loadToken) return; // a newer load already replaced this one
+      sessions = res?.sessions || [];
+      scopeOptions = res?.scopes || [];
+      listTotal = res?.total || 0;
+      listUnassigned = res?.unassigned || 0;
     } catch (e) {
       console.error(e);
+      if (mine !== loadToken) return;
       sessions = [];
     } finally {
-      sessionsLoading = false;
-      sessionsLoaded = true;
+      if (mine === loadToken) {
+        sessionsLoading = false;
+        sessionsLoaded = true;
+      }
     }
   }
 
   async function selectSession(s: claudedata.SessionMeta) {
-    curSession = s.id; curCwd = s.cwd; loading = true; messages = []; progress = null; knowledge = null;
+    const id = s.id;
+    // Only the newest selection may write back: clicking twice quickly used to
+    // leave the first session's progress card under the second session's title.
+    const fresh = () => curSession === id;
+    curSession = id; curCwd = s.cwd; loading = true; messages = []; progress = null; knowledge = null;
+    // Progress is a tail read now (milliseconds), so there is no reason to
+    // serialise it: ask for both side panels at once and read the transcript
+    // while they land.
+    const side = Promise.all([
+      ClaudeSessionProgress(s.projectSlug, id).then((p) => { if (fresh()) progress = p; }),
+      SessionDistilledKnowledge($currentProject, id).then((k) => { if (fresh()) knowledge = k; }),
+    ]).catch((e) => console.error(e));
     try {
-      // Progress first (cheap tail) so the "where I left off" card shows fast,
-      // then the distilled knowledge, then the full transcript.
-      progress = await ClaudeSessionProgress(s.projectSlug, s.id);
-      knowledge = await SessionDistilledKnowledge($currentProject, s.id);
-      messages = await ReadClaudeSession(s.projectSlug, s.id);
+      const msgs = (await ReadClaudeSession(s.projectSlug, id)) || [];
+      if (fresh()) messages = msgs;
     } catch (e) { console.error(e); }
-    finally { loading = false; }
+    finally { if (fresh()) loading = false; }
+    await side;
   }
 
   // Toggle whether one distilled fact is excluded from the graph. Updates the
@@ -227,6 +267,15 @@
 <div class="browser">
   <div class="col sessions">
     <input class="filter" placeholder="搜索会话标题…" bind:value={filter} />
+    {#if scopeOptions.length > 1 || scopeOverride}
+      <div class="scope-bar">
+        {#each scopeOptions as o}
+          <button class="sc-chip" class:on={o.key === scope} on:click={() => (scopeOverride = o.key === $currentProject ? "" : o.key)}>
+            {o.label} <span class="sc-n">{o.count}</span>
+          </button>
+        {/each}
+      </div>
+    {/if}
     {#if $currentProject && modelOptions.length > 1}
       <div class="model-filter">
         <button class="mf-chip" class:on={modelFilter === ""} on:click={() => (modelFilter = "")}>
@@ -255,15 +304,20 @@
         </div>
       {/each}
     {/each}
-    {#if !$currentProject}<div class="empty">在顶部选择一个项目查看它的会话</div>
+    {#if !scope}
+      <div class="empty">在顶部选择一个项目查看它的会话</div>
     {:else if sessionsLoading}
-      <div class="empty">正在读取会话…<span class="empty-sub">首次需要几秒（本机 {sessions.length || "数百"} 个会话）；之后会立刻打开</span></div>
+      <div class="empty">正在读取会话…<span class="empty-sub">首次需要几秒（本机 {listTotal || "数百"} 个会话）；之后会立刻打开</span></div>
     {:else if shownSessions.length === 0}
       <div class="empty">
         {#if filter || modelFilter}
-          没有匹配的会话<span class="empty-sub">共 {sessions.length} 个会话，试试清空搜索或切回「全部」模型</span>
-        {:else if sessionsLoaded}
+          没有匹配的会话<span class="empty-sub">当前范围共 {sessions.length} 个会话，试试清空搜索或切回「全部」模型</span>
+        {:else if scope === "*"}
           无会话<span class="empty-sub">没读到任何 {modelFamily("codex")}/Claude 会话记录</span>
+        {:else if scope === "@unassigned"}
+          没有未归属的会话<span class="empty-sub">本机 {listTotal} 个会话都能对应到某个命名空间</span>
+        {:else if sessionsLoaded}
+          这个项目没有会话<span class="empty-sub">该命名空间下没读到会话；点上方「全部」可以看到本机全部 {listTotal} 个会话，其中 {listUnassigned} 个不属于任何命名空间</span>
         {:else}
           正在读取会话…
         {/if}
@@ -432,6 +486,31 @@
     border: 1px solid color-mix(in srgb, var(--mc) 45%, transparent);
     background: color-mix(in srgb, var(--mc) 12%, transparent);
   }
+  .scope-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--border);
+  }
+  .sc-chip {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: var(--radius-control);
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: all .12s;
+  }
+  .sc-chip:hover { color: var(--text-primary); }
+  .sc-chip.on {
+    color: var(--accent);
+    border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+  }
+  .sc-n { opacity: .6; }
   .model-filter {
     display: flex;
     flex-wrap: wrap;

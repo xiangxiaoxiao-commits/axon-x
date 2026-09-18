@@ -47,23 +47,23 @@ type buddyContentBlock struct {
 }
 
 // ListBuddySessions returns all WorkBuddy + CodeBuddy sessions as SessionMeta.
-// If namespace is non-empty, only sessions whose cwd resolves (via .axon-project)
-// to that namespace are returned.
-func ListBuddySessions(namespace string) ([]SessionMeta, error) {
-	return listBuddySessions(namespace, false)
+// scope selects the reach (see scope.go): a namespace name, ScopeUnassigned, or
+// ScopeAll.
+func ListBuddySessions(scope string) ([]SessionMeta, error) {
+	return listBuddySessions(scope, false)
 }
 
 // ListAllBuddySessions includes nested subagent transcripts for the session
 // browser. Knowledge indexing continues to use ListBuddySessions so parent and
 // subagent content are not both distilled.
-func ListAllBuddySessions(namespace string) ([]SessionMeta, error) {
-	return listBuddySessions(namespace, true)
+func ListAllBuddySessions(scope string) ([]SessionMeta, error) {
+	return listBuddySessions(scope, true)
 }
 
-func listBuddySessions(namespace string, recursive bool) ([]SessionMeta, error) {
+func listBuddySessions(scope string, recursive bool) ([]SessionMeta, error) {
 	var all []SessionMeta
 	for _, agent := range buddyAgents {
-		sessions, err := listBuddyAgentSessions(agent, namespace, recursive)
+		sessions, err := listBuddyAgentSessions(agent, scope, recursive)
 		if err != nil {
 			continue // agent not installed, skip
 		}
@@ -73,7 +73,7 @@ func listBuddySessions(namespace string, recursive bool) ([]SessionMeta, error) 
 	return all, nil
 }
 
-func listBuddyAgentSessions(agent buddyAgent, namespace string, recursive bool) ([]SessionMeta, error) {
+func listBuddyAgentSessions(agent buddyAgent, scope string, recursive bool) ([]SessionMeta, error) {
 	root, err := buddyRoot(agent)
 	if err != nil {
 		return nil, err
@@ -82,6 +82,12 @@ func listBuddyAgentSessions(agent buddyAgent, namespace string, recursive bool) 
 	entries, err := os.ReadDir(projDir)
 	if err != nil {
 		return nil, err
+	}
+
+	scope = NormalizeScope(scope)
+	probeNamespace := ""
+	if IsNamespaceScope(scope) {
+		probeNamespace = scope
 	}
 
 	var out []SessionMeta
@@ -95,10 +101,10 @@ func listBuddyAgentSessions(agent buddyAgent, namespace string, recursive bool) 
 		// scanners: a session from another namespace should cost one small read,
 		// not a full transcript parse. Survivors are parsed in parallel.
 		candidates := files
-		if namespace != "" {
+		if probeNamespace != "" {
 			candidates = make([]string, 0, len(files))
 			for _, f := range files {
-				if cwd := probeBuddyCwd(f); cwd != "" && ResolveNamespace(cwd) != namespace {
+				if cwd := probeBuddyCwd(f); cwd != "" && ResolveNamespace(cwd) != probeNamespace {
 					continue
 				}
 				candidates = append(candidates, f)
@@ -107,10 +113,7 @@ func listBuddyAgentSessions(agent buddyAgent, namespace string, recursive bool) 
 		for _, meta := range scanFiles(candidates, func(p string) SessionMeta {
 			return scanBuddyMeta(p, agent)
 		}) {
-			if meta.ID == "" {
-				continue
-			}
-			if namespace != "" && meta.Namespace != namespace {
+			if meta.ID == "" || !MatchesScope(meta, scope) {
 				continue
 			}
 			out = append(out, meta)
@@ -298,28 +301,22 @@ func extractBuddyText(raw json.RawMessage, maxLen int) string {
 	return ""
 }
 
-// FindBuddySessionFile locates the .jsonl file for a buddy session ID.
+// FindBuddySessionFile locates the .jsonl file for a buddy session ID. The
+// answer is memoised (see locate.go) so repeated opens stop re-walking every
+// agent's project tree.
 func FindBuddySessionFile(sessionID string) string {
+	if p := locateCached(locateKindBuddy, sessionID); p != "" {
+		return p
+	}
+	var roots []string
 	for _, agent := range buddyAgents {
 		root, err := buddyRoot(agent)
 		if err != nil {
 			continue
 		}
-		projDir := filepath.Join(root, "projects")
-		var found string
-		_ = filepath.Walk(projDir, func(path string, info os.FileInfo, err error) error {
-			if err != nil || info.IsDir() {
-				return nil
-			}
-			if strings.Contains(filepath.Base(path), sessionID) {
-				found = path
-				return filepath.SkipAll
-			}
-			return nil
-		})
-		if found != "" {
-			return found
-		}
+		roots = append(roots, filepath.Join(root, "projects"))
 	}
-	return ""
+	found := findSessionFileUnder(sessionID, roots...)
+	rememberLocate(locateKindBuddy, sessionID, found)
+	return found
 }

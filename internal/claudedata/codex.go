@@ -51,9 +51,9 @@ type codexContentBlock struct {
 }
 
 // ListCodexSessions returns all Codex sessions (active + archived) as
-// SessionMeta, newest first. If namespace is non-empty, only sessions whose cwd
-// resolves (via .axon-project) to that namespace are returned.
-func ListCodexSessions(namespace string) ([]SessionMeta, error) {
+// SessionMeta, newest first. scope selects the reach (see scope.go): a namespace
+// name, ScopeUnassigned, or ScopeAll.
+func ListCodexSessions(scope string) ([]SessionMeta, error) {
 	root, err := codexRoot()
 	if err != nil {
 		return nil, err
@@ -76,14 +76,20 @@ func ListCodexSessions(namespace string) ([]SessionMeta, error) {
 		}
 	}
 
-	// When a namespace is requested, reject cheaply first: the leading
+	scope = NormalizeScope(scope)
+	probeNamespace := ""
+	if IsNamespaceScope(scope) {
+		probeNamespace = scope
+	}
+
+	// When a single namespace is requested, reject cheaply first: the leading
 	// session_meta record carries the cwd, so a session belonging to another
 	// namespace never pays for a full parse. Survivors are parsed in parallel.
 	candidates := files
-	if namespace != "" {
+	if probeNamespace != "" {
 		candidates = make([]string, 0, len(files))
 		for _, f := range files {
-			if cwd := probeCodexCwd(f); cwd != "" && ResolveNamespace(cwd) != namespace {
+			if cwd := probeCodexCwd(f); cwd != "" && ResolveNamespace(cwd) != probeNamespace {
 				continue
 			}
 			candidates = append(candidates, f)
@@ -92,10 +98,7 @@ func ListCodexSessions(namespace string) ([]SessionMeta, error) {
 
 	var out []SessionMeta
 	for _, meta := range scanFiles(candidates, scanCodexMeta) {
-		if meta.ID == "" {
-			continue
-		}
-		if namespace != "" && meta.Namespace != namespace {
+		if meta.ID == "" || !MatchesScope(meta, scope) {
 			continue
 		}
 		out = append(out, meta)
@@ -110,6 +113,15 @@ const codexProbeLines = 20
 
 // probeCodexCwd returns the working directory recorded in the session_meta
 // record, or "" when no such record appears near the head of the file.
+//
+// This is the cheap half of scope filtering: it reads the first record only, and
+// its answer is used to *reject* a transcript before parsing. That makes it
+// coupled to parseCodexMeta, which takes the cwd from the newest record — the two
+// agree only while a transcript keeps one cwd throughout. On a real 452-file
+// store no file ever changed cwd across its session_meta records, so the coupling
+// is safe today; if Codex ever starts recording a relocated cwd mid-file, the
+// rejection here has to be relaxed (return "" when a second session_meta is seen)
+// rather than left to silently drop sessions from a namespace listing.
 func probeCodexCwd(path string) string {
 	f, err := os.Open(path)
 	if err != nil {
@@ -170,6 +182,16 @@ func newCodexMeta(path string, mtime, size int64, m sessionBrowserMeta) SessionM
 
 // parseCodexMeta is the expensive half: it walks the transcript to collect the
 // session id, working directory, a title and a message count.
+//
+// Identity comes from the FIRST session_meta record only. Codex appends another
+// session_meta whenever a conversation is compacted or forked, and those later
+// records carry an ANCESTOR's session id — so letting each one overwrite the id
+// made dozens of unrelated files claim one identity (54 files reported a single
+// older session's id on this machine, yielding 55 list entries that all opened
+// the same transcript, and re-distilling that session once per duplicate). The
+// first record always matches the file's own name, so it is the real identity.
+// The cwd is the opposite: taken from the newest record that has one, because
+// that is where the session is currently anchored.
 func parseCodexMeta(path string) sessionBrowserMeta {
 	f, err := os.Open(path)
 	if err != nil {
@@ -191,11 +213,15 @@ func parseCodexMeta(path string) sessionBrowserMeta {
 		case "session_meta":
 			var meta codexSessionMeta
 			_ = json.Unmarshal(entry.Payload, &meta)
-			sessionID = meta.ID
 			if sessionID == "" {
-				sessionID = meta.SessionID
+				sessionID = meta.ID
+				if sessionID == "" {
+					sessionID = meta.SessionID
+				}
 			}
-			cwd = meta.Cwd
+			if meta.Cwd != "" {
+				cwd = meta.Cwd
+			}
 		case "response_item":
 			msgs++
 			if title == "" {
@@ -390,33 +416,23 @@ func readMark(dir string) string {
 	return ""
 }
 
-// FindCodexSessionFile locates the .jsonl file for a Codex session ID.
+// FindCodexSessionFile locates the .jsonl file for a Codex session ID. The
+// answer is memoised (see locate.go): the walk below covers the whole session
+// store, and the session browser resolves a file on every open.
 func FindCodexSessionFile(sessionID string) string {
+	if p := locateCached(locateKindCodex, sessionID); p != "" {
+		return p
+	}
 	root, err := codexRoot()
 	if err != nil {
 		return ""
 	}
-
-	var found string
-	_ = filepath.Walk(filepath.Join(root, "sessions"), func(path string, info os.FileInfo, err error) error {
-		if err != nil || info.IsDir() {
-			return nil
-		}
-		if strings.Contains(filepath.Base(path), sessionID) {
-			found = path
-			return filepath.SkipAll
-		}
-		return nil
-	})
-	if found != "" {
-		return found
-	}
-
-	entries, _ := os.ReadDir(filepath.Join(root, "archived_sessions"))
-	for _, e := range entries {
-		if strings.Contains(e.Name(), sessionID) {
-			return filepath.Join(root, "archived_sessions", e.Name())
-		}
-	}
-	return ""
+	// The live tree is searched first, so an active session wins over an
+	// archived copy of the same id; archived sessions are the fallback.
+	found := findSessionFileUnder(sessionID,
+		filepath.Join(root, "sessions"),
+		filepath.Join(root, "archived_sessions"),
+	)
+	rememberLocate(locateKindCodex, sessionID, found)
+	return found
 }

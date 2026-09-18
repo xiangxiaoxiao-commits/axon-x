@@ -95,11 +95,29 @@ func ListSessionsForNamespace(namespace string, recursive bool) ([]SessionMeta, 
 	if namespace == "" {
 		return nil, nil
 	}
+	return ListClaudeSessionsForScope(namespace, recursive)
+}
+
+// ListClaudeSessionsForScope returns every Claude Code transcript whose session
+// belongs to scope (see scope.go): one namespace, ScopeUnassigned, or ScopeAll.
+//
+// recursive controls whether nested subagent transcripts are included; the
+// session browser wants them, knowledge indexing does not (a subagent's work is
+// already covered by its parent's transcript).
+func ListClaudeSessionsForScope(scope string, recursive bool) ([]SessionMeta, error) {
 	projects, err := ListProjects()
 	if err != nil {
 		return nil, err
 	}
-	out := make([]SessionMeta, 0)
+	scope = NormalizeScope(scope)
+	// Only a single-namespace scope can be rejected from the cwd probe; the two
+	// wildcard scopes have to look at every transcript anyway.
+	probeNamespace := ""
+	if IsNamespaceScope(scope) {
+		probeNamespace = scope
+	}
+
+	out := make([]SessionMeta, 0, 256)
 	for _, p := range projects {
 		dir, err := projectDir(p.Slug)
 		if err != nil {
@@ -109,16 +127,25 @@ func ListSessionsForNamespace(namespace string, recursive bool) ([]SessionMeta, 
 		if err != nil {
 			continue
 		}
-		for _, path := range files {
+		candidates := files
+		if probeNamespace != "" {
 			// Cheap reject first: a transcript whose recorded cwd already points at
 			// another namespace never pays for a full scan. When the probe finds no
 			// cwd at all we fall through and let the full scan decide, so an unusual
-			// transcript is never silently dropped.
-			if cwd := probeCwd(path); cwd != "" && ResolveNamespace(cwd) != namespace {
-				continue
+			// transcript is never silently dropped. A fresh slice is built rather
+			// than filtering in place, because `files` must stay intact.
+			candidates = make([]string, 0, len(files))
+			for _, path := range files {
+				if cwd := probeCwd(path); cwd != "" && ResolveNamespace(cwd) != probeNamespace {
+					continue
+				}
+				candidates = append(candidates, path)
 			}
-			meta := scanClaudeMeta(path, p.Slug)
-			if meta.Namespace != namespace {
+		}
+		for _, meta := range dropEmpty(scanFiles(candidates, func(path string) SessionMeta {
+			return scanClaudeMeta(path, p.Slug)
+		})) {
+			if !MatchesScope(meta, scope) {
 				continue
 			}
 			out = append(out, meta)

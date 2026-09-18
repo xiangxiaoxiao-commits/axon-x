@@ -72,7 +72,7 @@ export function InstallMCP():Promise<mcpinstall.Status>;
 
 export function ListClaudeProjects():Promise<Array<claudedata.Project>>;
 
-export function ListClaudeSessions(arg1:string):Promise<Array<claudedata.SessionMeta>>;
+export function ListClaudeSessions(arg1:string):Promise<main.SessionList>;
 
 export function ListConversations():Promise<Array<model.Conversation>>;
 
