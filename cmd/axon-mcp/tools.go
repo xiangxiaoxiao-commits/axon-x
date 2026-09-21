@@ -346,7 +346,7 @@ func (h *toolHandler) searchKnowledge(raw json.RawMessage) (*toolResult, error) 
 }
 
 // resolveSearchSlugs interprets the project parameter for search_knowledge:
-//   - empty: current project + _global_
+//   - empty: the active scope if one is set, otherwise every namespace
 //   - "*": all namespaces
 //   - comma-separated: each named namespace
 //   - single string: just that namespace

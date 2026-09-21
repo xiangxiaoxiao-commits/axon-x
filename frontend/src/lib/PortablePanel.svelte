@@ -15,7 +15,9 @@
   export let namespace = "";
   export let onClose: () => void = () => {};
   // Called after an import so the caller can reload a graph that just changed.
-  export let onChanged: (ns: string) => void = () => {};
+  // focus=true asks the knowledge view to switch to the namespace that received
+  // the knowledge (import); false is for changes the user should stay put for.
+  export let onChanged: (ns: string, focus: boolean) => void = () => {};
 
   let tab: "export" | "import" = "export";
   let level: "standard" | "strict" = "standard";
@@ -88,7 +90,7 @@
     if (!r) return;
     imported = r;
     await refreshImported();
-    onChanged(r.namespace);
+    onChanged(r.namespace, true);
   }
 
   async function doRemove(id: string) {
@@ -96,7 +98,7 @@
     if (!r) return;
     status = "已移除该知识包的知识";
     await refreshImported();
-    onChanged(namespace);
+    onChanged(namespace, false);
   }
 
   function formatBytes(n: number): string {
@@ -309,7 +311,7 @@
 
         {#if imported}
           <div class="ok">
-            <div class="ok-t">已导入到「{imported.namespace}」</div>
+            <div class="ok-t">已导入到「{imported.namespace}」，已切换到该命名空间</div>
             <div class="ok-s">
               新增 {imported.added.entities} 个实体 · {imported.added.relations} 条关系 · {imported.added.observations} 条事实
               {#if imported.mergedInto}· 已与既有知识合并{:else}· 该命名空间是新建的{/if}

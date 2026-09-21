@@ -228,6 +228,30 @@ func TestImportBundleIntoFreshNamespace(t *testing.T) {
 	if orig, err := a.assembleGraph("wanlian", ""); err != nil || len(orig.Entities) != 2 {
 		t.Fatalf("original namespace damaged: entities=%d err=%v", len(orig.Entities), err)
 	}
+
+	// The namespace picker is rendered from ListNamespaces, and that is where an
+	// import used to disappear: the cache was written and assembleGraph could read
+	// it, but the picker had been loaded once at startup and never learned about
+	// the new namespace — so the knowledge was on disk and unreachable, which reads
+	// exactly like "the import did nothing". Assert the listing path too, not just
+	// the disk write.
+	names, err := a.ListNamespaces()
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, n := range names {
+		if n.Name != "wanlian-共享" {
+			continue
+		}
+		found = true
+		if n.Entities == 0 {
+			t.Errorf("imported namespace %q is listed but reports 0 entities", n.Name)
+		}
+	}
+	if !found {
+		t.Errorf("the picker's namespace list does not include the imported namespace: %+v", names)
+	}
 }
 
 // Re-importing the same file must not duplicate knowledge, and importing a

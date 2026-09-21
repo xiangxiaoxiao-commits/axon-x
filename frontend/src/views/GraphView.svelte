@@ -8,7 +8,7 @@
   import { BuildGraph, GetGraph, GetGraphHealth, IndexProject, GenerateArticle, BuildGraphFromCode, BuildGraphFromObsidian, DeleteEntity, UpdateEntityObservations, ReviewRelation, ReviewAssertion, UndoLastGraphReview, ListProviders, MCPStatus, GetEmbeddingConfig, BuildMultiGraph } from "../../wailsjs/go/main/App.js";
   import { EventsOn, EventsOff } from "../../wailsjs/runtime/runtime.js";
   import type { graph } from "../../wailsjs/go/models";
-  import { currentProject, indexRequest, selectedNamespaces } from "../lib/stores";
+  import { currentProject, indexRequest, selectedNamespaces, loadNamespaces } from "../lib/stores";
   import { marked } from "marked";
   import Onboarding from "./Onboarding.svelte";
   import PortablePanel from "../lib/PortablePanel.svelte";
@@ -461,12 +461,35 @@
   $: focusEnt = byName[focus.toLowerCase()];
   $: focusRelations = (g?.relations || []).filter((r) => r.from === focus || r.to === focus);
 
-  // After an import (or a removal) the affected namespace's graph changed; if it
-  // is the one on screen, reload it so the new knowledge is immediately visible.
-  async function onPortableChanged(ns: string) {
-    if (ns === $currentProject || ($selectedNamespaces.length && $selectedNamespaces[0] === ns)) {
-      await load();
+  // Called after an import or a removal. Two things have to happen, and skipping
+  // either one makes a successful import look like nothing happened:
+  //
+  //   1. The namespace picker is loaded once at startup, so a namespace the
+  //      import just created is not in it — the knowledge is on disk and
+  //      unreachable from the UI until the app restarts.
+  //   2. Even for an existing namespace, the graph on screen is showing whatever
+  //      was selected, so the new knowledge stays out of sight.
+  //
+  // `focus` is true for an import: switch to the namespace that received the
+  // knowledge, because seeing what arrived is the point of importing. A removal
+  // only reloads if the affected namespace is the one already on screen.
+  async function onPortableChanged(ns: string, focus: boolean) {
+    await loadNamespaces();
+    if (!ns) return;
+    if (focus) {
+      // Changing the selection also triggers the reactive load above, unless the
+      // selection was already exactly this namespace — in which case that block
+      // sees the same key and does nothing, so refresh here instead. Without this
+      // branch, re-importing an updated bundle into the namespace you are looking
+      // at would appear to do nothing.
+      const already = $selectedNamespaces.length === 1 && $selectedNamespaces[0] === ns;
+      selectedNamespaces.set([ns]);
+      currentProject.set(ns);
+      if (already) await load();
+      return;
     }
+    const active = $selectedNamespaces[0] || $currentProject;
+    if (active === ns) await load();
   }
 
   async function indexProject() {
