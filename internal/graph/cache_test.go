@@ -60,6 +60,81 @@ func TestLoadCache_StaleOnOldSchema(t *testing.T) {
 	}
 }
 
+// TestMigrateStaleCachesGradesTrustByOrigin covers the second half of what the
+// migration fixes: a cache's relations should carry the trust grade its source
+// actually earns. Static code analysis is a machine-checked syntax fact
+// (verified/1.00) while conversation distillation is a model reading a
+// transcript (asserted/0.85) — but every cache used to be stamped asserted
+// regardless, so the verified tier never held a single relation.
+func TestMigrateStaleCachesGradesTrustByOrigin(t *testing.T) {
+	dir := t.TempDir()
+	cases := []struct {
+		session  string
+		wantSt   string
+		wantConf float64
+	}{
+		{"code:graph", RelationVerified, 1},
+		{"7f8a9b0c-1d2e-4f3a-8b4c-5d6e7f8a9b0c", RelationAsserted, 0.85},
+		{"mcp:1786602946922-0d231da5", RelationAsserted, 0.85},
+	}
+	for _, tc := range cases {
+		if err := SaveCache(dir, "proj", &SessionCache{
+			SessionID: tc.session, Mtime: 1, Schema: 5,
+			Relations: []Relation{{From: "A", To: "B", Label: "包含"}},
+		}); err != nil {
+			t.Fatalf("SaveCache(%s): %v", tc.session, err)
+		}
+	}
+
+	if _, err := MigrateStaleCaches(dir, "proj", time.UnixMilli(7)); err != nil {
+		t.Fatalf("MigrateStaleCaches: %v", err)
+	}
+
+	for _, tc := range cases {
+		got, ok := LoadCacheRaw(dir, "proj", tc.session)
+		if !ok {
+			t.Fatalf("%s vanished", tc.session)
+		}
+		r := got.Relations[0]
+		if r.State != tc.wantSt || r.Confidence != tc.wantConf {
+			t.Errorf("%s relation trust = %s/%.2f, want %s/%.2f",
+				tc.session, r.State, r.Confidence, tc.wantSt, tc.wantConf)
+		}
+		// Provenance is stamped either way — grading by origin is not a
+		// substitute for recording where the knowledge came from.
+		if len(r.Sources) != 1 || r.Sources[0] != tc.session {
+			t.Errorf("%s relation sources = %v, want [%s]", tc.session, r.Sources, tc.session)
+		}
+	}
+}
+
+// An imported bundle keeps the grade its author recorded: re-rating someone
+// else's reviewed knowledge on import would be presumptuous.
+func TestMigrateStaleCachesLeavesImportedTrustAlone(t *testing.T) {
+	dir := t.TempDir()
+	if err := SaveCache(dir, "proj", &SessionCache{
+		SessionID: "import:5f3945daecff8237", Mtime: 1, Schema: 5,
+		Relations: []Relation{{
+			From: "A", To: "B", Label: "包含",
+			State: RelationCandidate, Confidence: 0.5,
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := MigrateStaleCaches(dir, "proj", time.UnixMilli(7)); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := LoadCacheRaw(dir, "proj", "import:5f3945daecff8237")
+	if !ok {
+		t.Fatal("import cache vanished")
+	}
+	r := got.Relations[0]
+	if r.State != RelationCandidate || r.Confidence != 0.5 {
+		t.Errorf("import trust was re-graded to %s/%.2f, want candidate/0.50",
+			r.State, r.Confidence)
+	}
+}
+
 // TestMigrateStaleCachesUpgradesOrphanedCache covers the gap IndexProject cannot
 // reach: a cache whose source session no longer exists still feeds every
 // assembled graph, so it must be upgradeable without rediscovering a session.

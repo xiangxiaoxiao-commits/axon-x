@@ -24,7 +24,10 @@ const maxCodeChars = 8000
 // session id) and rebuilt in full on each code build, so assembleGraph folds them
 // into the project graph exactly like conversation/obsidian caches instead of the
 // old direct graph.json write (which assembleGraph would later clobber).
-const codeCacheID = "code:graph"
+//
+// It is built from graph.CacheSourceCodePrefix so the key, and the source-graded
+// trust that reads it (RelationTrustForCache), cannot drift apart.
+const codeCacheID = graph.CacheSourceCodePrefix + "graph"
 
 // codeBizPrompt asks the model to add ONLY business meaning to already-extracted
 // code symbols: a responsibility observation and business aliases (Chinese/short

@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 )
@@ -28,6 +29,7 @@ type probeStats struct {
 	foldEvidence int
 	staleCaches  int
 	allCaches    int
+	trust        map[string]int
 }
 
 func copyFile(src, dst string) error {
@@ -69,10 +71,10 @@ func copyTree(srcRoot, dstRoot string) error {
 
 func measure(dataDir string) (map[string]*probeStats, *probeStats) {
 	out := map[string]*probeStats{}
-	total := &probeStats{distinctLbl: map[string]bool{}}
+	total := &probeStats{distinctLbl: map[string]bool{}, trust: map[string]int{}}
 	slugs, _ := CacheNamespaces(dataDir)
 	for _, slug := range slugs {
-		st := &probeStats{distinctLbl: map[string]bool{}}
+		st := &probeStats{distinctLbl: map[string]bool{}, trust: map[string]int{}}
 		caches, _ := LoadAllCache(dataDir, slug)
 		st.allCaches = len(caches)
 		total.allCaches += len(caches)
@@ -106,6 +108,10 @@ func measure(dataDir string) (map[string]*probeStats, *probeStats) {
 						break
 					}
 				}
+				n := NormalizeRelation(r)
+				key := fmt.Sprintf("%s/%.2f", n.State, n.Confidence)
+				st.trust[key]++
+				total.trust[key]++
 			}
 		}
 		out[slug] = st
@@ -168,6 +174,21 @@ func TestRealDataMigrationProbe(t *testing.T) {
 		beforeTotal.relations, afterTotal.relations)
 	fmt.Printf("  缓存文件数        %d → %d（必须相等，否则迁移写重复了）\n",
 		beforeTotal.allCaches, afterTotal.allCaches)
+	fmt.Printf("\n  信任等级分布（前）: %s\n", trustLine(beforeTotal.trust))
+	fmt.Printf("  信任等级分布（后）: %s\n", trustLine(afterTotal.trust))
+}
+
+func trustLine(m map[string]int) string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		parts = append(parts, fmt.Sprintf("%s×%d", k, m[k]))
+	}
+	return strings.Join(parts, "  ")
 }
 
 func pct(a, b int) float64 {

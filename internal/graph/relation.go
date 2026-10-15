@@ -79,6 +79,54 @@ func StampRelationProvenance(relations []Relation, source string) {
 	}
 }
 
+// CacheSourceCodePrefix marks a cache key produced by static code analysis, as
+// opposed to conversation distillation or an imported bundle. Like
+// ImportSourcePrefix it is a naming convention on the cache key that carries the
+// knowledge's origin, so trust can be graded by source rather than assumed.
+const CacheSourceCodePrefix = "code:"
+
+// RelationTrustForCache returns the trust grade relations from a cache should
+// carry, based on where that knowledge came from:
+//
+//   - Static code analysis (import / contains / calls) reads the syntax tree, so
+//     the fact is machine-checked: verified at 1.00.
+//   - Conversation distillation is a model reading a transcript and may misread,
+//     so it stays asserted at 0.85.
+//   - An imported bundle keeps whatever grade its author recorded — re-grading
+//     someone else's reviewed knowledge on import would be presumptuous, and the
+//     zero values signal "leave it alone".
+//
+// This mirrors the data-source trust table in the architecture notes, which was
+// documented but never actually applied: every cache was stamped asserted/0.85
+// regardless of origin, so code-derived relations sat below their own declared
+// trust level and the verified tier never held a single row.
+func RelationTrustForCache(sessionID string) (state string, confidence float64, ok bool) {
+	id := strings.TrimSpace(sessionID)
+	switch {
+	case strings.HasPrefix(id, CacheSourceCodePrefix):
+		return RelationVerified, 1, true
+	case strings.HasPrefix(id, ImportSourcePrefix):
+		return "", 0, false
+	default:
+		return RelationAsserted, 0.85, true
+	}
+}
+
+// StampRelationTrust overwrites the trust grade of every relation. Used on
+// ingestion paths that know the source's grade; NormalizeRelation still clamps
+// the values and fills any missing defaults.
+func StampRelationTrust(relations []Relation, state string, confidence float64) {
+	for i := range relations {
+		if strings.TrimSpace(state) != "" {
+			relations[i].State = state
+		}
+		if confidence > 0 {
+			relations[i].Confidence = confidence
+		}
+		relations[i] = NormalizeRelation(relations[i])
+	}
+}
+
 func uniqueTrimmed(in []string) []string {
 	seen := make(map[string]bool, len(in))
 	out := make([]string, 0, len(in))

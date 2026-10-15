@@ -40,7 +40,14 @@ func writeStructure(b *strings.Builder, g *graph.Graph, hit map[string]bool, tit
 	var rels []string
 	for _, r := range g.Relations {
 		if graph.RelationUsableForRecall(r) && hit[strings.ToLower(r.From)] && hit[strings.ToLower(r.To)] {
-			rels = append(rels, fmt.Sprintf("%s —%s→ %s（置信度 %.0f%%）", r.From, r.Label, r.To, r.Confidence*100))
+			line := fmt.Sprintf("%s —%s→ %s（置信度 %.0f%%", r.From, r.Label, r.To, r.Confidence*100)
+			if len(r.Sources) > 0 {
+				// Provenance matters most for the trust split: 100% from the code
+				// graph is a machine-checked structural fact, while 85% from a
+				// session is a model's reading and worth re-checking.
+				line += "，来源：" + renderSource(r.Sources[0], titles)
+			}
+			rels = append(rels, line+"）")
 		}
 	}
 	if !wrote && len(rels) == 0 {
@@ -101,7 +108,15 @@ func sessionTitleMap(projectSlug string) map[string]string {
 func renderSource(id string, titles map[string]string) string {
 	switch {
 	case strings.HasPrefix(id, "code:"):
-		return "代码 " + strings.TrimPrefix(id, "code:")
+		// The bare "graph" key covers the whole repository skeleton (relations
+		// carry it); anything else is a specific source file.
+		name := strings.TrimPrefix(id, "code:")
+		if name == "graph" {
+			return "代码仓库"
+		}
+		return "代码 " + name
+	case strings.HasPrefix(id, graph.ImportSourcePrefix):
+		return "知识包 " + strings.TrimPrefix(id, graph.ImportSourcePrefix)
 	case strings.HasPrefix(id, "task:"):
 		return "任务 " + strings.TrimPrefix(id, "task:")
 	case strings.HasPrefix(id, "obsidian:"):

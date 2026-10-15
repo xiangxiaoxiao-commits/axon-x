@@ -96,6 +96,14 @@ var relationRules = []relationRule{
 // characters or fewer will still slip through, and the check never rewrites a
 // label on its own — deciding what a clause's real predicate is needs judgement,
 // so the health panel surfaces the count and leaves the call to the user.
+//
+// Folding the prefix of an oversized label was tried and rejected. The tail is
+// 500 distinct labels spread over 974 edges (the largest appears six times), and
+// separating "predicate + qualifier" from a clause needs part-of-speech
+// judgement: "提供活跃任务数据" folds sensibly to 提供, while "约束修改后需检查"
+// would fold to 约束 and invent a relation the text never stated. No length or
+// prefix rule separates the two, so the vocabulary keeps matching exactly and
+// leaves the rest to review.
 const MaxRelationLabelRunes = 6
 
 var (

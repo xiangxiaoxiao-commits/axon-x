@@ -21,10 +21,11 @@ import (
 // only by the sessions an indexing run happens to rediscover.
 //
 // The steps most likely to need a bump are changes to what a cache carries
-// rather than to its shape — relation provenance and schema-folded labels are
-// the current example, since a cache written before them holds a label the
-// vocabulary would fold and a source it never recorded.
-const CacheSchema = 5
+// rather than to its shape: relation provenance, schema-folded labels, and
+// source-graded trust are the current examples, since a cache written before
+// them holds a label the vocabulary would fold and a trust grade that ignored
+// the knowledge's origin.
+const CacheSchema = 6
 
 // Chunk is one recall unit of verbatim source text plus its vector. It is the
 // core store of the "raw context" channel: unlike distilled entities (a lossy
@@ -227,7 +228,16 @@ func MigrateStaleCaches(dataDir, slug string, now time.Time) (int, error) {
 			continue
 		}
 		c.Schema = CacheSchema
+		// Entity assertions stay asserted across every origin: a code cache's
+		// entity descriptions mix the static skeleton with optional LLM business
+		// enrichment (see BuildGraphFromCode), so they are not uniformly
+		// machine-checked facts the way its relation edges are.
 		StampEntityAssertions(c.Entities, c.SessionID, now.UnixMilli(), RelationAsserted, 0.85)
+		// Relations are graded by origin, so code-derived edges reach the verified
+		// tier their source actually earns.
+		if state, confidence, ok := RelationTrustForCache(c.SessionID); ok {
+			StampRelationTrust(c.Relations, state, confidence)
+		}
 		StampRelationProvenance(c.Relations, c.SessionID)
 		// Write back to the file we read, never to SaveCache's derived name: an
 		// id like "mcp:1234" sanitizes to a different file name, which would

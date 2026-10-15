@@ -74,9 +74,9 @@
   <h1>关系可信度与谓词归一<br><span class="mute" style="font-weight:400;font-size:20px">把已经设计好的治理机制接上数据流</span></h1>
   <p class="sub">承接《Axon 图谱质量评估》的第 1–2 优先级项。所有数字为同一份真实数据在本机实测，代码结论均定位到文件与行号。</p>
   <div class="meta">
-    <span class="chip">schema 4 → 5</span>
-    <span class="chip">新增 2 个模块 · 改 6 个文件</span>
-    <span class="chip">新增 12 个测试</span>
+    <span class="chip">schema 5 → 6</span>
+    <span class="chip">新增 2 个模块 · 改 8 个文件</span>
+    <span class="chip">新增 14 个测试</span>
     <span class="chip">go test ./... 全绿</span>
     <span class="chip">2026-10-15</span>
   </div>
@@ -113,9 +113,14 @@
     <div class="d">3 → 6745 条</div>
   </div>
   <div class="stat">
+    <div class="v good">0 → 3556</div>
+    <div class="l">verified 档关系</div>
+    <div class="d">信任分级首次生效（代码来源）</div>
+  </div>
+  <div class="stat">
     <div class="v good">245 → 0</div>
     <div class="l">陈旧缓存</div>
-    <div class="d">全部升级到 schema 5</div>
+    <div class="d">全部升级到 schema 6</div>
   </div>
   <div class="stat">
     <div class="v">137</div>
@@ -155,6 +160,23 @@
 
 <p>这正是评估里写的「谓词进 label、整句进 evidence」——<b>信息一点没丢，只是归位了</b>。折叠让 <code>包含</code> 这条遍历键现在能走到原来走不到的 <code>包含字段</code> 边上。</p>
 
+<h3>信任分级首次生效</h3>
+
+<p>架构文档里一直写着「静态代码解析 = <code>verified</code> / 1.00、会话蒸馏 = <code>asserted</code> / 0.85」，但这张表<b>从未被代码落实</b>——所有缓存一律写 <code>asserted</code>/0.85，于是 <code>verified</code> 这一档一条数据都没有。</p>
+
+<p>现在按缓存的<b>来源</b>（key 前缀）给等级：</p>
+
+<pre><span class="c">// 迁移前后的信任分布（6745 条关系）</span>
+前：<span class="r">asserted/0.85 × 6745</span>
+后：<span class="g">verified/1.00 × 3556</span>   <span class="c">← 静态代码解析（语法树，可机器复核）</span>
+    asserted/0.85 × 3189   <span class="c">← 会话蒸馏 + 知识包</span>
+
+<span class="c">// MCP 实际返回的样子</span>
+app.go <span class="g">—包含→</span> main.NewApp（置信度 <span class="g">100%</span>，来源：<span class="g">代码仓库</span>）
+codegraph —提供→ 符号查询（置信度 85%，来源：知识包 5f3945daecff8237）</pre>
+
+<p>导入的知识包<b>保持作者记的等级</b>——重新评定他人已审核的知识是越权。<code>RelationTrustForCache</code> 对 <code>import:</code> 前缀返回「不覆盖」。</p>
+
 <h2><span class="n">03</span>改了什么</h2>
 
 <table class="files">
@@ -172,8 +194,13 @@
     </tr>
     <tr>
       <td><span class="mod">改</span> internal/graph/relation.go</td>
-      <td><code>StampRelationProvenance</code></td>
-      <td>把「补溯源 + 折叠标签 + 原文进 evidence」收成一个共享、幂等的函数</td>
+      <td><code>StampRelationProvenance</code> + <code>RelationTrustForCache</code> / <code>StampRelationTrust</code></td>
+      <td>「补溯源 + 折叠标签 + 原文进 evidence」收成一个共享、幂等的函数；信任等级<b>按来源</b>分级而不是一律一个默认值</td>
+    </tr>
+    <tr>
+      <td><span class="mod">改</span> cmd/axon-mcp/render.go</td>
+      <td>关系渲染带来源 + 来源可读化</td>
+      <td>分级要能被读到才有意义；<code>import:</code> 前缀原本是裸 id，现渲染为「知识包 &lt;指纹&gt;」</td>
     </tr>
     <tr>
       <td><span class="mod">改</span> internal/retrieve/retrieve.go</td>
@@ -253,20 +280,32 @@
 <div class="box">
   <h4>三档治理仍未激活（评估里的第 4 项）</h4>
   <p>关系状态目前还是 <code>asserted</code> 一档到底、置信度 0.85。原因是旧缓存里 LLM 从没输出过 <code>state</code>/<code>confidence</code>——<b>这两项不可能靠回填恢复</b>，必须重新蒸馏（要花 LLM）。本次没有动它。</p>
+  <p class="mute">注：来源感知的信任分级（代码 → <code>verified</code>）已让状态机第一次有了 <code>verified</code> 数据，但 <code>candidate</code> 档仍为空——那要靠重新蒸馏。</p>
+</div>
+
+<div class="box">
+  <h4>试过、然后撤回：超长标签的前缀折叠</h4>
+  <p>我实现过一版「前缀折叠」：把「谓词 + 限定」折回谓词（<code>部署到 sit-49</code> → <code>部署于</code>，限定进 evidence）。先跑了数据模拟，结论是「剩余 ≤ 8 字」可折 <b>150 条</b>。</p>
+  <p>但模拟里发现它<b>会误伤，而且正好踩中我自己上一轮定的原则</b>：</p>
+  <pre><span class="g">提供活跃任务数据  → 提供</span>   <span class="c">// 名词性限定，折得对</span>
+<span class="r">约束修改后需检查  → 约束</span>   <span class="c">// 动词从句，折了就凭空造出一条关系</span></pre>
+  <p>两者的剩余部分都是 6 个字，<b>长度区分不了名词短语和动词从句</b>——要安全就得先做词性判断。为 15% 的收益引入分词依赖不值得，而且这恰恰是评估报告里写过的陷阱：「机器猜一个谓词塞进去反而丢信息」。</p>
+  <p><b>所以撤回了</b>，词表保持只做精确匹配，剩下的交给人工复核或将来过一次模型。这个取舍写进了 <code>schema.go</code> 的注释，免得以后有人再试一遍。</p>
 </div>
 
 <h2><span class="n">07</span>怎么用</h2>
 
 <ul>
-  <li><b>已经生效</b>：迁移已在你本机真实数据上执行完毕，<b>备份在</b> <code>~/Library/Application Support/axon/backup/pre-rel-schema-20261015-115757/</code>（106MB）。</li>
-  <li><b>召回侧改动需要新二进制</b>：反向/传递扩展、健康度新指标、启动自动迁移，都在代码里，需要重新构建安装才生效。MCP 查询走的是缓存直读，所以溯源部分已经能查到。</li>
+  <li><b>已经生效</b>：迁移已在你本机真实数据上执行完毕，备份在
+    <code>~/Library/Application Support/axon/backup/pre-schema6-20261015-134629/</code>（67MB，迁移前状态）。</li>
+  <li><b>召回侧改动需要新二进制</b>：反向/传递扩展、健康度新指标、启动自动迁移、MCP 关系来源渲染，都在代码里，需要重新构建安装才生效。MCP 查询走的是缓存直读，所以溯源与信任分级的数据部分已经能查到。</li>
   <li><b>图谱视图的 <code>graph.json</code></b> 是派生文件，下次打开知识视图时会从缓存重新组装，不用手动处理。</li>
   <li><b>复现测量</b>：<code>go test -tags realdata ./internal/graph/ -run TestRealDataMigrationProbe -v</code>（在副本上跑，不动真实数据）。</li>
 </ul>
 
 <footer>
   验证方式：所有数字取自本机真实数据（<code>~/Library/Application Support/axon/graphcache</code>，245 个缓存 / 6745 条关系）。实现前先在<b>副本</b>上跑通，确认关系总数与文件数不变后再应用到真实数据。代码结论均定位到文件与行号，词表每一条都对照真实边核过方向。<br>
-  生成于 2026-10-15 · <code>go build ./... &amp;&amp; go vet ./... &amp;&amp; go test ./... </code> 全部通过（14/14 包）
+  生成于 2026-10-15 · <code>go build ./... &amp;&amp; go vet ./... &amp;&amp; go test ./...</code> 全部通过（14/14 包）
 </footer>
 
 </div>
