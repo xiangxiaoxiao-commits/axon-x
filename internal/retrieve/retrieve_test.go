@@ -159,6 +159,67 @@ func TestRecall_SecondHopStaysOnTransitiveLabels(t *testing.T) {
 	}
 }
 
+// TestRecall_RecordsHowEachEntityWasReached covers the auditability contract: a
+// direct match and an inferred neighbour must be distinguishable, or a hop
+// through the graph gets mistaken for the graph's answer.
+func TestRecall_RecordsHowEachEntityWasReached(t *testing.T) {
+	g := &graph.Graph{
+		Entities: []graph.Entity{
+			{Name: "graph.Dir", Embedding: []float32{1, 0}},
+			{Name: "config.Load", Embedding: []float32{0, 1}},
+			{Name: "main.startup", Embedding: []float32{0, 1}},
+			{Name: "unrelated", Embedding: []float32{0, 1}},
+		},
+		Relations: []graph.Relation{
+			// Reverse hop: the query matches the object, the caller comes in
+			// through the declared inverse of 调用.
+			{From: "config.Load", To: "graph.Dir", Label: "调用",
+				State: graph.RelationAsserted, Confidence: 0.9},
+			// Two forward hops on a transitive label.
+			{From: "graph.Dir", To: "main.startup", Label: "包含",
+				State: graph.RelationAsserted, Confidence: 0.9},
+			// No declared inverse: must not expand, so must not appear in Derived.
+			{From: "unrelated", To: "graph.Dir", Label: "相关",
+				State: graph.RelationAsserted, Confidence: 0.9},
+		},
+	}
+	res := Recall(g, nil, []float32{1, 0}, "unmatched query")
+
+	// The seed matched the query itself, so it carries no derivation.
+	if _, ok := res.Derived["graph.dir"]; ok {
+		t.Errorf("the directly matched entity was marked as derived: %+v", res.Derived["graph.dir"])
+	}
+	if !res.Hit["graph.dir"] {
+		t.Fatalf("expected the queried entity to be a seed, got %v", res.Hit)
+	}
+
+	reverse, ok := res.Derived["config.load"]
+	if !ok {
+		t.Fatalf("reverse hop was not recorded: %+v", res.Derived)
+	}
+	if !reverse.Reverse {
+		t.Errorf("reverse hop not flagged as reverse: %+v", reverse)
+	}
+	if reverse.Via != "graph.Dir" || reverse.Label != "调用" || reverse.Hops != 1 {
+		t.Errorf("reverse derivation = %+v, want via graph.Dir / 调用 / 1 hop", reverse)
+	}
+
+	forward, ok := res.Derived["main.startup"]
+	if !ok {
+		t.Fatalf("forward hop was not recorded: %+v", res.Derived)
+	}
+	if forward.Reverse {
+		t.Errorf("forward hop wrongly flagged as reverse: %+v", forward)
+	}
+	if forward.Via != "graph.Dir" || forward.Label != "包含" || forward.Hops != 1 {
+		t.Errorf("forward derivation = %+v, want via graph.Dir / 包含 / 1 hop", forward)
+	}
+
+	if _, ok := res.Derived["unrelated"]; ok || res.Hit["unrelated"] {
+		t.Errorf("undeclared relation expanded recall: %+v", res.Derived)
+	}
+}
+
 func TestRRFFuse_RanksSharedIDsHigher(t *testing.T) {
 	got := RRFFuse([]string{"a", "b", "c"}, []string{"b", "d"})
 	if len(got) != 4 {

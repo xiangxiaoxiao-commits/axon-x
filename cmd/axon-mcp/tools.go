@@ -323,7 +323,7 @@ func (h *toolHandler) searchKnowledge(raw json.RawMessage) (*toolResult, error) 
 		anyHit = true
 		titles := sessionTitleMap(slug)
 		fmt.Fprintf(&b, "# 项目 `%s` 与「%s」相关的业务知识\n", slug, a.Query)
-		writeStructure(&b, g, res.Hit, titles)
+		writeStructure(&b, g, res.Hit, res.Derived, titles)
 		writeChunks(&b, res.Chunks, titles)
 		b.WriteString("\n---\n\n")
 	}

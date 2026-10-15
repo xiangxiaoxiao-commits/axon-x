@@ -76,7 +76,7 @@
   <div class="meta">
     <span class="chip">schema 5 → 6</span>
     <span class="chip">新增 2 个模块 · 改 8 个文件</span>
-    <span class="chip">新增 14 个测试</span>
+    <span class="chip">新增 17 个测试</span>
     <span class="chip">go test ./... 全绿</span>
     <span class="chip">2026-10-15</span>
   </div>
@@ -177,6 +177,24 @@ codegraph —提供→ 符号查询（置信度 85%，来源：知识包 5f3945d
 
 <p>导入的知识包<b>保持作者记的等级</b>——重新评定他人已审核的知识是越权。<code>RelationTrustForCache</code> 对 <code>import:</code> 前缀返回「不覆盖」。</p>
 
+<h3>召回结果可审计：直接命中 vs 关联线索</h3>
+
+<p>关系扩展带进来的实体，此前和查询直接命中的实体<b>混在一起渲染</b>，agent 无法分辨「图谱就是这么说的」和「这是从图上跳过去的」。现在 <code>retrieve.Result</code> 记录每个实体是怎么被找到的——经哪条边、第几跳、是否反向——输出据此分成两段：</p>
+
+<pre><span class="c">## 结构（实体与关系）</span>
+
+<span class="g">### main.resolveEntities（function）</span>        <span class="c">← 直接命中：完整渲染事实</span>
+- 仅在启用云端语义 embedder 时…（置信度 85%，来源：MCP写入 (62天前)）
+
+<span class="c">关系：</span>
+- app.go —包含→ main.startup（置信度 100%，来源：代码仓库）
+
+<span class="b">关联线索（通过关系扩展加入，非直接命中；需要时再单独查询）：</span>
+- main.newEmbedder〔经 main.rememberKnowledge —调用→〕
+- app.go〔经 main.SetEmbeddingMode —包含→，反向〕</pre>
+
+<p>分开渲染顺带修掉一个实际后果：关联实体如果也展开断言，会占满结构区预算（1600 字符），<b>把直接命中的断言挤掉</b>。实测一次查询从 1 个种子扩展出 20 个实体——答案是 1 个，噪音是 19 个，而预算全被噪音的标题吃掉。</p>
+
 <h2><span class="n">03</span>改了什么</h2>
 
 <table class="files">
@@ -199,13 +217,13 @@ codegraph —提供→ 符号查询（置信度 85%，来源：知识包 5f3945d
     </tr>
     <tr>
       <td><span class="mod">改</span> cmd/axon-mcp/render.go</td>
-      <td>关系渲染带来源 + 来源可读化</td>
-      <td>分级要能被读到才有意义；<code>import:</code> 前缀原本是裸 id，现渲染为「知识包 &lt;指纹&gt;」</td>
+      <td>关系渲染带来源 + 来源可读化 + 命中/线索分段</td>
+      <td>分级要能被读到才有意义；<code>import:</code> 前缀原本是裸 id，现渲染为「知识包 &lt;指纹&gt;」；直接命中完整渲染、关联实体按名列为线索</td>
     </tr>
     <tr>
       <td><span class="mod">改</span> internal/retrieve/retrieve.go</td>
-      <td>反向扩展 + 传递扩展 + 修注释</td>
-      <td>只沿<b>已声明</b>逆属性反向；第 2 跳只走已声明传递谓词</td>
+      <td>反向扩展 + 传递扩展 + 修注释 + <code>Derivation</code></td>
+      <td>只沿<b>已声明</b>逆属性反向；第 2 跳只走已声明传递谓词；并记录每个实体<b>是怎么被找到的</b>（可审计）</td>
     </tr>
     <tr>
       <td><span class="mod">改</span> internal/graph/health.go</td>

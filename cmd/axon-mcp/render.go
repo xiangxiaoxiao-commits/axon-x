@@ -7,6 +7,7 @@ import (
 
 	"axon/internal/claudedata"
 	"axon/internal/graph"
+	"axon/internal/retrieve"
 )
 
 // Injection budgets, mirroring the App so MCP output stays a comparable size.
@@ -17,11 +18,25 @@ const (
 
 // writeStructure renders the matched entities (with per-fact provenance) and the
 // relations among them, into b, bounded by structBudgetChars.
-func writeStructure(b *strings.Builder, g *graph.Graph, hit map[string]bool, titles map[string]string) {
+//
+// Direct matches and inferred neighbours are rendered differently on purpose. A
+// direct match is the answer to the query, so it gets its facts in full. An
+// expanded neighbour is a lead: on a real graph one seed fans out to a dozen
+// nodes (a file pulls in every function it contains), and given a character
+// budget, printing their facts would crowd out the assertions the query was
+// actually asking for. Leads are therefore listed by name only — enough to know
+// what to look up next, cheap enough that the answer still fits.
+func writeStructure(b *strings.Builder, g *graph.Graph, hit map[string]bool, derived map[string]retrieve.Derivation, titles map[string]string) {
 	wrote := false
 	var body strings.Builder
+
+	// Direct matches first: these answer the query.
 	for _, e := range g.Entities {
-		if !hit[strings.ToLower(strings.TrimSpace(e.Name))] {
+		key := strings.ToLower(strings.TrimSpace(e.Name))
+		if !hit[key] {
+			continue
+		}
+		if _, inferred := derived[key]; inferred {
 			continue
 		}
 		if body.Len() >= structBudgetChars {
@@ -37,6 +52,7 @@ func writeStructure(b *strings.Builder, g *graph.Graph, hit map[string]bool, tit
 			body.WriteString("）\n")
 		}
 	}
+
 	var rels []string
 	for _, r := range g.Relations {
 		if graph.RelationUsableForRecall(r) && hit[strings.ToLower(r.From)] && hit[strings.ToLower(r.To)] {
@@ -50,7 +66,28 @@ func writeStructure(b *strings.Builder, g *graph.Graph, hit map[string]bool, tit
 			rels = append(rels, line+"）")
 		}
 	}
-	if !wrote && len(rels) == 0 {
+
+	// Leads last, by name only.
+	var leads []string
+	for _, e := range g.Entities {
+		key := strings.ToLower(strings.TrimSpace(e.Name))
+		if !hit[key] {
+			continue
+		}
+		d, inferred := derived[key]
+		if !inferred {
+			continue
+		}
+		note := ""
+		if d.Reverse {
+			// The edge is stored as Via —Label→ this entity, but the query hit
+			// this entity first, so the walk went against the arrow.
+			note = "，反向"
+		}
+		leads = append(leads, fmt.Sprintf("%s〔经 %s —%s→%s〕", e.Name, d.Via, d.Label, note))
+	}
+
+	if !wrote && len(rels) == 0 && len(leads) == 0 {
 		return
 	}
 	b.WriteString("\n## 结构（实体与关系）\n")
@@ -59,6 +96,12 @@ func writeStructure(b *strings.Builder, g *graph.Graph, hit map[string]bool, tit
 		b.WriteString("\n关系：\n")
 		for _, r := range rels {
 			b.WriteString("- " + r + "\n")
+		}
+	}
+	if len(leads) > 0 {
+		b.WriteString("\n关联线索（通过关系扩展加入，非直接命中；需要时再单独查询）：\n")
+		for _, l := range leads {
+			b.WriteString("- " + l + "\n")
 		}
 	}
 }

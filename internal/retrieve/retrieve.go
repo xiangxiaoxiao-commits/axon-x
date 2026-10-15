@@ -70,16 +70,39 @@ func RecallOptsFor(local bool) RecallOpts {
 	return DefaultRecallOpts()
 }
 
+// Derivation records how an entity entered the hit set through relation
+// expansion rather than a direct match. It is what makes recall auditable: the
+// two channels answer the query directly, everything else is a one- or two-hop
+// inference and deserves to be labelled as such, so a caller can tell "the graph
+// says this about your subject" from "this is adjacent to your subject".
+type Derivation struct {
+	// Via is the already-matched entity whose edge pulled this one in.
+	Via string
+	// Label is the relation label on that edge.
+	Label string
+	// Hops is 1 for a direct edge, 2 for a declared-transitive step.
+	Hops int
+	// Reverse is true when the walk used a declared inverse: the edge is stored
+	// as Via —Label→ Name, but the query matched Name.
+	Reverse bool
+	// Derived marks a conclusion reached by inference rather than read off a
+	// stored edge (reserved for transitive closure; currently always false).
+	Derived bool
+}
+
 // Result is the raw outcome of recall, before any caller-specific rendering.
 // Hit is the fused, relation-expanded set of matched entity names (lowercased,
 // as graph lookup keys). SemanticSeeds / KeywordHits are the canonical entity
 // names each channel produced (for diagnostics and the recall-method signal).
+// Derived holds the expansion provenance for entities that were not matched
+// directly — absent from the map means "matched the query itself".
 // Chunks are the top fused verbatim fragments from the raw-context channel.
 type Result struct {
 	Hit           map[string]bool
 	OrderedHits   []string
 	SemanticSeeds []string
 	KeywordHits   []string
+	Derived       map[string]Derivation
 	Chunks        []graph.Chunk
 }
 
@@ -105,8 +128,9 @@ func RecallWithOpts(g *graph.Graph, chunks []graph.Chunk, qv []float32, text str
 	for _, id := range orderedHits {
 		hit[id] = true
 	}
+	var derived map[string]Derivation
 	if len(semanticSeeds) > 0 {
-		expandAlongRelations(g, hit, expandHops)
+		derived = expandAlongRelations(g, hit, expandHops)
 	}
 	// Preserve root ranking, then append expanded neighbors in stable graph order.
 	for _, e := range g.Entities {
@@ -130,6 +154,7 @@ func RecallWithOpts(g *graph.Graph, chunks []graph.Chunk, qv []float32, text str
 		OrderedHits:   orderedHits,
 		SemanticSeeds: semanticSeeds,
 		KeywordHits:   keywordHits,
+		Derived:       derived,
 		Chunks:        chunkRanked,
 	}
 }
@@ -274,10 +299,14 @@ func EntityKeywordHits(g *graph.Graph, text string) []string {
 //
 // Edges that fail the trust gate are skipped in every hop and direction, so
 // candidate, low-confidence and rejected relations still cannot expand recall.
-func expandAlongRelations(g *graph.Graph, hit map[string]bool, hops int) {
+//
+// It returns how each newly added entity was reached, so callers can distinguish
+// a direct match from an inference (see Derivation).
+func expandAlongRelations(g *graph.Graph, hit map[string]bool, hops int) map[string]Derivation {
+	derived := map[string]Derivation{}
 	for h := 0; h < hops; h++ {
 		transitiveOnly := h > 0
-		frontier := map[string]bool{}
+		frontier := map[string]Derivation{}
 		for _, r := range g.Relations {
 			// Inferred/contextual edges are visual hints, not evidence for
 			// expanding factual recall.
@@ -289,19 +318,25 @@ func expandAlongRelations(g *graph.Graph, hit map[string]bool, hops int) {
 			}
 			from, to := strings.ToLower(r.From), strings.ToLower(r.To)
 			if hit[from] && !hit[to] {
-				frontier[to] = true
+				if _, seen := derived[to]; !seen {
+					frontier[to] = Derivation{Via: r.From, Label: r.Label, Hops: h + 1}
+				}
 			}
 			if _, declaredInverse := graph.InverseRelationLabel(r.Label); declaredInverse && hit[to] && !hit[from] {
-				frontier[from] = true
+				if _, seen := derived[from]; !seen {
+					frontier[from] = Derivation{Via: r.To, Label: r.Label, Hops: h + 1, Reverse: true}
+				}
 			}
 		}
 		if len(frontier) == 0 {
 			break
 		}
-		for n := range frontier {
+		for n, d := range frontier {
 			hit[n] = true
+			derived[n] = d
 		}
 	}
+	return derived
 }
 
 // rankChunks returns candidate chunks whose cosine >= minScore, sorted
