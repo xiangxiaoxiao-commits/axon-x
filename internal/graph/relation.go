@@ -57,6 +57,28 @@ func RelationUsableForRecall(r Relation) bool {
 	return (r.State == RelationAsserted || r.State == RelationVerified) && r.Confidence >= 0.65
 }
 
+// StampRelationProvenance attaches a source to every relation and folds each
+// label onto the schema vocabulary (see schema.go). A folded label keeps its
+// original text as evidence, so unifying the traversal key never discards the
+// specialisation the model expressed: "包含字段" becomes 包含 with evidence
+// "包含字段", which reads the same but now joins the 包含 traversal.
+//
+// It is idempotent: re-running with the same source adds no duplicate source
+// (NormalizeRelation dedupes) and no duplicate evidence (an already-canonical
+// label reports changed=false, so nothing is appended).
+func StampRelationProvenance(relations []Relation, source string) {
+	for i := range relations {
+		if canonical, original, changed := CanonicalRelationLabel(relations[i].Label); changed {
+			relations[i].Label = canonical
+			relations[i].Evidence = append(relations[i].Evidence, original)
+		}
+		if source != "" {
+			relations[i].Sources = append(relations[i].Sources, source)
+		}
+		relations[i] = NormalizeRelation(relations[i])
+	}
+}
+
 func uniqueTrimmed(in []string) []string {
 	seen := make(map[string]bool, len(in))
 	out := make([]string, 0, len(in))

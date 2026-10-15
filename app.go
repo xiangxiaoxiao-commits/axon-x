@@ -117,6 +117,13 @@ func (a *App) startup(ctx context.Context) {
 	a.cfg = cfg
 	a.secrets = secret.New()
 
+	// Bring every cached session up to the current cache schema before anything
+	// reads the graph. IndexProject can only back-fill sessions it rediscovers,
+	// so orphaned caches (whose source session was pruned) would otherwise stay
+	// sourceless forever; see graph.MigrateStaleCaches. Best-effort and
+	// LLM-free: a failure here must not stop the app from starting.
+	a.migrateStaleCaches()
+
 	log.Printf("axon: ready at %s", dataDir)
 }
 

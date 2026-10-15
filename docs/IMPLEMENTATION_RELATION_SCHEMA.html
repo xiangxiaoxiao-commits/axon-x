@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Axon 关系可信度与谓词归一 — 实现报告</title>
+<style>
+  :root{
+    --ink:#1c1c1a; --ink2:#5f5e5a; --ink3:#8a8880;
+    --line:#e3e1da; --line2:#cfcdc5;
+    --bg:#fbfaf7; --card:#fff; --soft:#f5f3ee;
+    --red:#A32D2D; --redbg:#FCEBEB; --redline:#F09595;
+    --grn:#0F6E56; --grnbg:#E1F5EE; --grnline:#5DCAA5;
+    --amb:#854F0B; --ambbg:#FAEEDA; --ambline:#EF9F27;
+    --blu:#185FA5; --blubg:#E6F1FB; --bluline:#85B7EB;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:15px/1.75 -apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    -webkit-font-smoothing:antialiased}
+  .wrap{max-width:900px;margin:0 auto;padding:56px 32px 96px}
+  header{border-bottom:2px solid var(--ink);padding-bottom:20px;margin-bottom:34px}
+  .kicker{font-size:12px;letter-spacing:.14em;color:var(--ink3);text-transform:uppercase;margin-bottom:10px}
+  h1{font-size:26px;line-height:1.35;margin:0 0 12px;font-weight:600}
+  .sub{color:var(--ink2);font-size:14px;margin:0}
+  .meta{margin-top:16px;display:flex;flex-wrap:wrap;gap:8px}
+  .chip{font-size:12px;padding:3px 10px;border:1px solid var(--line2);border-radius:99px;color:var(--ink2);background:var(--card)}
+  h2{font-size:19px;margin:46px 0 8px;font-weight:600;padding-top:6px}
+  h2 .n{color:var(--ink3);font-weight:400;margin-right:8px;font-variant-numeric:tabular-nums}
+  h3{font-size:15px;margin:24px 0 8px;font-weight:600}
+  p{margin:10px 0}
+  .lede{font-size:15.5px;background:var(--card);border:1px solid var(--line);border-left:3px solid var(--grn);
+    border-radius:0 8px 8px 0;padding:16px 20px;margin:0 0 8px}
+  code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;
+    background:var(--soft);border:1px solid var(--line);border-radius:4px;padding:1px 5px;color:#3a3a36}
+  table{width:100%;border-collapse:collapse;margin:14px 0;font-size:13.5px;background:var(--card);
+    border:1px solid var(--line);border-radius:8px;overflow:hidden}
+  th{text-align:left;font-weight:600;background:var(--soft);padding:9px 12px;border-bottom:1px solid var(--line);
+    color:var(--ink2);font-size:12.5px}
+  td{padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  tr:last-child td{border-bottom:none}
+  td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .bad{color:var(--red);font-weight:600}
+  .good{color:var(--grn);font-weight:600}
+  .warn{color:var(--amb);font-weight:600}
+  .mute{color:var(--ink3)}
+  .box{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:18px 22px;margin:18px 0}
+  .box.fix{border-color:var(--grnline);background:var(--grnbg)}
+  .box.hot{border-color:var(--redline);background:var(--redbg)}
+  .box.note{border-color:var(--bluline);background:var(--blubg)}
+  .box h4{margin:0 0 8px;font-size:14px;font-weight:600}
+  .box.fix h4{color:var(--grn)} .box.hot h4{color:var(--red)} .box.note h4{color:var(--blu)}
+  .box p:last-child{margin-bottom:0}
+  ul{margin:10px 0;padding-left:22px} li{margin:6px 0}
+  pre{background:#2c2c2a;color:#ece9e0;border-radius:8px;padding:14px 16px;overflow-x:auto;
+    font-size:12.5px;line-height:1.65;margin:14px 0}
+  pre .c{color:#9a978d} pre .g{color:#97c459} pre .r{color:#f0997b} pre .b{color:#85b7eb}
+  footer{margin-top:60px;padding-top:20px;border-top:1px solid var(--line);color:var(--ink3);font-size:12.5px}
+  .files td:first-child{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px}
+  .add{color:var(--grn);font-weight:600}
+  .mod{color:var(--blu);font-weight:600}
+  .cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px;margin:18px 0}
+  .stat{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px 18px}
+  .stat .v{font-size:24px;font-weight:600;line-height:1.15;font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+  .stat .l{font-size:12.5px;color:var(--ink2);margin-top:5px}
+  .stat .d{font-size:11.5px;color:var(--ink3);margin-top:3px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="kicker">Axon-x · 实现报告</div>
+  <h1>关系可信度与谓词归一<br><span class="mute" style="font-weight:400;font-size:20px">把已经设计好的治理机制接上数据流</span></h1>
+  <p class="sub">承接《Axon 图谱质量评估》的第 1–2 优先级项。所有数字为同一份真实数据在本机实测，代码结论均定位到文件与行号。</p>
+  <div class="meta">
+    <span class="chip">schema 4 → 5</span>
+    <span class="chip">新增 2 个模块 · 改 6 个文件</span>
+    <span class="chip">新增 12 个测试</span>
+    <span class="chip">go test ./... 全绿</span>
+    <span class="chip">2026-10-15</span>
+  </div>
+</header>
+
+<p class="lede">
+<b>结论：</b>问题不是「本体不够」，而是<b>已写好的机制从未拿到数据</b>。溯源覆盖率 0.1% 的根因不是代码缺失——会话蒸馏早就调用 <code>stampRelationMetadata</code>——而是<b>陈旧缓存永远等不到回填</b>。修掉这一条之后，本机真实数据的关系溯源覆盖率从 <b>0.1% 变成 100%</b>，且关系总数与文件数一条没变。
+</p>
+
+<h2><span class="n">01</span>最关键的那个发现</h2>
+
+<p>评估阶段我看到「245 个缓存里 243 个是旧 schema」，当时的判断是「重跑一次建索引就好」。这个判断<b>是错的</b>——查下去发现重跑也修不了：</p>
+
+<div class="box hot">
+  <h4><code>IndexProject</code> 只能回填它「重新扫描到」的会话</h4>
+  <p>缓存升级的入口是会话发现：扫描 <code>~/.claude/projects</code>、<code>~/.codex</code> 等目录 → 对每个会话检查缓存 schema → 过期就回填。但本机 <b>245 个缓存里有 238 个的源会话文件已经不存在了</b>（Claude Code 清理旧会话、换过机器）。</p>
+  <p>这些「孤儿缓存」仍然通过 <code>LoadAllCache</code> 参与<strong>每一次组图</strong>——<code>assembleGraph</code> 读的是全部缓存文件，与会话发现无关——但它们<b>再也不会被任何一次建索引碰到</b>。于是 schema 升级只覆盖活着的少数会话，孤儿永远是旧 schema、永远没有溯源。</p>
+  <p>这条路径是结构性的，不是靠用户多点一次「建索引」能绕开的。</p>
+</div>
+
+<pre><span class="c">// 实测：缓存 schema 分布与源会话存活情况</span>
+<span class="r">schema=4</span> 文件       2 个   ← 只有这两份是新的
+<span class="r">schema=2</span> 文件     230 个
+<span class="r">无 schema</span> 字段      13 个
+源会话仍在磁盘      <span class="r">7 个</span>
+源会话已消失       <span class="r">238 个</span>   ← 它们携带 1793 条关系，且永远无法回填</pre>
+
+<h2><span class="n">02</span>实测结果（本机真实数据）</h2>
+
+<div class="cols">
+  <div class="stat">
+    <div class="v good">0.1% → 100%</div>
+    <div class="l">关系带 sources</div>
+    <div class="d">3 → 6745 条</div>
+  </div>
+  <div class="stat">
+    <div class="v good">245 → 0</div>
+    <div class="l">陈旧缓存</div>
+    <div class="d">全部升级到 schema 5</div>
+  </div>
+  <div class="stat">
+    <div class="v">137</div>
+    <div class="l">标签被折叠为规范谓词</div>
+    <div class="d">原文全部保留进 evidence</div>
+  </div>
+  <div class="stat">
+    <div class="v">1109 → 1090</div>
+    <div class="l">distinct label</div>
+    <div class="d">谓词开始收敛</div>
+  </div>
+  <div class="stat">
+    <div class="v good">6745 → 6745</div>
+    <div class="l">关系总数</div>
+    <div class="d">必须相等——证明没写重复</div>
+  </div>
+  <div class="stat">
+    <div class="v good">245 → 245</div>
+    <div class="l">缓存文件数</div>
+    <div class="d">必须相等——证明没写重复</div>
+  </div>
+</div>
+
+<p class="mute">后两项是<b>回归哨兵</b>。实测过程中我确实先制造了这个 bug（见 §04），此后把「总数不变」固定成每次测量都必须通过的断言。</p>
+
+<h3>抽取验证：真实缓存里的实际变化</h3>
+
+<pre><span class="c">// wanlian/310111ef-….json（schema 5）</span>
+<span class="c">// 前：</span>entityInformation <span class="r">--包含字段--</span>&gt; orgKind
+<span class="c">// 后：</span>entityInformation <span class="g">--包含--</span>&gt; orgKind
+      <span class="b">"evidence": ["包含字段"]</span>        <span class="c">← 限定没有丢，只是归位</span>
+
+<span class="c">// wanlian/64749ded-….json</span>
+<span class="c">// 前：</span>镜像 3.2.1-stable-7261f94 <span class="r">--部署到--</span>&gt; sit-14
+<span class="c">// 后：</span>镜像 3.2.1-stable-7261f94 <span class="g">--部署于--</span>&gt; sit-14
+      <span class="b">"evidence": ["部署到"]</span></pre>
+
+<p>这正是评估里写的「谓词进 label、整句进 evidence」——<b>信息一点没丢，只是归位了</b>。折叠让 <code>包含</code> 这条遍历键现在能走到原来走不到的 <code>包含字段</code> 边上。</p>
+
+<h2><span class="n">03</span>改了什么</h2>
+
+<table class="files">
+  <thead><tr><th>文件</th><th>改动</th><th>作用</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><span class="add">新增</span> internal/graph/schema.go</td>
+      <td>关系谓词模式</td>
+      <td>RDFS 级词表：别名折叠（<code>subPropertyOf</code>）、逆属性（<code>inverseOf</code>）、传递声明（<code>TransitiveProperty</code>）。<b>每一条都来自真实数据</b>，且方向逐条核对过</td>
+    </tr>
+    <tr>
+      <td><span class="mod">改</span> internal/graph/cache.go</td>
+      <td><code>MigrateStaleCaches</code> / <code>MigrateAllStaleCaches</code> / <code>CacheNamespaces</code> / <code>saveCacheFile</code></td>
+      <td>按缓存文件本身升级，不再依赖会话发现；<b>回写原路径</b>避免重复</td>
+    </tr>
+    <tr>
+      <td><span class="mod">改</span> internal/graph/relation.go</td>
+      <td><code>StampRelationProvenance</code></td>
+      <td>把「补溯源 + 折叠标签 + 原文进 evidence」收成一个共享、幂等的函数</td>
+    </tr>
+    <tr>
+      <td><span class="mod">改</span> internal/retrieve/retrieve.go</td>
+      <td>反向扩展 + 传递扩展 + 修注释</td>
+      <td>只沿<b>已声明</b>逆属性反向；第 2 跳只走已声明传递谓词</td>
+    </tr>
+    <tr>
+      <td><span class="mod">改</span> internal/graph/health.go</td>
+      <td>超长标签指标</td>
+      <td>把「谓词退化成从句」变成面板上可见的数字</td>
+    </tr>
+    <tr>
+      <td><span class="mod">改</span> internal/graph/portable.go</td>
+      <td><code>Bundle.Cache()</code> 补溯源</td>
+      <td>导入的知识打上 <code>import:&lt;指纹&gt;</code>，且<b>不重新评定</b>它的信任等级</td>
+    </tr>
+    <tr>
+      <td><span class="mod">改</span> graphbuild.go / app.go</td>
+      <td>启动时迁移 + 提示词加标签规范</td>
+      <td>对用户透明；同时防止未来再产生句子式谓词</td>
+    </tr>
+    <tr>
+      <td><span class="add">新增</span> 测试 ×12</td>
+      <td>schema / cache / health / retrieve / portable</td>
+      <td>含 <b>「总数不变」回归测试</b>与方向正确性测试</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2><span class="n">04</span>过程中我自己犯的一个错，以及它暴露的真问题</h2>
+
+<div class="box hot">
+  <h4>第一版实现让 <code>axon</code> 命名空间的关系从 3623 条翻倍到 7184 条</h4>
+  <p>原因：<code>SaveCache</code> 用 <code>sanitizeFileName(SessionID)</code> 推导文件名，而真实数据里存在 <code>mcp:1786602946922-0d231da5.json</code> 这种带冒号的文件名，冒号会被改写成下划线。迁移读到 <code>mcp:….json</code>，却写到了 <code>mcp_….json</code>——<b>原文件没被修，同时又多出一份同样的知识</b>，每次组图都把这份知识算两遍。</p>
+  <p>这是<b>只有拿真实数据跑才会暴露</b>的问题：单元测试里文件名都是我按 <code>SaveCache</code> 的规则生成的，永远不会出现这种不一致。我是靠对比「迁移前后关系总数」发现的。</p>
+  <p><b>修法：</b>新增 <code>saveCacheFile</code> 接受显式路径，迁移回写它读到的那个文件；并加回归测试，用真实存在的冒号文件名构造场景锁死它。</p>
+</div>
+
+<p>这条值得记下来：<b>评估阶段的数字是我自己算的，实现阶段的数字也得用同一把尺子重新量一遍</b>——两次量法不一致，翻倍这种量级的错误就会被当成"改进"。</p>
+
+<h2><span class="n">05</span>召回侧的两处改动（行为变化，需要你知情）</h2>
+
+<p>这两条改变了召回的返回内容，不只是数据质量，所以单独说明。</p>
+
+<h3>1. 反向扩展：只沿已声明的逆属性</h3>
+
+<p>原来的实现只走正向，注释写的理由是「反向会污染上下文」。但查下去根因不是取舍失误，是<b>缺少区分能力</b>——没有逆属性声明时，系统无法分辨「调用↔被调用」这种合法反向和真正的污染，只好一律禁止。</p>
+
+<p>代价是量化的：<code>axon</code> 命名空间 <b>48.8%</b> 的关系只能从主语侧召回，而盲区恰好落在语义最易命中的具体技术名上——<code>graph.Dir</code>、<code>claudedata.extractText</code>、<code>main.TestResumeCommandNewline</code>。问「<code>graph.Dir</code> 是什么」时，正向扩展一无所获；而此刻最有价值的「谁调用了它」全在入边上被挡掉。<b>查询越具体，越容易踩进盲区。</b></p>
+
+<p>现在：<b>正向照旧全部走</b>，反向<b>只走已声明的逆属性</b>（<code>调用↔被调用</code>、<code>包含↔属于</code>、<code>依赖↔被依赖</code>…）。未声明的（如 <code>相关</code>）仍然不反向——有测试锁住。信任闸门在两个方向上都照常生效。</p>
+
+<h3>2. 传递扩展：限制在已声明的谓词上</h3>
+
+<p>跳数从 1 提到 2，但<b>第 2 跳只允许 <code>包含</code>/<code>调用</code>/<code>依赖</code>/<code>属于</code>/<code>前置于</code></b>。这样多出来的可达性是「A 传递包含/调用/依赖 C」，而不是任意两跳链的闭包。</p>
+
+<p>这也回应了评估里的一条约束：<b>不要物化传递闭包</b>。<code>包含</code> 有 864 条边且是代码目录树，物化会随树深爆炸；查询期有界遍历才是对的。</p>
+
+<div class="box note">
+  <h4>如果你觉得这两条改动太激进</h4>
+  <p>把 <code>internal/retrieve/retrieve.go</code> 里的 <code>expandHops</code> 改回 <code>1</code>，反向扩展就只剩第 1 跳生效（即只走声明的逆属性、不做传递）；再把 <code>expandAlongRelations</code> 里 <code>declaredInverse</code> 那个分支去掉，就完全回到原行为。词表与迁移不受影响——它们是独立的两块。</p>
+</div>
+
+<h2><span class="n">06</span>没做的，以及为什么</h2>
+
+<div class="box hot">
+  <h4>没有引入 OWL DL 推理机</h4>
+  <p>这本书自己在 §1.1 结尾警告过：「很多企业的本体项目做不下去，第一步就错了——用 OWL 把所有东西都建模了，结果推理机跑几个小时跑不完。」Axon 是端侧单机 Go 程序，图规模千级实体。所以只做 RDFS 级词表 + 两条有界遍历，够吃下全部收益。</p>
+</div>
+
+<div class="box">
+  <h4>句子式标签只做「标记 + 预防」，不自动改写</h4>
+  <p>还有 974 条标签超过 6 字（约占 14%），健康度会显示这个数字并提示复核，但<b>不自动改写</b>。判断「<code>约束修改后需检查</code>真正的谓词是什么」需要语义判断，机器猜一个 <code>相关</code> 塞进去反而丢信息——那正是评估里提醒过的陷阱。要真正收敛这批，需要过一次模型（单独一步，可以后做）。</p>
+  <p>不过未来不会再产生新的了：蒸馏提示词已经写明 label 必须是 2–8 字谓词，整句进 evidence。</p>
+</div>
+
+<div class="box">
+  <h4>三档治理仍未激活（评估里的第 4 项）</h4>
+  <p>关系状态目前还是 <code>asserted</code> 一档到底、置信度 0.85。原因是旧缓存里 LLM 从没输出过 <code>state</code>/<code>confidence</code>——<b>这两项不可能靠回填恢复</b>，必须重新蒸馏（要花 LLM）。本次没有动它。</p>
+</div>
+
+<h2><span class="n">07</span>怎么用</h2>
+
+<ul>
+  <li><b>已经生效</b>：迁移已在你本机真实数据上执行完毕，<b>备份在</b> <code>~/Library/Application Support/axon/backup/pre-rel-schema-20261015-115757/</code>（106MB）。</li>
+  <li><b>召回侧改动需要新二进制</b>：反向/传递扩展、健康度新指标、启动自动迁移，都在代码里，需要重新构建安装才生效。MCP 查询走的是缓存直读，所以溯源部分已经能查到。</li>
+  <li><b>图谱视图的 <code>graph.json</code></b> 是派生文件，下次打开知识视图时会从缓存重新组装，不用手动处理。</li>
+  <li><b>复现测量</b>：<code>go test -tags realdata ./internal/graph/ -run TestRealDataMigrationProbe -v</code>（在副本上跑，不动真实数据）。</li>
+</ul>
+
+<footer>
+  验证方式：所有数字取自本机真实数据（<code>~/Library/Application Support/axon/graphcache</code>，245 个缓存 / 6745 条关系）。实现前先在<b>副本</b>上跑通，确认关系总数与文件数不变后再应用到真实数据。代码结论均定位到文件与行号，词表每一条都对照真实边核过方向。<br>
+  生成于 2026-10-15 · <code>go build ./... &amp;&amp; go vet ./... &amp;&amp; go test ./... </code> 全部通过（14/14 包）
+</footer>
+
+</div>
+</body>
+</html>

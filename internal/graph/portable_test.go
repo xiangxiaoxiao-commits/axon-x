@@ -315,6 +315,69 @@ func TestCacheCarriesKnowledgeAndNoChunks(t *testing.T) {
 	}
 }
 
+// An import deliberately drops the author's sources so their machine's session
+// ids never travel (ImportBundle clears them before calling Cache). That must not
+// leave imported knowledge unattributable — ImportSourcePrefix exists precisely
+// so imported facts stay traceable to the pack that brought them in. The stamp
+// must also not re-grade the facts the pack shipped.
+func TestImportedCacheStampsItsOwnProvenance(t *testing.T) {
+	_, b := buildSample(t, sanitize.LevelStandard)
+	// Reproduce the post-scrub state: the author's sources are gone.
+	for i := range b.Entities {
+		for j := range b.Entities[i].Assertions {
+			b.Entities[i].Assertions[j].Sources = nil
+		}
+		b.Entities[i].ObsSources = nil
+	}
+	for i := range b.Relations {
+		b.Relations[i].Sources = nil
+	}
+	c := b.Cache()
+	want := b.SessionID()
+	if !strings.HasPrefix(want, ImportSourcePrefix) {
+		t.Fatalf("SessionID = %q, want the %q prefix", want, ImportSourcePrefix)
+	}
+
+	if len(c.Relations) == 0 {
+		t.Fatal("sample bundle carried no relations to check")
+	}
+	for _, r := range c.Relations {
+		if len(r.Sources) != 1 || r.Sources[0] != want {
+			t.Fatalf("imported relation sources = %v, want [%s]", r.Sources, want)
+		}
+	}
+	stamped := 0
+	for _, e := range c.Entities {
+		for _, a := range e.Assertions {
+			if len(a.Sources) == 1 && a.Sources[0] == want {
+				stamped++
+			}
+		}
+	}
+	if stamped == 0 {
+		t.Error("no imported assertion carried the bundle's provenance")
+	}
+
+	// A verified, high-confidence fact must survive with its grade intact: the
+	// import attaches a source, it does not re-rate the author's evidence.
+	graded := &Bundle{
+		Format: BundleFormat, Version: BundleVersion, Digest: "deadbeefcafe0000",
+		Entities: []Entity{{Name: "A", Assertions: []Assertion{{
+			Text: "代码确认的事实", State: RelationVerified, Confidence: 1,
+		}}}},
+		Relations: []Relation{{From: "A", To: "A", Label: "依赖",
+			State: RelationVerified, Confidence: 1}},
+	}
+	gc := graded.Cache()
+	got := gc.Entities[0].Assertions[0]
+	if got.State != RelationVerified || got.Confidence != 1 {
+		t.Errorf("import re-graded a fact: state=%q confidence=%v", got.State, got.Confidence)
+	}
+	if gc.Relations[0].State != RelationVerified || gc.Relations[0].Confidence != 1 {
+		t.Errorf("import re-graded a relation: %+v", gc.Relations[0])
+	}
+}
+
 func TestSafeFileComponentHandlesWindowsRules(t *testing.T) {
 	cases := []struct{ in, want string }{
 		{"wanlian", "wanlian"},

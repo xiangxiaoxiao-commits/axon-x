@@ -357,6 +357,7 @@ export namespace graph {
 	    trustedRelations: number;
 	    candidateRelations: number;
 	    sourcelessRelations: number;
+	    oversizedRelationLabels: number;
 	    isolatedEntities: number;
 	    governanceActions: number;
 	    canUndo: boolean;
@@ -380,6 +381,7 @@ export namespace graph {
 	        this.trustedRelations = source["trustedRelations"];
 	        this.candidateRelations = source["candidateRelations"];
 	        this.sourcelessRelations = source["sourcelessRelations"];
+	        this.oversizedRelationLabels = source["oversizedRelationLabels"];
 	        this.isolatedEntities = source["isolatedEntities"];
 	        this.governanceActions = source["governanceActions"];
 	        this.canUndo = source["canUndo"];

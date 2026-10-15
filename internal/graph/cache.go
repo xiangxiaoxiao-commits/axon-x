@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // CacheSchema is the current on-disk SessionCache layout version. Bump it when a
@@ -13,7 +14,17 @@ import (
 // cache whose Schema is older than this as stale, forcing IndexProject to
 // reprocess it (which, for the chunk field, only re-runs local chunking + embed,
 // never the LLM — see IndexProject).
-const CacheSchema = 4
+//
+// Bumping this also lets MigrateStaleCaches reach caches IndexProject can no
+// longer see: a session whose source file was pruned still contributes to every
+// assembled graph, so a version bump must be honoured by the cache itself, not
+// only by the sessions an indexing run happens to rediscover.
+//
+// The steps most likely to need a bump are changes to what a cache carries
+// rather than to its shape — relation provenance and schema-folded labels are
+// the current example, since a cache written before them holds a label the
+// vocabulary would fold and a source it never recorded.
+const CacheSchema = 5
 
 // Chunk is one recall unit of verbatim source text plus its vector. It is the
 // core store of the "raw context" channel: unlike distilled entities (a lossy
@@ -79,24 +90,33 @@ func LoadCacheRaw(dataDir, slug, sessionID string) (*SessionCache, bool) {
 	return &c, true
 }
 
-// SaveCache writes a session's distilled cache atomically (temp file + rename)
-// so a crash mid-write can't leave a half-written, unparseable cache — important
-// now that caches carry large chunk vectors.
-func SaveCache(dataDir, slug string, c *SessionCache) error {
-	dir := cacheDir(dataDir, slug)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+// saveCacheFile writes a cache to an explicit path, atomically (temp file +
+// rename) so a crash mid-write can't leave a half-written, unparseable cache —
+// important now that caches carry large chunk vectors.
+//
+// Callers that already know the file a cache came from must use this instead of
+// SaveCache: SaveCache derives the name from SessionID through sanitizeFileName,
+// and for an id containing a character that sanitizing rewrites ("mcp:1234"
+// becomes "mcp_1234") that lands on a *different* file — leaving the original in
+// place and adding a second copy of the same knowledge.
+func saveCacheFile(path string, c *SessionCache) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("create cache dir: %w", err)
 	}
 	data, err := json.MarshalIndent(c, "", "  ")
 	if err != nil {
 		return err
 	}
-	p := filepath.Join(dir, sanitizeFileName(c.SessionID)+".json")
-	tmp := p + ".tmp"
+	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, data, 0o644); err != nil {
 		return fmt.Errorf("write cache: %w", err)
 	}
-	return os.Rename(tmp, p)
+	return os.Rename(tmp, path)
+}
+
+// SaveCache writes a session's distilled cache under its canonical file name.
+func SaveCache(dataDir, slug string, c *SessionCache) error {
+	return saveCacheFile(filepath.Join(cacheDir(dataDir, slug), sanitizeFileName(c.SessionID)+".json"), c)
 }
 
 // sanitizeFileName replaces characters that are illegal in Windows file names
@@ -142,4 +162,101 @@ func LoadAllCache(dataDir, slug string) ([]SessionCache, error) {
 		}
 	}
 	return out, nil
+}
+
+// CacheNamespaces lists the namespace slugs that have a cache directory. Unlike
+// the App's ListNamespaces this reads the filesystem only, so it also sees a
+// namespace whose graph.json has not been written yet.
+func CacheNamespaces(dataDir string) ([]string, error) {
+	root := filepath.Join(dataDir, "graphcache")
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []string{}, nil
+		}
+		return nil, err
+	}
+	out := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if e.IsDir() {
+			out = append(out, e.Name())
+		}
+	}
+	return out, nil
+}
+
+// MigrateStaleCaches upgrades every cached session whose Schema predates
+// CacheSchema — including caches whose source session no longer exists on disk —
+// and reports how many it upgraded.
+//
+// This closes a gap that IndexProject structurally cannot. IndexProject only
+// revisits a cache it rediscovers by scanning the agent's session files, so once
+// a session file is pruned (Claude Code rotating old sessions, or the user moving
+// to another machine) its cache becomes an orphan: LoadAllCache keeps feeding it
+// into every assembled graph, but no indexing run will ever touch it again. A
+// schema bump therefore reaches live sessions only, and the orphaned majority
+// stays sourceless and un-folded forever.
+//
+// The work is deliberately the same LLM-free back-fill IndexProject performs on a
+// schema-only bump: stamp entity assertions, stamp relation provenance, fold
+// labels, re-save at the current schema. No network, no re-distillation, no
+// knowledge change — only the metadata the newer schema expects.
+func MigrateStaleCaches(dataDir, slug string, now time.Time) (int, error) {
+	dir := cacheDir(dataDir, slug)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	upgraded := 0
+	for _, e := range entries {
+		if filepath.Ext(e.Name()) != ".json" {
+			continue
+		}
+		raw, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			continue
+		}
+		var c SessionCache
+		if json.Unmarshal(raw, &c) != nil {
+			continue
+		}
+		if c.Schema >= CacheSchema {
+			continue
+		}
+		c.Schema = CacheSchema
+		StampEntityAssertions(c.Entities, c.SessionID, now.UnixMilli(), RelationAsserted, 0.85)
+		StampRelationProvenance(c.Relations, c.SessionID)
+		// Write back to the file we read, never to SaveCache's derived name: an
+		// id like "mcp:1234" sanitizes to a different file name, which would
+		// leave this stale original in place and add a duplicate of its
+		// knowledge to every later assembly.
+		if err := saveCacheFile(filepath.Join(dir, e.Name()), &c); err != nil {
+			continue
+		}
+		upgraded++
+	}
+	return upgraded, nil
+}
+
+// MigrateAllStaleCaches runs MigrateStaleCaches over every namespace. It is
+// best-effort per namespace: one unreadable directory never aborts the rest.
+func MigrateAllStaleCaches(dataDir string, now time.Time) (int, map[string]int) {
+	perNamespace := map[string]int{}
+	slugs, err := CacheNamespaces(dataDir)
+	if err != nil {
+		return 0, perNamespace
+	}
+	total := 0
+	for _, slug := range slugs {
+		n, err := MigrateStaleCaches(dataDir, slug, now)
+		if err != nil || n == 0 {
+			continue
+		}
+		perNamespace[slug] = n
+		total += n
+	}
+	return total, perNamespace
 }

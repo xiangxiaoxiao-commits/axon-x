@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Axon 图谱质量评估 — 对照本体推理方法论</title>
+<style>
+  :root{
+    --ink:#1c1c1a; --ink2:#5f5e5a; --ink3:#8a8880;
+    --line:#e3e1da; --line2:#cfcdc5;
+    --bg:#fbfaf7; --card:#ffffff; --soft:#f5f3ee;
+    --red:#A32D2D; --redbg:#FCEBEB; --redline:#F09595;
+    --grn:#0F6E56; --grnbg:#E1F5EE; --grnline:#5DCAA5;
+    --amb:#854F0B; --ambbg:#FAEEDA; --ambline:#EF9F27;
+    --blu:#185FA5; --blubg:#E6F1FB; --bluline:#85B7EB;
+    --pur:#534AB7; --purbg:#EEEDFE;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font:15px/1.75 -apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:900px;margin:0 auto;padding:56px 32px 96px}
+  header{border-bottom:2px solid var(--ink);padding-bottom:20px;margin-bottom:36px}
+  .kicker{font-size:12px;letter-spacing:.14em;color:var(--ink3);text-transform:uppercase;margin-bottom:10px}
+  h1{font-size:27px;line-height:1.35;margin:0 0 12px;font-weight:600;letter-spacing:-.01em}
+  .sub{color:var(--ink2);font-size:14px;margin:0}
+  .meta{margin-top:16px;display:flex;flex-wrap:wrap;gap:8px}
+  .chip{font-size:12px;padding:3px 10px;border:1px solid var(--line2);border-radius:99px;color:var(--ink2);background:var(--card)}
+  h2{font-size:19px;margin:48px 0 6px;font-weight:600;letter-spacing:-.005em;padding-top:8px}
+  h2 .n{color:var(--ink3);font-weight:400;margin-right:8px;font-variant-numeric:tabular-nums}
+  h3{font-size:15px;margin:26px 0 8px;font-weight:600}
+  p{margin:10px 0}
+  .lede{font-size:16px;color:var(--ink);background:var(--card);border:1px solid var(--line);border-left:3px solid var(--ink);border-radius:0 8px 8px 0;padding:16px 20px;margin:0 0 8px}
+  code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;background:var(--soft);border:1px solid var(--line);border-radius:4px;padding:1px 5px;color:#3a3a36}
+  table{width:100%;border-collapse:collapse;margin:14px 0;font-size:13.5px;background:var(--card);border:1px solid var(--line);border-radius:8px;overflow:hidden}
+  th{text-align:left;font-weight:600;background:var(--soft);padding:9px 12px;border-bottom:1px solid var(--line);color:var(--ink2);font-size:12.5px}
+  td{padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  tr:last-child td{border-bottom:none}
+  td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .bad{color:var(--red);font-weight:600}
+  .good{color:var(--grn);font-weight:600}
+  .warn{color:var(--amb);font-weight:600}
+  .mute{color:var(--ink3)}
+  .box{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:18px 22px;margin:18px 0}
+  .box.hot{border-color:var(--redline);background:var(--redbg)}
+  .box.fix{border-color:var(--grnline);background:var(--grnbg)}
+  .box.note{border-color:var(--bluline);background:var(--blubg)}
+  .box h4{margin:0 0 8px;font-size:14px;font-weight:600}
+  .box.hot h4{color:var(--red)}
+  .box.fix h4{color:var(--grn)}
+  .box.note h4{color:var(--blu)}
+  .box p:last-child{margin-bottom:0}
+  ul{margin:10px 0;padding-left:22px}
+  li{margin:6px 0}
+  .bar{position:relative;height:8px;background:var(--soft);border-radius:99px;overflow:hidden;min-width:90px}
+  .bar > i{position:absolute;left:0;top:0;bottom:0;border-radius:99px;display:block}
+  .cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin:18px 0}
+  .stat{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px 18px}
+  .stat .v{font-size:26px;font-weight:600;line-height:1.15;font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+  .stat .l{font-size:12.5px;color:var(--ink2);margin-top:5px}
+  .stat .d{font-size:11.5px;color:var(--ink3);margin-top:3px}
+  .quote{border-left:3px solid var(--line2);padding:2px 0 2px 16px;margin:14px 0;color:var(--ink2);font-size:14px}
+  pre{background:#2c2c2a;color:#ece9e0;border-radius:8px;padding:14px 16px;overflow-x:auto;font-size:12.5px;line-height:1.6;margin:14px 0}
+  pre .c{color:#9a978d}
+  pre .k{color:#f0997b}
+  pre .s{color:#97c459}
+  footer{margin-top:64px;padding-top:20px;border-top:1px solid var(--line);color:var(--ink3);font-size:12.5px}
+  .tag{display:inline-block;font-size:11px;font-weight:600;padding:2px 7px;border-radius:4px;margin-right:7px;vertical-align:1px}
+  .t-bad{background:var(--redbg);color:var(--red);border:1px solid var(--redline)}
+  .t-good{background:var(--grnbg);color:var(--grn);border:1px solid var(--grnline)}
+  .t-warn{background:var(--ambbg);color:var(--amb);border:1px solid var(--ambline)}
+  .t-info{background:var(--blubg);color:var(--blu);border:1px solid var(--bluline)}
+  .t-mute{background:var(--soft);color:var(--ink2);border:1px solid var(--line2)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="kicker">Axon-x · 质量评估</div>
+  <h1>Axon 图谱质量评估<br><span class="mute" style="font-weight:400;font-size:20px">对照《当LLM不够用了——本体推理的企业决策实践》的方法论</span></h1>
+  <p class="sub">评估对象：本机 <code>~/Library/Application Support/axon/graphs</code> 中的真实图谱数据（只读分析，未修改任何数据）</p>
+  <div class="meta">
+    <span class="chip">12 个命名空间 / 10 个有数据</span>
+    <span class="chip">2,866 个实体</span>
+    <span class="chip">4,293 条关系</span>
+    <span class="chip">6,265 条断言</span>
+    <span class="chip">2026-10-15</span>
+  </div>
+</header>
+
+<p class="lede">
+<b>一句话结论：</b>Axon 的问题不是「本体不够」，而是<b>已有的治理设施大部分处于空转状态</b>——三档状态机从未触发、溯源写入率 0.1%、置信度是一个常量。真正该做的不是引入 OWL（书里自己警告过那会拖垮推理），而是把已经设计好的机制接上数据流。
+</p>
+
+<h2><span class="n">01</span>核心指标</h2>
+
+<div class="cols">
+  <div class="stat">
+    <div class="v bad">0.1%</div>
+    <div class="l">关系带 sources</div>
+    <div class="d">3 / 4293（去重后仅 MCP 写入的 3 条）</div>
+  </div>
+  <div class="stat">
+    <div class="v bad">0%</div>
+    <div class="l">非 asserted 状态关系</div>
+    <div class="d">4,125 asserted + 168 空，无 verified / candidate / rejected</div>
+  </div>
+  <div class="stat">
+    <div class="v warn">96.1%</div>
+    <div class="l">置信度恒为 0.85</div>
+    <div class="d">4,122 条 = 0.85，3 条 = 0.9，168 条无字段</div>
+  </div>
+  <div class="stat">
+    <div class="v warn">13.7%</div>
+    <div class="l">label 是句子而非谓词</div>
+    <div class="d">590 / 4293 条，295 个不同句子</div>
+  </div>
+  <div class="stat">
+    <div class="v warn">1,323</div>
+    <div class="l">传递可推但缺失的边</div>
+    <div class="d">包含 762 · 调用 446 · 链接 87 · 其他 28</div>
+  </div>
+  <div class="stat">
+    <div class="v warn">48.8%</div>
+    <div class="l">axon 命名空间的反向召回盲区</div>
+    <div class="d">639 / 1310 条边只能从主语侧召回</div>
+  </div>
+  <div class="stat">
+    <div class="v good">2.9%</div>
+    <div class="l">label 同义割裂（低于预期）</div>
+    <div class="d">19 组 / 125 条边</div>
+  </div>
+  <div class="stat">
+    <div class="v">1,058</div>
+    <div class="l">关系 label 词表规模</div>
+    <div class="d">Top 2 个 label 占 33.9%</div>
+  </div>
+</div>
+
+<h2><span class="n">02</span>必须修正的上一轮判断</h2>
+
+<div class="box note">
+  <h4>我上一轮把「关系 label 同义割裂」列为首要改动，数据不支持这个判断。</h4>
+  <p>实测同义组只有 <b>19 组、125 条边，占全部关系的 2.9%</b>。按核心语义归一后（剥掉「于/在/到」等虚词）能合并的最大一组只有 39 条边。这个规模<b>不足以成为优先项</b>，应当降到最后。</p>
+  <p>另一个被高估的判断：我说「声明逆属性的价值在于让双向边不再各自为政」。实测<b>真实逆属性对极少</b>——<code>包含↔属于</code>、<code>承载↔部署于</code>、<code>承载↔部署到</code>，每种只出现 <b>2 次</b>。所以逆属性的价值不在「合并已有双向边」，而在<b>「合成缺失的反向方向」</b>（让反向遍历成为可能）。原文的因果说反了。</p>
+</div>
+
+<h2><span class="n">03</span>数据真实暴露的问题（按证据强度排序）</h2>
+
+<h3><span class="tag t-bad">严重</span>3.1 溯源写入率 0.1%，README 的核心承诺未兑现</h3>
+
+<table>
+  <thead><tr><th>载体</th><th class="num">总数</th><th class="num">带 sources</th><th class="num">带 evidence</th><th class="num">覆盖率</th></tr></thead>
+  <tbody>
+    <tr><td>关系</td><td class="num">4,293</td><td class="num bad">3</td><td class="num bad">3</td><td class="num bad">0.1%</td></tr>
+    <tr><td>断言</td><td class="num">6,265</td><td class="num warn">3,143</td><td class="num">—</td><td class="num warn">50.2%</td></tr>
+    <tr><td>实体 obsSources</td><td class="num">2,866</td><td class="num good">2,216</td><td class="num">—</td><td class="num good">77.3%</td></tr>
+  </tbody>
+</table>
+
+<p><b>根因已定位到代码行，不是推断：</b></p>
+<ul>
+  <li><code>graphbuild.go:833</code> 那处 <code>Sources: resolveSessionTitles(...)</code> 属于 <code>KnowledgeMatch</code> —— 它是<b>召回返回值</b>的结构体，不是关系写入。会话蒸馏在写关系时<b>根本没有设置 sources 字段</b>。</li>
+  <li>全仓只有两处给关系的 <code>Sources</code> 赋过值：<code>cmd/axon-mcp/remember.go:121</code>（MCP 实时写入，即那 3 条）和 <code>codegraphbuild.go:73</code>（v0.4.2 新增，但缓存陈旧，见 3.2）。</li>
+</ul>
+
+<div class="quote">
+  README 第 14 行宣称「🛡️ <b>可信关系</b> — 关系带来源、证据、置信度和审核状态」。实测关系层的四个字段里，只有 confidence 被写入（且是常量），sources 与 evidence 是 0.1%。<br>
+  这本书 §1.4 的整个论证建立在一句话上：「每个结论都可以追溯到本体的公理和原始数据。」—— 这条恰恰是书的核心，也是 Axon 自己 README 的核心，但没兑现。
+</div>
+
+<h3><span class="tag t-warn">重要</span>3.2 code 缓存陈旧，3,556 条边的身份未升级（不是代码缺陷）</h3>
+
+<p>现象：静态代码解析出来的边落盘为 <code>asserted / 0.85 / 无 sources</code>，但 README 的信任策略表写的是 <code>verified / 1.00</code>。查证结论是<b>数据陈旧，不是 bug</b>：</p>
+
+<table>
+  <thead><tr><th>证据</th><th>事实</th></tr></thead>
+  <tbody>
+    <tr><td>代码侧</td><td><code>codegraphbuild.go:73-75</code> 确实设置 <code>RelationVerified</code> + <code>Confidence = 1</code> + <code>Sources = [codeCacheID]</code></td></tr>
+    <tr><td>引入时间</td><td>git 确认该行由 <code>e9229d3</code>（v0.4.2）于 <b>2026-09-18</b> 引入</td></tr>
+    <tr><td>缓存时间</td><td><code>graphcache/axon/code:graph.json</code> 时间戳 <b>2026-08-17</b>，早于该修复一个月</td></tr>
+    <tr><td>缓存内容</td><td>3,556 条关系<b>全部</b>无 state / confidence / sources</td></tr>
+  </tbody>
+</table>
+
+<div class="box fix">
+  <h4>这是本次评估里性价比最高的动作</h4>
+  <p><b>零代码改动，只需重建一次 axon 命名空间的代码索引。</b>收益：3,556 条边升级为 <code>verified / 1.00</code> 并带上 sources，直接把 3.1 的溯源覆盖率从 0.1% 拉到约 83%，同时让 3.3 的状态机第一次有 <code>verified</code> 数据流过。</p>
+  <p class="mute">注意：<code>wanlian</code> 命名空间没有 code 缓存文件，其代码知识来源需另行确认。</p>
+</div>
+
+<h3><span class="tag t-warn">重要</span>3.3 三档状态机与置信度分级从未被触发</h3>
+
+<table>
+  <thead><tr><th>字段</th><th>实测分布</th><th>设计意图</th></tr></thead>
+  <tbody>
+    <tr><td>关系 state</td><td class="bad">asserted 4,125 · 空 168 · <b>verified 0 · candidate 0 · rejected 0</b></td><td>四档生命周期</td></tr>
+    <tr><td>断言 state</td><td class="bad"><b>asserted 6,265（100%）</b></td><td>四档 + 人工审核覆盖</td></tr>
+    <tr><td>关系 confidence</td><td class="warn">0.85 × 4,122（96.1%）· 0.9 × 3 · 无字段 168</td><td>0–1 证据强度</td></tr>
+  </tbody>
+</table>
+
+<p>后果是连锁的：</p>
+<ul>
+  <li><code>RelationUsableForRecall</code>（<code>relation.go:55</code>，门槛 <code>state ∈ {asserted,verified} && conf ≥ 0.65</code>）<b>实测放行 4293 / 4293 = 100%</b>。这个"闸门"目前不过滤任何东西。</li>
+  <li>README 说的「弱关联只展示、不进入事实召回」——因为没有任何一条关系落到 <code>candidate</code>，这个特性在生产数据里<b>从未运行过一次</b>。</li>
+  <li><code>MergeRelationTrust</code> 的 <code>relationStateRank</code> 排序逻辑同理：没有数据能触发状态升降。</li>
+  <li>健康度面板的「可信 / 候选 / 冲突」统计，实际只有「可信」一档有值。</li>
+</ul>
+
+<p class="mute">这不是缺陷，是<b>设计了但没接上数据流的能力</b>。它与 3.1 同源：写入端不区分证据强度，只写一个默认常量。</p>
+
+<h3><span class="tag t-warn">重要</span>3.4 label 承载了整句断言，谓词退化为句子</h3>
+
+<p>590 条边（13.7%）的 label 长度 ≥ 9 字，共 295 个不同句子。这些不是关系类型，是把整个事实写成了谓词：</p>
+
+<pre><span class="c">// 真实数据，取自 grapds/*.json</span>
+gaia-lite      --<span class="k">写入 mesh-source-user-name，并透传 mesh-source-inst-id</span>--&gt;  Mesh.context att
+经办人身份      --<span class="k">在无 identityId body 时依赖 token 体现</span>--&gt;              上架类接口
+connector_node --<span class="k">缺失时导致 currentNodeInfo 为 null</span>--&gt;                  dataResourceRegi
+月度计量分页接口 --<span class="k">通过EXISTS执行digitalContractId过滤</span>--&gt;                deliver_order
+订单业务单号     --<span class="k">subjectNo匹配approvalSubjectNo</span>--&gt;                     审批查询参数映射</pre>
+
+<p>为什么这是问题：</p>
+<ul>
+  <li><b>无法归一、无法校验</b>——谓词每次都是新的，建立不了词表，也就没有治理的抓手。</li>
+  <li><b>无法参与任何推理</b>——逆属性、传递性都建立在"谓词可复用"的前提上，句子式谓词天然不复用。</li>
+  <li><b>方向语义被稀释</b>——README 要求"关系有方向，读成通顺的话"，这些 label 确实通顺，但它们描述的是<b>断言的完整内容</b>，而不仅是一个方向。</li>
+</ul>
+
+<div class="box fix">
+  <h4>修法与 3.1 是同一件事</h4>
+  <p>正确做法不是删掉这些句子，而是<b>拆分</b>：规范谓词进 <code>label</code>，整句挪进 <code>evidence</code>。例如 <code>connector_node --(缺失)→ Registration</code>，evidence 记「缺失时导致 currentNodeInfo 为 null」。</p>
+  <p>这样一次改动同时解决两个问题：谓词回归可复用（label 收敛），以及 evidence 覆盖率从 <b>0.1% 提升</b>——信息一点没丢，只是归位了。</p>
+</div>
+
+<h3><span class="tag t-info">中等</span>3.5 传递未闭合 1,323 条，但不能物化闭包</h3>
+
+<p>存在大量真实的两跳链，而图里没有对应的直接边。样例（均已核实存在）：</p>
+
+<pre><span class="c">// axon 命名空间 ·「调用」</span>
+main.startup  --调用--&gt;  config.Load      --调用--&gt;  graph.pathFor
+<span class="c">// 但缺少：main.startup --调用--&gt; graph.pathFor</span>
+
+<span class="c">// axon 命名空间 ·「包含」</span>
+.             --包含--&gt;  searchapp.go     --包含--&gt;  main.IndexSearch
+<span class="c">// 但缺少：. --包含--&gt; main.IndexSearch</span></pre>
+
+<p>这正是书 §1.1 给出的 <code>owl:TransitiveProperty</code> 例子（<code>p(x,y) ∧ p(y,z) → p(x,z)</code>）。但有两条约束必须遵守：</p>
+<ul>
+  <li><b>不要物化闭包。</b>1,323 / 4,293 = 31% 的膨胀，而 <code>包含</code>（821 条）是代码目录树——闭包会随树深增长，几百个文件的仓库很容易炸成几万条边。</li>
+  <li><b>正确做法是查询期有界传递遍历</b>：只对白名单 label（<code>包含 / 调用 / 依赖</code>），只多做一跳，只在语义种子足够具体时触发，结果标记为 <code>derived</code> 并携带来源链。</li>
+</ul>
+
+<h3><span class="tag t-info">中等</span>3.6 反向召回盲区 33–49%（已量化）</h3>
+
+<p><code>expandAlongRelations</code>（<code>retrieve.go:253</code>）只沿正向扩展。实测各命名空间的盲区规模：</p>
+
+<table>
+  <thead>
+    <tr><th>命名空间</th><th class="num">关系</th><th class="num">实体</th><th class="num">纯汇点<br><span class="mute" style="font-weight:400">仅入边，零出边</span></th><th>盲区规模</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>axon</td><td class="num">1,310</td><td class="num">667</td><td class="num">295</td>
+      <td><div style="display:flex;align-items:center;gap:10px"><span class="bad" style="white-space:nowrap">639 条 · 48.8%</span><div class="bar"><i style="width:48.8%;background:var(--red)"></i></div></div></td>
+    </tr>
+    <tr>
+      <td>wanlian</td><td class="num">1,428</td><td class="num">957</td><td class="num">267</td>
+      <td><div style="display:flex;align-items:center;gap:10px"><span class="warn" style="white-space:nowrap">465 条 · 32.6%</span><div class="bar"><i style="width:32.6%;background:var(--amb)"></i></div></div></td>
+    </tr>
+    <tr>
+      <td>Wanlian1</td><td class="num">1,330</td><td class="num">915</td><td class="num">261</td>
+      <td><div style="display:flex;align-items:center;gap:10px"><span class="warn" style="white-space:nowrap">447 条 · 33.6%</span><div class="bar"><i style="width:33.6%;background:var(--amb)"></i></div></div></td>
+    </tr>
+    <tr>
+      <td class="mute">glite / gaiac / couple-space</td><td class="num mute">35–36</td><td class="num mute">41–42</td><td class="num mute">16–20</td>
+      <td><div style="display:flex;align-items:center;gap:10px"><span class="bad" style="white-space:nowrap">77–80%</span><div class="bar"><i style="width:78%;background:var(--red)"></i></div></div></td>
+    </tr>
+  </tbody>
+</table>
+
+<p><b>关键在于盲区落在哪些实体上。</b>这些纯汇点恰好是语义检索最容易命中的具体技术名：</p>
+<pre>main.TestResumeCommandNewline   入度 1，出度 0
+claudedata.extractText          入度 3，出度 0
+graph.Dir                       入度 3，出度 0
+pkg / reference/                入度 1，出度 0</pre>
+
+<p>也就是说：<b>查询越具体，越容易踩进盲区。</b>Agent 问「<code>graph.Dir</code> 是什么」，语义命中的是 <code>graph.Dir</code> 这个汇点，正向扩展一无所获；而此刻真正有价值的上下文恰恰是「谁调用了它」——全部落在入边上，被这条规则挡掉了。</p>
+
+<p class="mute">根因是上一轮已经定位的那处注释与实现矛盾：<code>retrieve.go:253</code> 的文档说 "treating relations as undirected"，实现却只走正向。缺 <code>owl:inverseOf</code> 这类声明，系统无法区分「合法反向」与「污染反向」，只能一刀切全禁。所以这不是取舍失误，是<b>缺少区分能力的必然妥协</b>。</p>
+
+<h2><span class="n">04</span>顺带发现</h2>
+
+<table>
+  <thead><tr><th>项</th><th>详情</th><th>建议</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>残留测试命名空间</td>
+      <td><code>zz-import-probe</code>：48 实体 / 57 关系，是 2026-09-21 那次知识包往返测试的遗留</td>
+      <td>清理（当时就该清）</td>
+    </tr>
+    <tr>
+      <td>退化实体名</td>
+      <td>7 个：<code>钙 / 合约 / 门户 / 运营 / Go / UX / .</code>。其中 <code>.</code> 是个 680 出边的容器节点（<code>. --包含--&gt; app.go</code>）</td>
+      <td>codegraph 对仓库根目录的命名应给可读名字</td>
+    </tr>
+    <tr>
+      <td>命名空间重复近亲</td>
+      <td><code>wanlian</code> 与 <code>Wanlian1</code> 实体数 1028 / 983、关系 1428 / 1330，高度重叠</td>
+      <td>确认是否该合并</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2><span class="n">05</span>修正后的优先级</h2>
+
+<p>排序依据：<b>证据强度 × 收益 ÷ 成本</b>。前两项的性价比显著高于其余，建议先做。</p>
+
+<table>
+  <thead><tr><th class="num">#</th><th>动作</th><th>解决</th><th>成本</th><th>预期收益</th></tr></thead>
+  <tbody>
+    <tr>
+      <td class="num">1</td>
+      <td><b>重建 axon 代码索引</b></td>
+      <td>3.2 / 3.1</td>
+      <td class="good">零代码改动<br>一次操作</td>
+      <td>溯源 0.1% → ~83%；3,556 条边升 verified/1.00；状态机首次有 verified 数据</td>
+    </tr>
+    <tr>
+      <td class="num">2</td>
+      <td><b>关系写入补 sources / evidence</b><br><span class="mute">会话蒸馏路径 graphbuild.go</span></td>
+      <td>3.1 / 3.4</td>
+      <td class="good">低</td>
+      <td>补齐剩余溯源；同时把句子式 label 的整句挪进 evidence，一次改动解决两个问题</td>
+    </tr>
+    <tr>
+      <td class="num">3</td>
+      <td>label 从句子收敛为谓词</td>
+      <td>3.4</td>
+      <td class="warn">中</td>
+      <td>590 条边（13.7%）谓词回归可复用，为后续推理铺路</td>
+    </tr>
+    <tr>
+      <td class="num">4</td>
+      <td>激活三档治理：低置信证据真正落 candidate</td>
+      <td>3.3</td>
+      <td class="warn">中</td>
+      <td>让"弱关联只展示不召回"、健康度分档、状态升降真正生效</td>
+    </tr>
+    <tr>
+      <td class="num">5</td>
+      <td>查询期有界传递扩展（白名单 包含/调用/依赖）</td>
+      <td>3.5</td>
+      <td class="warn">中</td>
+      <td>解锁 1,323 条间接关系，结果标 derived</td>
+    </tr>
+    <tr>
+      <td class="num">6</td>
+      <td>已声明逆属性的反向扩展</td>
+      <td>3.6</td>
+      <td class="bad">中高</td>
+      <td>回收 33–49% 的反向盲区</td>
+    </tr>
+    <tr>
+      <td class="num">7</td>
+      <td class="mute">label 同义归一</td>
+      <td class="mute">—</td>
+      <td class="mute">低</td>
+      <td class="mute">仅 2.9% 的边受益，<b>降级</b>（原判断优先级过高）</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2><span class="n">06</span>明确不做的</h2>
+
+<div class="box hot">
+  <h4>不引入 OWL DL 推理机（HermiT / Pellet 那类）</h4>
+  <p>这本书自己在 §1.1 结尾警告过：「很多企业的本体项目做不下去，第一步就错了——他们用 OWL 把所有东西都建模了，结果推理机跑几个小时跑不完。正确的做法是从 RDFS 开始，只把真正需要推理的部分用 OWL 公理表达。」</p>
+  <p>Axon 是端侧单机 Go 程序，图规模千级实体，引入完整描述逻辑推理是纯粹的过度工程。<b>RDFS 级 + 少量公理 + 硬规则</b>足以吃下上述全部收益。</p>
+</div>
+
+<div class="box note">
+  <h4>也不该照搬这本书的产品形态</h4>
+  <p>书面向企业级决策平台（Palantir、中数睿智），默认你有专职本体工程师和数月的认知工程预算。Axon 的约束完全相反：端侧、单机、用户不会去写 Turtle 语法。</p>
+  <p>所以 Axon 的正确定位不是「本体工程工具」，而是<b>「本体约束的自动编译 + 校验器」</b>——从既有图谱反推 label 词表、逆属性表、传递候选，让用户点几下确认。这也是为什么本报告全部建议里，没有一条要求用户「建立 TBox」。</p>
+</div>
+
+<footer>
+  评估方法：直接读取本机真实图谱数据（<code>graphs/*.json</code> 与 <code>graphcache/*/code:graph.json</code>），全量统计而非抽样；所有代码结论均定位到具体文件与行号，并用 git 佐证引入时间。未修改任何图谱数据。
+  <br>生成于 2026-10-15 · 分析脚本：<code>/tmp/axon_label_eval{,2,3}.py</code>
+</footer>
+
+</div>
+</body>
+</html>

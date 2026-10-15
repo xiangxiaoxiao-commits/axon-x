@@ -19,10 +19,13 @@ import (
 const (
 	// seedMinScore is the cloud-embedding cosine floor for an entity to be picked
 	// as a semantic seed; seedTopK caps how many seeds are taken; expandHops is
-	// how far to walk relations out from the seeds.
+	// how far to walk relations out from the seeds. Only the first hop may use
+	// every trusted edge; later hops are limited to declared-transitive labels
+	// (see expandAlongRelations), so widening this constant is not the same as
+	// widening the closure.
 	seedMinScore = 0.30
 	seedTopK     = 8
-	expandHops   = 1
+	expandHops   = 2
 
 	// chunkRecallCandidates caps vector candidates before fusion; chunkInjectTopN
 	// caps chunks after fusion; chunkMinScore is the cloud-embedding cosine floor
@@ -251,10 +254,29 @@ func EntityKeywordHits(g *graph.Graph, text string) []string {
 }
 
 // expandAlongRelations grows the hit set by walking `hops` relation edges out
-// from the currently-hit entities, treating relations as undirected so both
-// upstream and downstream neighbors are pulled in.
+// from the currently-hit entities in two directions:
+//
+//   - Forward, always: if From is hit, pull in To. "A 包含 B" means mentioning A
+//     should surface B.
+//   - Backward, only through a *declared* inverse (graph.InverseRelationLabel):
+//     if To is hit, pull in From. This is the case the forward-only rule used to
+//     lose entirely — asking about a specific function should reveal its callers,
+//     and the callers sit on inbound edges. The declaration is what makes the
+//     step safe: an inverse is asserted only where the reverse direction carries
+//     the same meaning (调用/被调用, 包含/属于), so a reverse walk never drags in
+//     unrelated context the way treating every edge as undirected would.
+//
+// The first hop walks every trusted edge. Subsequent hops are restricted to
+// declared-transitive labels (graph.IsTransitiveRelationLabel), so the extra
+// reach stays "A transitively contains / calls / depends on C" instead of
+// wandering through arbitrary two-edge chains — the weaker the label, the
+// smaller the closure has to stay.
+//
+// Edges that fail the trust gate are skipped in every hop and direction, so
+// candidate, low-confidence and rejected relations still cannot expand recall.
 func expandAlongRelations(g *graph.Graph, hit map[string]bool, hops int) {
 	for h := 0; h < hops; h++ {
+		transitiveOnly := h > 0
 		frontier := map[string]bool{}
 		for _, r := range g.Relations {
 			// Inferred/contextual edges are visual hints, not evidence for
@@ -262,13 +284,15 @@ func expandAlongRelations(g *graph.Graph, hit map[string]bool, hops int) {
 			if !graph.RelationUsableForRecall(r) {
 				continue
 			}
+			if transitiveOnly && !graph.IsTransitiveRelationLabel(r.Label) {
+				continue
+			}
 			from, to := strings.ToLower(r.From), strings.ToLower(r.To)
-			// Only expand forward: if From is hit, pull in To.
-			// Do NOT expand backward (hitting To should not pull in From),
-			// because relations are directional — "A contains B" does not mean
-			// mentioning B should bring all of A's knowledge into context.
 			if hit[from] && !hit[to] {
 				frontier[to] = true
+			}
+			if _, declaredInverse := graph.InverseRelationLabel(r.Label); declaredInverse && hit[to] && !hit[from] {
+				frontier[from] = true
 			}
 		}
 		if len(frontier) == 0 {

@@ -66,6 +66,18 @@ const extractPrompt = `你是一个知识提炼器。从下面的对话中，只
 - 如果确实存在“可能有关但证据不足”的上下文关联，只有在它对人工探索有帮助时才输出，并将 inferred 设为 true、state 设为 candidate、confidence 不得高于 0.60；这类关系不能当作事实。
 - 明确关系使用 state=asserted，confidence 按证据强度填写 0.65–1.00；evidence 写一条能说明关系为何成立的简短原文依据或忠实摘述，禁止编造。
 
+【关系标签（label）的写法】
+- label 是「谓词」，不是句子：必须是 2–8 个字、能读成通顺一句话的关系词（A —label→ B）。
+- 一句完整的话，或带条件/数字/文件名/环境名的描述，一律写进 evidence，label 只留动词。
+  - 正确：connector_node —缺失→ 注册接口；evidence 写「缺失时导致 currentNodeInfo 为 null」
+  - 错误：把 label 写成「缺失时导致 currentNodeInfo 为 null」
+- 优先复用这些常见谓词，别为同一类关系造新词：
+  包含 / 属于 / 调用 / 依赖 / 部署于 / 承载 / 使用 / 实现 / 约束 / 受约束于 /
+  修改 / 修复 / 提供 / 查询 / 生成 / 应用 / 映射到 / 链接 / 前置于
+- 更具体的关系可用「常见词 + 限定」（如「包含字段」「包含子模块」），系统会把它归到上级谓词。
+- 方向已经写在 label 里，就不要写成被动式：用「lite 部署到 sit-14」，不要写「被 sit-14 部署」。
+  确实只有被动语义时才用「被X」形式（被调用 / 被修复 / 被实现）。
+
 【实体别名】
 - 为每个实体给出 aliases：同一事物的其他叫法（全称/简称/中英文名）。
 - 例如「支付服务」的 aliases 可能是 ["PaymentService","payment"]。
@@ -460,13 +472,31 @@ func stampObsSources(entities []graph.Entity, sessionID string) {
 }
 
 // stampRelationMetadata makes relationship provenance as auditable as entity
-// observations. Model-provided trust metadata is normalized; the current
-// source is always attached, including during schema-only cache backfills.
+// observations. Model-provided trust metadata is normalized, the current source
+// is always attached (including during schema-only cache backfills), and the
+// label is folded onto the relation schema so synonyms stop fragmenting the
+// graph. The fold preserves the original label as evidence.
 func stampRelationMetadata(relations []graph.Relation, source string) {
-	for i := range relations {
-		relations[i].Sources = append(relations[i].Sources, source)
-		relations[i] = graph.NormalizeRelation(relations[i])
+	graph.StampRelationProvenance(relations, source)
+}
+
+// migrateStaleCaches upgrades caches written by an older schema, including the
+// orphaned ones whose source session no longer exists. Runs once at startup:
+// the pass is idempotent and becomes a cheap no-op once every cache is current.
+func (a *App) migrateStaleCaches() {
+	dataDir, err := db.AppDataDir()
+	if err != nil {
+		return
 	}
+	started := time.Now()
+	total, perNamespace := graph.MigrateAllStaleCaches(dataDir, started)
+	if total == 0 {
+		return
+	}
+	for slug, n := range perNamespace {
+		log.Printf("axon: 升级陈旧知识缓存 %s: %d 个会话（补齐来源与标签归一）", slug, n)
+	}
+	log.Printf("axon: 共升级 %d 个缓存文件，用时 %s", total, time.Since(started).Round(time.Millisecond))
 }
 
 // entityEmbedText builds the text embedded for an entity: its name plus its

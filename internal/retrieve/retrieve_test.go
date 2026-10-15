@@ -97,6 +97,68 @@ func TestRecall_DoesNotExpandCandidateOrLowConfidenceRelations(t *testing.T) {
 	}
 }
 
+// TestRecall_ExpandsBackwardOnlyThroughDeclaredInverse is the case the old
+// forward-only rule lost outright: asking about a specific callee has to surface
+// its callers, which live on inbound edges.
+func TestRecall_ExpandsBackwardOnlyThroughDeclaredInverse(t *testing.T) {
+	g := &graph.Graph{
+		Entities: []graph.Entity{
+			{Name: "graph.Dir", Embedding: []float32{1, 0}},
+			{Name: "config.Load", Embedding: []float32{0, 1}},
+			{Name: "unrelated", Embedding: []float32{0, 1}},
+		},
+		Relations: []graph.Relation{
+			// Inbound edge with a declared inverse (调用 -> 被调用).
+			{From: "config.Load", To: "graph.Dir", Label: "调用",
+				State: graph.RelationAsserted, Confidence: 0.9},
+			// Inbound edge with no declared inverse: walking it back would be a
+			// guess, so it must not expand.
+			{From: "unrelated", To: "graph.Dir", Label: "相关",
+				State: graph.RelationAsserted, Confidence: 0.9},
+		},
+	}
+	res := Recall(g, nil, []float32{1, 0}, "unmatched query")
+	if !res.Hit["graph.dir"] {
+		t.Fatalf("expected the queried entity to be a seed, got %v", res.Hit)
+	}
+	if !res.Hit["config.load"] {
+		t.Errorf("declared inverse did not pull in the caller: %v", res.Hit)
+	}
+	if res.Hit["unrelated"] {
+		t.Errorf("undeclared relation expanded backward: %v", res.Hit)
+	}
+}
+
+// TestRecall_SecondHopStaysOnTransitiveLabels guards the closure: widening
+// expandHops must not turn arbitrary two-edge chains into recall.
+func TestRecall_SecondHopStaysOnTransitiveLabels(t *testing.T) {
+	g := &graph.Graph{
+		Entities: []graph.Entity{
+			{Name: "Repo", Embedding: []float32{1, 0}},
+			{Name: "mid", Embedding: []float32{0, 1}},
+			{Name: "leafSymbol", Embedding: []float32{0, 1}},
+			{Name: "deployedPlace", Embedding: []float32{0, 1}},
+			{Name: "beyondDeploy", Embedding: []float32{0, 1}},
+		},
+		Relations: []graph.Relation{
+			// 包含 is transitive: Repo -> mid -> leafSymbol is two hops and
+			// should resolve.
+			{From: "Repo", To: "mid", Label: "包含", State: graph.RelationAsserted, Confidence: 0.9},
+			{From: "mid", To: "leafSymbol", Label: "包含", State: graph.RelationAsserted, Confidence: 0.9},
+			// 部署于 is not transitive: two hops must NOT resolve.
+			{From: "Repo", To: "deployedPlace", Label: "部署于", State: graph.RelationAsserted, Confidence: 0.9},
+			{From: "deployedPlace", To: "beyondDeploy", Label: "部署于", State: graph.RelationAsserted, Confidence: 0.9},
+		},
+	}
+	res := Recall(g, nil, []float32{1, 0}, "unmatched query")
+	if !res.Hit["leafsymbol"] {
+		t.Errorf("transitive label did not reach the second hop: %v", res.Hit)
+	}
+	if res.Hit["beyonddeploy"] {
+		t.Errorf("non-transitive label was walked to the second hop: %v", res.Hit)
+	}
+}
+
 func TestRRFFuse_RanksSharedIDsHigher(t *testing.T) {
 	got := RRFFuse([]string{"a", "b", "c"}, []string{"b", "d"})
 	if len(got) != 4 {

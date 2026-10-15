@@ -376,12 +376,26 @@ func (b *Bundle) SessionID() string {
 
 // Cache converts a bundle into the SessionCache an import writes. Chunks stay
 // empty on purpose: a bundle deliberately carries no verbatim conversation.
+//
+// Provenance is re-stamped with the bundle's own id. ImportBundle clears the
+// author's sources so their machine's session ids never travel, which otherwise
+// leaves every imported fact unattributable — and the whole point of
+// ImportSourcePrefix is that imported knowledge stays traceable to the pack that
+// brought it in and removable as a unit. Trust state and confidence are left
+// exactly as the pack recorded them: an import must not silently re-grade facts.
 func (b *Bundle) Cache() *SessionCache {
+	source := b.SessionID()
+	entities := append([]Entity(nil), b.Entities...)
+	relations := append([]Relation(nil), b.Relations...)
+	// observedAt 0 and empty state/confidence mean "attach the source, change
+	// nothing else" (see StampEntityAssertions).
+	StampEntityAssertions(entities, source, 0, "", 0)
+	StampRelationProvenance(relations, source)
 	return &SessionCache{
-		SessionID: b.SessionID(),
+		SessionID: source,
 		Schema:    CacheSchema,
-		Entities:  append([]Entity(nil), b.Entities...),
-		Relations: append([]Relation(nil), b.Relations...),
+		Entities:  entities,
+		Relations: relations,
 	}
 }
 
