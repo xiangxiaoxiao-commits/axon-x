@@ -30,11 +30,15 @@ func (b *builder) addGoDetail(repoDir, rel string) bool {
 	}
 	pkg := f.Name.Name // Go package identifier, e.g. "graph"
 
-	// Imports -> dependency relations (accurate, no regex needed).
+	// Imports -> dependency relations (accurate, no regex needed). Intra-repo
+	// imports are mapped to the package entity's repo-relative name; see
+	// builder.importTarget.
 	for _, imp := range f.Imports {
 		p := strings.Trim(imp.Path.Value, `"`)
 		if p != "" {
-			b.rels = append(b.rels, graph.Relation{From: rel, To: p, Label: labelDepends})
+			b.rels = append(b.rels, graph.Relation{
+				From: rel, To: b.importTarget(p), Label: labelDepends,
+			})
 		}
 	}
 

@@ -1,25 +1,114 @@
 package graph
 
-// Merge folds newly extracted entities/relations into g, de-duplicating by
+import (
+	"strings"
+	"unicode"
+)
+
+// MergeAudit records one entity folded into another by alias normalization, or
+// one such fold that was refused.
+//
+// Merging on name/alias is effectively an owl:sameAs claim, and sameAs is
+// transitive: register A's aliases, and an entity naming one of them folds into A,
+// whose aliases then absorb the next one. The graph is right to collapse
+// "支付服务"/"PaymentService", but a chain of such collisions can also fuse two
+// genuinely different things that merely shared a spelling somewhere along the
+// way — and because the merge is silent and irreversible, there was previously no
+// way to see that it happened or why.
+type MergeAudit struct {
+	// Folded is the name of the entity that was absorbed (or, for a refused fold,
+	// the entity that was kept separate).
+	Folded string
+	// Into is the name of the canonical entity it joined (or would have joined).
+	Into string
+	// Via is the normalized name/alias key whose collision was considered.
+	Via string
+	// MatchKind says what the colliding key was to each side:
+	//
+	//	same-name      both entities are named by the key (exact identifier match)
+	//	name-as-alias  the folded entity is named by it, the target only aliases it
+	//	alias-as-name  the folded entity only aliases it, the target is named by it
+	//	shared-alias   both merely alias it — neither is called that
+	MatchKind string
+	// Refused is true when the fold was declined. Only shared-alias collisions are
+	// refused: see MergeAudited.
+	Refused bool
+	// TypeChanged is true when the absorbed entity's type differed from the
+	// canonical entity's, which is a hint that the two are not the same thing
+	// (a function folding into a file, say).
+	TypeChanged bool
+}
+
+// Match-kind values for MergeAudit.MatchKind.
+const (
+	MatchSameName    = "same-name"
+	MatchNameAsAlias = "name-as-alias"
+	MatchAliasAsName = "alias-as-name"
+	MatchSharedAlias = "shared-alias"
+)
+
+// MergeReport is the outcome of one MergeAudited call.
+type MergeReport struct {
+	// Folds is every entity that was absorbed, with the reason it collided.
+	Folds []MergeAudit
+	// Refused is every collision that was declined because the two entities only
+	// shared a nickname. Kept so the decision is inspectable rather than merely
+	// absent.
+	Refused []MergeAudit
+}
+
+// Merge folds newly extracted entities/relations into g. See MergeAudited for the
+// normalization rules; this wrapper discards the audit trail.
+func (g *Graph) Merge(entities []Entity, relations []Relation) {
+	g.MergeAudited(entities, relations)
+}
+
+// MergeAudited folds newly extracted entities/relations into g, de-duplicating by
 // normalized name so re-processing accumulates knowledge instead of piling up
 // duplicate nodes. Observations (with their sources) are unioned; relations are
-// de-duped by triple.
+// de-duped by triple. It returns what was folded and what was refused.
 //
-// Alias normalization: an entity is matched to an existing one when its name OR
-// any of its aliases collides with the existing entity's name OR any of its
-// aliases. This collapses "支付服务"/"PaymentService"/"payment" into a single
-// node instead of three fragments. A "name/alias -> entity index" map drives the
-// lookup; every alias a merged entity carries is registered so later entities
-// find it too.
-func (g *Graph) Merge(entities []Entity, relations []Relation) {
+// Alias normalization: an entity folds into an existing one when a name or alias
+// of one collides with a name or alias of the other. This collapses
+// "支付服务"/"PaymentService"/"payment" into a single node instead of three
+// fragments.
+//
+// One collision is deliberately refused. When the colliding key is neither
+// entity's name — both merely list it as an alias — the two are not called that;
+// they share a nickname. On real data that case is 34% of all collisions and it
+// is where the damage is: entities named "release/2.1.0" and "release/3.2.1" both
+// alias "发布分支" and were fused into one node, as were the distinct "sit-14 环境"
+// and "sit-36 环境" (via "sit 环境"), losing which release or environment a fact
+// belonged to. A nickname is a category, not an identity.
+//
+// The asymmetry is intentional. Keeping two nodes for one concept leaves a
+// duplicate that is still reachable (relations resolve through the same
+// name/alias index either way) and can be merged later; fusing two distinct
+// things is silent, transitive and irreversible. Prefer the recoverable error.
+func (g *Graph) MergeAudited(entities []Entity, relations []Relation) MergeReport {
+	var report MergeReport
 	// Index every existing entity by its name and each of its aliases, so a new
-	// entity matching any of those keys folds into it.
+	// entity matching any of those keys folds into it. keyKind records whether
+	// each key was registered as a name or an alias (last registration wins, which
+	// matches idx's own overwrite semantics), which is what classifies a collision.
 	idx := make(map[string]int, len(g.Entities))
+	keyKind := make(map[string]string, len(g.Entities))
+	register := func(i int) {
+		e := g.Entities[i]
+		if k := normKey(e.Name); k != "" {
+			idx[k] = i
+			keyKind[k] = "name"
+		}
+		for _, a := range e.Aliases {
+			if k := normKey(a); k != "" {
+				idx[k] = i
+				keyKind[k] = "alias"
+			}
+		}
+	}
 	for i := range g.Entities {
 		NormalizeEntityAssertions(&g.Entities[i])
-		for _, k := range entityKeys(g.Entities[i]) {
-			idx[k] = i
-		}
+		register(i)
 	}
 
 	for _, ne := range entities {
@@ -28,16 +117,64 @@ func (g *Graph) Merge(entities []Entity, relations []Relation) {
 		if key == "" {
 			continue
 		}
-		// Find an existing entity sharing the name or any alias.
-		target := -1
-		for _, k := range entityKeys(ne) {
-			if i, ok := idx[k]; ok {
-				target = i
-				break
+		target, matchedKey, matchKind := -1, "", ""
+		refused := -1
+		// The entity's own name first: naming the same key is the strongest claim.
+		if i, ok := idx[key]; ok {
+			target, matchedKey = i, key
+			if keyKind[key] == "name" {
+				matchKind = MatchSameName
+			} else {
+				matchKind = MatchNameAsAlias
+			}
+		}
+		// Then its aliases, in order. An alias matching a *name* is an identity
+		// claim and still folds; an alias matching only another alias is refused,
+		// but keep looking — a later alias may name an entity.
+		if target < 0 {
+			for _, a := range ne.Aliases {
+				k := normKey(a)
+				if k == "" {
+					continue
+				}
+				i, ok := idx[k]
+				if !ok {
+					continue
+				}
+				if keyKind[k] == "name" {
+					target, matchedKey, matchKind = i, k, MatchAliasAsName
+					break
+				}
+				// Both entities merely list this key as an alias. Fold only when it
+				// is nevertheless somebody's actual designation — their name or a
+				// part of it — which is what gives the collision a referent a human
+				// would recognise ("paymentservice" inside "pay.paymentservice").
+				if sharedAliasIsDesignation(k, g.Entities[i].Name, ne.Name) {
+					target, matchedKey, matchKind = i, k, MatchSharedAlias
+					break
+				}
+				if refused < 0 {
+					refused = i
+					report.Refused = append(report.Refused, MergeAudit{
+						Folded:      ne.Name,
+						Into:        g.Entities[i].Name,
+						Via:         k,
+						MatchKind:   MatchSharedAlias,
+						Refused:     true,
+						TypeChanged: ne.Type != "" && g.Entities[i].Type != "" && ne.Type != g.Entities[i].Type,
+					})
+				}
 			}
 		}
 		if target >= 0 {
 			e := &g.Entities[target]
+			report.Folds = append(report.Folds, MergeAudit{
+				Folded:      ne.Name,
+				Into:        e.Name,
+				Via:         matchedKey,
+				MatchKind:   matchKind,
+				TypeChanged: ne.Type != "" && e.Type != "" && ne.Type != e.Type,
+			})
 			e.Assertions = append(e.Assertions, ne.Assertions...)
 			// Union observations and their sources in lockstep.
 			e.Observations, e.ObsSources = unionObs(
@@ -55,18 +192,13 @@ func (g *Graph) Merge(entities []Entity, relations []Relation) {
 			}
 			NormalizeEntityAssertions(e)
 			// Register any newly-added keys so future entities collide with them.
-			for _, k := range entityKeys(*e) {
-				idx[k] = target
-			}
+			register(target)
 		} else {
 			ne.Observations, ne.ObsSources = unionObs(nil, nil, ne.Observations, ne.ObsSources)
 			NormalizeEntityAssertions(&ne)
 			ne.Aliases = mergeAliases(ne.Name, nil, ne)
 			g.Entities = append(g.Entities, ne)
-			pos := len(g.Entities) - 1
-			for _, k := range entityKeys(g.Entities[pos]) {
-				idx[k] = pos
-			}
+			register(len(g.Entities) - 1)
 		}
 	}
 
@@ -104,6 +236,46 @@ func (g *Graph) Merge(entities []Entity, relations []Relation) {
 		clean = append(clean, r)
 	}
 	g.Relations = clean
+	return report
+}
+
+// sharedAliasIsDesignation reports whether key is at least one entity's own
+// designation: its whole name, or a part of it. Used to decide whether a
+// collision between two aliases identifies the same thing.
+//
+// The distinction it draws: "paymentservice" is one entity's actual name and
+// merely an alias of the other, so the two are plausibly the same thing; whereas
+// "发布分支" is nobody's name — release/2.1.0 and release/3.2.1 both merely label
+// themselves with it, and it is a category, not an identity.
+//
+// Containment rather than equality, because names are routinely qualified
+// ("pay.PaymentService", "jewel.member_org") while the alias is the bare form.
+// Comparison drops separators, so the identifier "asset_info" counts as the
+// designation behind the alias "assetinfo" — spelling the same name with an
+// underscore does not make it a different name.
+func sharedAliasIsDesignation(key string, names ...string) bool {
+	k := designationKey(key)
+	if k == "" {
+		return false
+	}
+	for _, n := range names {
+		if d := designationKey(n); d != "" && strings.Contains(d, k) {
+			return true
+		}
+	}
+	return false
+}
+
+// designationKey reduces a name to its letters and digits, lowercased, so
+// separator and spacing differences ("asset_info", "assetInfo", "asset info")
+// compare equal when deciding what an alias designates.
+func designationKey(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			return unicode.ToLower(r)
+		}
+		return -1
+	}, s)
 }
 
 // entityKeys returns the normalized lookup keys for an entity: its name plus

@@ -11,6 +11,7 @@
 package codegraph
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -44,18 +45,66 @@ func BuildSkeleton(repoDir string) ([]graph.Entity, []graph.Relation, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	b := &builder{pkgs: map[string]bool{}}
+	b := &builder{pkgs: map[string]bool{}, module: modulePath(repoDir)}
 	for _, rel := range files {
 		b.addFile(repoDir, rel)
 	}
 	return b.ents, b.rels, nil
 }
 
+// modulePath reads the module path from a go.mod at the repo root, or "" when
+// there is none. The builder needs it to tell an intra-repo import from an
+// external one.
+func modulePath(repoDir string) string {
+	data, err := os.ReadFile(filepath.Join(repoDir, "go.mod"))
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && fields[0] == "module" {
+			return strings.Trim(fields[1], `"`)
+		}
+	}
+	return ""
+}
+
+// importTarget maps a Go import path onto the name of the package entity this
+// package emits for it.
+//
+// Package entities are named by repo-relative directory ("internal/graph"), but
+// an import statement spells the module-qualified path ("axon/internal/graph").
+// Emitting the raw import path made every intra-repo dependency edge dangle:
+// graph.Merge resolves relation endpoints against entity names and drops what it
+// cannot resolve, so the whole package-dependency skeleton was discarded at
+// assembly time (measured: 100 of 100 intra-repo 依赖 edges lost, while the
+// external ones — fmt, strings, and Go builtins like main.len — are noise that
+// is meant to drop). Anything not under this module is left untouched and still
+// falls away.
+func (b *builder) importTarget(imp string) string {
+	imp = strings.TrimSpace(imp)
+	if imp == "" || b.module == "" {
+		return imp
+	}
+	if imp == b.module {
+		return packageName(".")
+	}
+	if rest, ok := strings.CutPrefix(imp, b.module+"/"); ok {
+		// A malformed path like "module/" would strip to nothing; keep it as
+		// written rather than emit a relation with an empty endpoint.
+		if rest != "" {
+			return rest
+		}
+	}
+	return imp
+}
+
 // builder accumulates entities/relations while de-duplicating package nodes.
 type builder struct {
-	pkgs map[string]bool // package name -> already emitted
-	ents []graph.Entity
-	rels []graph.Relation
+	pkgs   map[string]bool // package name -> already emitted
+	module string          // go.mod module path, "" when the repo has none
+	ents   []graph.Entity
+	rels   []graph.Relation
 }
 
 // addFile emits the file entity, its owning package entity (once), the
