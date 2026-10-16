@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Axon 第六轮优化 — 别名误合与悬空的包依赖边</title>
+<style>
+  :root{
+    --ink:#1c1c1a; --ink2:#5f5e5a; --ink3:#8a8880;
+    --line:#e3e1da; --line2:#cfcdc5;
+    --bg:#fbfaf7; --card:#fff; --soft:#f5f3ee;
+    --red:#A32D2D; --redbg:#FCEBEB; --redline:#F09595;
+    --grn:#0F6E56; --grnbg:#E1F5EE; --grnline:#5DCAA5;
+    --amb:#854F0B; --ambbg:#FAEEDA; --ambline:#EF9F27;
+    --blu:#185FA5; --blubg:#E6F1FB; --bluline:#85B7EB;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:15px/1.75 -apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    -webkit-font-smoothing:antialiased}
+  .wrap{max-width:900px;margin:0 auto;padding:56px 32px 96px}
+  header{border-bottom:2px solid var(--ink);padding-bottom:20px;margin-bottom:34px}
+  .kicker{font-size:12px;letter-spacing:.14em;color:var(--ink3);text-transform:uppercase;margin-bottom:10px}
+  h1{font-size:26px;line-height:1.35;margin:0 0 12px;font-weight:600}
+  .sub{color:var(--ink2);font-size:14px;margin:0}
+  .meta{margin-top:16px;display:flex;flex-wrap:wrap;gap:8px}
+  .chip{font-size:12px;padding:3px 10px;border:1px solid var(--line2);border-radius:99px;color:var(--ink2);background:var(--card)}
+  h2{font-size:19px;margin:46px 0 8px;font-weight:600;padding-top:6px}
+  h2 .n{color:var(--ink3);font-weight:400;margin-right:8px;font-variant-numeric:tabular-nums}
+  h3{font-size:15px;margin:24px 0 8px;font-weight:600}
+  p{margin:10px 0}
+  .lede{font-size:15.5px;background:var(--card);border:1px solid var(--line);border-left:3px solid var(--grn);
+    border-radius:0 8px 8px 0;padding:16px 20px;margin:0 0 8px}
+  code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;
+    background:var(--soft);border:1px solid var(--line);border-radius:4px;padding:1px 5px;color:#3a3a36}
+  table{width:100%;border-collapse:collapse;margin:14px 0;font-size:13.5px;background:var(--card);
+    border:1px solid var(--line);border-radius:8px;overflow:hidden}
+  th{text-align:left;font-weight:600;background:var(--soft);padding:9px 12px;border-bottom:1px solid var(--line);
+    color:var(--ink2);font-size:12.5px}
+  td{padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  tr:last-child td{border-bottom:none}
+  td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .bad{color:var(--red);font-weight:600}
+  .good{color:var(--grn);font-weight:600}
+  .warn{color:var(--amb);font-weight:600}
+  .mute{color:var(--ink3)}
+  .box{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:18px 22px;margin:18px 0}
+  .box.fix{border-color:var(--grnline);background:var(--grnbg)}
+  .box.hot{border-color:var(--redline);background:var(--redbg)}
+  .box.note{border-color:var(--bluline);background:var(--blubg)}
+  .box.warn{border-color:var(--ambline);background:var(--ambbg)}
+  .box h4{margin:0 0 8px;font-size:14px;font-weight:600}
+  .box.fix h4{color:var(--grn)} .box.hot h4{color:var(--red)}
+  .box.note h4{color:var(--blu)} .box.warn h4{color:var(--amb)}
+  .box p:last-child{margin-bottom:0}
+  ul{margin:10px 0;padding-left:22px} li{margin:6px 0}
+  pre{background:#2c2c2a;color:#ece9e0;border-radius:8px;padding:14px 16px;overflow-x:auto;
+    font-size:12.5px;line-height:1.65;margin:14px 0}
+  pre .c{color:#9a978d} pre .g{color:#97c459} pre .r{color:#f0997b} pre .b{color:#85b7eb}
+  footer{margin-top:60px;padding-top:20px;border-top:1px solid var(--line);color:var(--ink3);font-size:12.5px}
+  .cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px;margin:18px 0}
+  .stat{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px 18px}
+  .stat .v{font-size:24px;font-weight:600;line-height:1.15;font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+  .stat .l{font-size:12.5px;color:var(--ink2);margin-top:5px}
+  .stat .d{font-size:11.5px;color:var(--ink3);margin-top:3px}
+  .bar{display:inline-block;height:9px;border-radius:99px;vertical-align:middle;margin-right:8px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="kicker">Axon-x · 第六轮优化</div>
+  <h1>别名误合与悬空的包依赖边<br><span class="mute" style="font-weight:400;font-size:20px">两个「静默丢知识」的问题</span></h1>
+  <p class="sub">两者都不报错、不提示，只是悄悄把知识弄丢或弄错。都是先用真实数据量化、再动手。</p>
+  <div class="meta">
+    <span class="chip">提交 57d2a8a</span>
+    <span class="chip">新增 12 个测试</span>
+    <span class="chip">14/14 包通过</span>
+    <span class="chip">已装 0.4.6</span>
+    <span class="chip">2026-10-16</span>
+  </div>
+</header>
+
+<p class="lede">
+<b>一句话：</b>别名归并会融合<b>互不相关</b>的事物（503 次折叠里 170 次无依据），因为它按「名字/别名任意碰撞」触发，而 <code>sameAs</code> 是传递的；与此同时，<b>仓库内包依赖边 100/100 条全部悬空被丢弃</b>，因为实体按仓库相对路径命名、而 import 写模块全路径。
+</p>
+
+<div class="box warn">
+  <h4>先说一个我自己的错误：这一轮 grep 结果连续两次骗了我</h4>
+  <p>我用 <code>grep -rn "A\|B" path | head</code> 这种写法（在 shell 里）连续两次得到<b>空结果</b>，据此判断「前端完全没接健康度面板」。实际去读文件，<code>GraphView.svelte</code> 第 685–705 行<b>完整显示</b>着 score、事实、关系、候选关系、冲突事实、孤立实体和 issues——功能一直都在。</p>
+  <p>是我的 grep 转义有问题（<code>\|</code> 在那个 shell 下没按预期工作），不是代码缺功能。<b>差一点就去「修」一个已经存在的功能。</b>教训：下结论前先确认工具本身可靠，该用 ripgrep 而不是 shell grep。</p>
+</div>
+
+<h2><span class="n">01</span>别名归并会融合不同的事物</h2>
+
+<p><code>Graph.Merge</code> 按「名字 <b>或</b> 别名任意碰撞」折叠实体。而 <code>sameAs</code> 是传递的：注册 A 的别名后，叫那个别名的实体折进 A，A 的别名又吸收下一个——链式折叠既不可逆，也没有任何记录。</p>
+
+<p>为了量化，我给归并加了审计（<code>MergeAudited</code> 返回 <code>MergeReport{Folds, Refused}</code>），并用 <code>MatchKind</code> 记录**碰撞键对双方各是什么**：</p>
+
+<table>
+  <thead><tr><th>碰撞类型</th><th class="num">次数</th><th class="num">占比</th><th>性质</th></tr></thead>
+  <tbody>
+    <tr><td><code>same-name</code> 双方都以此命名</td><td class="num">138</td><td class="num">27.4%</td><td class="good">最安全（同一标识符）</td></tr>
+    <tr><td><code>name-as-alias</code> 折叠方命名、目标别名</td><td class="num">153</td><td class="num">30.4%</td><td class="good">合理</td></tr>
+    <tr><td><code>alias-as-name</code> 折叠方别名、目标命名</td><td class="num">45</td><td class="num">8.9%</td><td class="good">合理</td></tr>
+    <tr><td><code>shared-alias</code> <b>双方都只把它当别名</b></td><td class="num bad">170</td><td class="num bad">33.8%</td><td class="bad">仅同名巧合 —— 损害就在这里</td></tr>
+  </tbody>
+</table>
+
+<p>第三行不是任何一方的名字，只是双方共享的一个标签。真实伤害实例：</p>
+
+<pre><span class="c">// 都别名「发布分支」→ 塌成一个节点</span>
+<span class="r">release/2.1.0</span>  +  <span class="r">release/3.2.1</span>
+
+<span class="c">// 都别名「方案A」→ 塌成一个节点</span>
+<span class="r">gaia-janus 透传层补齐方案</span>  +  <span class="r">审批历史查询分流方案</span>
+
+<span class="c">// 都别名「duc」→ 塌成一个节点</span>
+<span class="r">newhome</span>  +  <span class="r">数字合约使用控制</span></pre>
+
+<div class="box hot">
+  <h4>为什么这比「多留一个节点」严重得多</h4>
+  <p>融合之后，两个分支的事实混在同一个节点里，<b>再也分不清哪条属于哪个分支</b>。而这是<b>不可逆</b>的：原实体已经不存在了。</p>
+  <p>反过来，少合一次只是留下一个重复节点——它仍然可检索（关系解析走同一套名字/别名索引），随时能再合。<b>一个错可恢复，另一个不可恢复，所以宁可选择可恢复的那种。</b></p>
+</div>
+
+<h3>修法：只有碰撞键是某一方的实际命名时才折叠</h3>
+
+<p>新增 <code>sharedAliasIsDesignation(key, names...)</code>：碰撞键必须是其中一方的名字或其一部分，否则它只是双方共同贴上的标签，不折叠。用 <code>designationKey</code> 去掉分隔符再比较，所以 <code>asset_info</code> 与 <code>assetinfo</code> 视为同一个命名。被拒绝的折叠仍记录进 <code>MergeReport.Refused</code> 供复核。</p>
+
+<div class="box note">
+  <h4><span class="bad">⚠️</span> 中途踩坑：第一版规则太粗，打挂了一个已有测试——而这个失败很有价值</h4>
+  <p>我最初只按「是否别名撞别名」来判断，结果 <code>TestFusionWithConversationEntity</code> 失败了。它编码的是<b>正当</b>的融合：<code>支付服务</code> 与 <code>pay.PaymentService</code>——两者都只把 <code>PaymentService</code> 当别名，但它其实是 <code>pay.PaymentService</code> 名字的一部分。</p>
+  <p><b>这个失败证明了我面对的不是纯 bug，而是设计取舍</b>，并逼出了更精确的判据（加"包含"条件）。所以我把测试从"改掉它"改成"让规则更准"。</p>
+</div>
+
+<div class="cols">
+  <div class="stat">
+    <div class="v good">503 → 464</div>
+    <div class="l">折叠次数</div>
+    <div class="d">42 次被拒绝</div>
+  </div>
+  <div class="stat">
+    <div class="v good">2818 → 2857</div>
+    <div class="l">合并后实体</div>
+    <div class="d">39 个原本会被误合的节点保住</div>
+  </div>
+</div>
+
+<h3>端到端验证：那对分支真的分开了</h3>
+
+<p>用装好的新版 MCP 查这两个实体：</p>
+
+<pre><span class="b"># release/2.1.0（concept）</span>
+- 本次修改实际推送的目标分支。（来源：58337647-…）
+- gaia-janus 的修复提交已 rebase 到远端最新提交后推送。（来源：b9ee0562-…）
+
+<span class="b"># release/3.2.1（constraint）</span>
+- sit-14 和 sit-36 的自动部署链路要求使用 release 镜像，而不是 feature 分支的 dev 镜像。（来源：2250a9f3-…）
+- 最终需要将 feature/catalog-data-type 的 lite 与 glite-ui 改动合入该分支并推送。（来源：2250a9f3-…）</pre>
+
+<p>两者<b>仍然共享别名「发布分支」</b>用于检索，但不再因此被融合。修复前它们是一个节点、事实混在一起。</p>
+
+<h2><span class="n">02</span>仓库内包依赖边 100/100 条全部悬空</h2>
+
+<p>起因是我在量化归并时顺手量了一下「关系会不会在组装时丢」，发现 <code>axon</code> 命名空间<b>丢 62%</b>（2258/3623）。用与 <code>Merge</code> 相同口径的归因探针查清后，是两类原因：</p>
+
+<table>
+  <thead><tr><th>丢弃原因</th><th class="num">条数</th><th>性质</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>指向<b>外部符号与内置函数</b><br><span class="mute">fmt.Errorf 103、t.Fatalf 82、strings.TrimSpace 75、main.len 72、context.Background 39</span></td>
+      <td class="num">2159</td>
+      <td class="warn">代码图的滤噪，<b>合理</b></td>
+    </tr>
+    <tr>
+      <td>指向<b>仓库内真实包</b><br><span class="mute">--依赖--&gt; axon/internal/graph(20)、axon/internal/db(13)、axon/internal/embed(11)…</span></td>
+      <td class="num bad">100</td>
+      <td class="bad">真损失 —— bug</td>
+    </tr>
+  </tbody>
+</table>
+
+<p><b>根因</b>：包实体按<b>仓库相对目录</b>命名（<code>internal/graph</code>），而 import 语句写的是<b>模块全路径</b>（<code>axon/internal/graph</code>）。<code>codegraph/goast.go:34</code> 直接拿 import 原文当关系端点，<code>Merge</code> 的端点解析永远找不到它——于是整张包依赖骨架在组装时被扔掉。</p>
+
+<pre><span class="c">// 实体名（packageName 由仓库相对路径得出）</span>
+internal/claudedata      <span class="c">← 实体</span>
+<span class="c">// 依赖边的目标（直接用 import 原文）</span>
+<span class="r">axon</span>/internal/claudedata   <span class="c">← 永远匹配不上，边被丢弃</span></pre>
+
+<div class="box fix">
+  <h4>修法：读 go.mod，把本模块的 import 映射为仓库相对包名</h4>
+  <p>新增 <code>modulePath(repoDir)</code> 读 <code>go.mod</code> 的 module 行，<code>builder.importTarget()</code> 把属于本模块的 import 前缀剥掉。外部 import（<code>fmt</code>、<code>main.len</code>）原样保留——它们在组装时照旧落下，<b>那是滤噪，不是丢失</b>。</p>
+  <p>实测（真实仓库）：依赖边 620 条，可解析 <b>91 → 191</b>，仓库内依赖边<b>零悬空</b>。新增的 <code>TestThisRepoDependencyEdgesResolve</code> 会持续校验这个性质。</p>
+</div>
+
+<p class="mute">顺带一提：2159 条外部符号边被丢弃这件事，<b>此前没有任何地方说明过</b>。现在归因探针把它印出来，免得下次有人（包括我）把它误判成缺陷。</p>
+
+<h2><span class="n">03</span>测试</h2>
+
+<p>新增 12 个测试，其中一个的价值超出预期——它<b>否掉了我自己的第一版实现</b>：</p>
+
+<table>
+  <thead><tr><th>测试</th><th>锁住的性质</th></tr></thead>
+  <tbody>
+    <tr><td><code>TestMergeFoldsWhenNameMatches</code></td><td>同名照旧折叠（不能因为收紧而误伤基本能力）</td></tr>
+    <tr><td><code>TestMergeFoldsSharedAliasThatIsSomebodysName</code></td><td class="good">名字的一部分也算命名 —— 正是它否掉了第一版规则</td></tr>
+    <tr><td><code>TestMergeFoldsSharedAliasAcrossSeparatorSpellings</code></td><td>分隔符差异不影响身份判定</td></tr>
+    <tr><td><code>TestMergeRefusesSharedAliasThatIsNobodysName</code></td><td>三类真实误合（发布分支 / 方案A / duc）都要被拒</td></tr>
+    <tr><td><code>TestMergeRefusedFoldKeepsBothEntitiesIntact</code></td><td>拒合后两个实体的事实各自完整</td></tr>
+    <tr><td><code>TestMergeFoldsAliasMatchingAnExistingName</code></td><td>别名撞名字仍要折叠（不能矫枉过正）</td></tr>
+    <tr><td><code>TestIntraRepoImportResolvesToPackageEntity</code></td><td>用临时模块夹具验证映射（确定性，不依赖本仓库）</td></tr>
+    <tr><td><code>TestImportTargetOnlyStripsThisModule</code></td><td>只剥自己的模块前缀，<code>example.com/appx</code> 不受影响</td></tr>
+    <tr><td><code>TestThisRepoDependencyEdgesResolve</code></td><td class="good">真实仓库上校验 190 条仓库内依赖边全部可解析</td></tr>
+  </tbody>
+</table>
+
+<h2><span class="n">04</span>还没做的：代码图的修复需要重建缓存</h2>
+
+<div class="box warn">
+  <h4>别名归并的修复<b>立即生效</b>；包依赖边的修复<b>需要重建代码图</b></h4>
+  <p>归并发生在每次组图时，所以新规则已经生效（上面那对分支的验证就是证据）。但 <code>依赖</code> 边写在 <code>code:graph</code> 缓存里，要重建才会带上正确的端点。</p>
+  <p>重建入口是 GUI 的「从代码建图」，它会跑最多 <b>40 次 LLM 业务增强</b>（<code>maxLLMFiles = 40</code>）。你的 config 里配了 4 个 provider（含 openai 协议的），所以会真跑——<b>有 token 成本，我没有擅自执行</b>。</p>
+  <p>要么你点一下「从代码建图」，要么告诉我，我来触发。</p>
+</div>
+
+<h2><span class="n">05</span>顺带发现</h2>
+
+<p><code>zz-import-probe</code> 命名空间仍在（48 实体 / 57 关系），是 9 月 21 日那次知识包往返测试的遗留。更早的记录里就说过要清，一直没清。</p>
+
+<footer>
+  验证方式：所有数字取自本机真实数据（<code>~/Library/Application Support/axon/graphcache</code>，245 个缓存 / 3321 个实体输入 / 6745 条关系）。归并用 <code>go test -tags realdata ./internal/graph/ -run TestRealDataMergeAudit -v</code> 复现。代码结论均定位到文件与行号。<br>
+  生成于 2026-10-16 · <code>go build ./... &amp;&amp; go vet ./... &amp;&amp; go test ./...</code> 全部通过（14/14 包）
+</footer>
+
+</div>
+</body>
+</html>
