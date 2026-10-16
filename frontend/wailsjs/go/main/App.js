@@ -130,6 +130,10 @@ export function ListClaudeSessions(arg1) {
   return window['go']['main']['App']['ListClaudeSessions'](arg1);
 }
 
+export function ListClusters(arg1) {
+  return window['go']['main']['App']['ListClusters'](arg1);
+}
+
 export function ListConversations() {
   return window['go']['main']['App']['ListConversations']();
 }
@@ -184,6 +188,10 @@ export function MCPUninstallAll() {
 
 export function MatchKnowledge(arg1, arg2) {
   return window['go']['main']['App']['MatchKnowledge'](arg1, arg2);
+}
+
+export function NamespacesFor(arg1) {
+  return window['go']['main']['App']['NamespacesFor'](arg1);
 }
 
 export function NewConversation(arg1, arg2, arg3) {

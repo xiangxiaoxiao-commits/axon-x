@@ -74,6 +74,8 @@ export function ListClaudeProjects():Promise<Array<claudedata.Project>>;
 
 export function ListClaudeSessions(arg1:string):Promise<main.SessionList>;
 
+export function ListClusters(arg1:boolean):Promise<main.ClusterView>;
+
 export function ListConversations():Promise<Array<model.Conversation>>;
 
 export function ListImportedBundles(arg1:string):Promise<Array<main.ImportedBundle>>;
@@ -101,6 +103,8 @@ export function MCPStatus():Promise<mcpinstall.Status>;
 export function MCPUninstallAll():Promise<Array<mcpinstall.AgentStatus>>;
 
 export function MatchKnowledge(arg1:string,arg2:string):Promise<main.KnowledgeMatch>;
+
+export function NamespacesFor(arg1:string):Promise<Array<string>>;
 
 export function NewConversation(arg1:string,arg2:string,arg3:string):Promise<model.Conversation>;
 

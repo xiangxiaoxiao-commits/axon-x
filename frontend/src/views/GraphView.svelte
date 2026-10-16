@@ -8,7 +8,7 @@
   import { BuildGraph, GetGraph, GetGraphHealth, IndexProject, GenerateArticle, BuildGraphFromCode, BuildGraphFromObsidian, DeleteEntity, UpdateEntityObservations, ReviewRelation, ReviewAssertion, UndoLastGraphReview, ListProviders, MCPStatus, GetEmbeddingConfig, BuildMultiGraph } from "../../wailsjs/go/main/App.js";
   import { EventsOn, EventsOff } from "../../wailsjs/runtime/runtime.js";
   import type { graph } from "../../wailsjs/go/models";
-  import { currentProject, indexRequest, selectedNamespaces, loadNamespaces } from "../lib/stores";
+  import { currentProject, indexRequest, selectedNamespaces, effectiveNamespaces, clusters, loadNamespaces } from "../lib/stores";
   import { marked } from "marked";
   import Onboarding from "./Onboarding.svelte";
   import PortablePanel from "../lib/PortablePanel.svelte";
@@ -173,12 +173,12 @@
 
   // Reload whenever the selected namespaces change.
   let loadedFor = " ";
-  // Whether the first graph load for the current project has finished. Until it
-  // has, g is still null and we must NOT render the onboarding empty-state, or it
-  // flashes on every open before the async load resolves.
+  // Reload whenever the effective namespace set changes. The key uses the set
+  // rather than the single selection, so pulling in a domain's other members
+  // (see effectiveNamespaces) triggers the reload that shows their knowledge.
   let loaded = false;
   $: {
-    const key = $selectedNamespaces.join(",") || $currentProject;
+    const key = $effectiveNamespaces.join(",") || $currentProject;
     if (key !== loadedFor) { loadedFor = key; focus = ""; progress = ""; loaded = false; load(); }
   }
 
@@ -188,19 +188,29 @@
 
   // load(false) assembles from the session cache (BuildGraph); load(true) reads
   // the saved graph.json (GetGraph) so manual edits aren't overwritten by a
-  // re-assembly. When multiple namespaces are selected, each loads independently
-  // into its own graph — they are NOT merged, to preserve knowledge boundaries.
+  // re-assembly.
+  //
+  // When the selection's domain has more than one namespace they are MERGED into
+  // a single graph. Previously each was loaded on its own and the user switched
+  // between them by hand, which meant knowledge filed under a second namespace
+  // was invisible until you knew to look there — a project exported as a bundle
+  // and re-imported sat in a separate namespace holding 99.7% of the same
+  // entities, and recall silently missed whichever half you didn't pick.
+  // graph.Merge does the joining, so entities shared across the namespaces become
+  // one node and cross-namespace relations appear.
   async function load(fromStore = false) {
     const prevFocus = focus;
     try {
-      const slugs = $selectedNamespaces;
-      if (slugs.length >= 1) {
-        // Always load the first selected namespace as the active graph.
-        // Multi-namespace does NOT merge — user switches between them via tags.
-        const active = slugs[0];
-        currentProject.set(active);
-        g = fromStore ? await GetGraph(active) : await BuildGraph(active);
-        health = await GetGraphHealth(active);
+      const slugs = $effectiveNamespaces;
+      if (slugs.length > 1) {
+        // A domain: one graph over all of its namespaces.
+        currentProject.set(slugs[0]);
+        g = await BuildMultiGraph(slugs);
+        health = await GetGraphHealth(slugs[0]);
+      } else if (slugs.length === 1) {
+        currentProject.set(slugs[0]);
+        g = fromStore ? await GetGraph(slugs[0]) : await BuildGraph(slugs[0]);
+        health = await GetGraphHealth(slugs[0]);
       } else if ($currentProject) {
         g = fromStore ? await GetGraph($currentProject) : await BuildGraph($currentProject);
         health = await GetGraphHealth($currentProject);
@@ -482,13 +492,16 @@
       // sees the same key and does nothing, so refresh here instead. Without this
       // branch, re-importing an updated bundle into the namespace you are looking
       // at would appear to do nothing.
-      const already = $selectedNamespaces.length === 1 && $selectedNamespaces[0] === ns;
+      // Compare the *effective* set: for a namespace in a multi-member domain,
+      // selecting it changes what gets loaded, so the reactive block will fire
+      // and this branch must not double-load.
+      const already = $effectiveNamespaces.length === 1 && $effectiveNamespaces[0] === ns;
       selectedNamespaces.set([ns]);
       currentProject.set(ns);
       if (already) await load();
       return;
     }
-    const active = $selectedNamespaces[0] || $currentProject;
+    const active = $effectiveNamespaces[0] || $currentProject;
     if (active === ns) await load();
   }
 

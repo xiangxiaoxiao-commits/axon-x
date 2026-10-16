@@ -1,8 +1,8 @@
 // Global UI state for Axon. Kept small: which view is active, the conversation
 // list, the current conversation and its messages.
-import { writable, get } from "svelte/store";
+import { writable, derived, get } from "svelte/store";
 import type { model, claudedata } from "../../wailsjs/go/models";
-import { ListClaudeProjects, ListNamespaces } from "../../wailsjs/go/main/App.js";
+import { ListClaudeProjects, ListNamespaces, ListClusters } from "../../wailsjs/go/main/App.js";
 
 export type View = "tasks" | "commit" | "hub" | "search" | "sessions" | "graph" | "memory" | "chat" | "terminal" | "settings";
 
@@ -75,6 +75,67 @@ export const namespaces = writable<NamespaceInfo[]>([]);
 
 // Which namespaces are currently selected for graph viewing (multi-select).
 export const selectedNamespaces = writable<string[]>([]);
+
+// --- Derived knowledge domains -------------------------------------------
+// Namespaces are bookkeeping: a directory gets one, an imported bundle takes its
+// own title. Nothing checked whether two of them held the same knowledge, so the
+// same project routinely ended up split across several (this machine had
+// "wanlian" and "Wanlian1" sharing 99.7% of their entities) and every lookup had
+// to guess which to use.
+//
+// A cluster is the knowledge-level view: namespaces that share entities are one
+// domain. Derived from content, so there is nothing for the user to maintain.
+export type ClusterInfo = {
+  name: string;
+  slugs: string[];
+  entities: number;
+  relations: number;
+  soleSource: number;
+  redundant: boolean;
+};
+export const clusters = writable<ClusterInfo[]>([]);
+
+// Pairwise overlaps behind the grouping, kept so the reason two namespaces were
+// put together is inspectable rather than a silent decision.
+export type ClusterLinkInfo = { a: string; b: string; shared: number; smaller: number; overlap: number; merged: boolean };
+export const clusterLinks = writable<ClusterLinkInfo[]>([]);
+
+export async function loadClusters(refresh = false): Promise<void> {
+  try {
+    const view: any = await ListClusters(refresh);
+    clusters.set(view?.clusters ?? []);
+    clusterLinks.set(view?.links ?? []);
+  } catch (e) {
+    console.error("load clusters", e);
+  }
+}
+
+// The namespaces a graph build should actually read: everything the selection
+// belongs to. Selecting one namespace pulls in the rest of its domain, which is
+// what removes the manual multi-select — asking for "wanlian" also brings
+// "Wanlian1" without the user knowing either name.
+//
+// Falls back to the raw selection when clustering has not run yet, so graph
+// viewing never breaks on a missing derived index.
+export const effectiveNamespaces = derived(
+  [selectedNamespaces, clusters],
+  ([$sel, $clusters]): string[] => {
+    if ($sel.length === 0) return [];
+    const out: string[] = [];
+    for (const ns of $sel) {
+      const cluster = $clusters.find((c) => c.slugs.includes(ns));
+      for (const s of cluster ? cluster.slugs : [ns]) {
+        if (!out.includes(s)) out.push(s);
+      }
+    }
+    return out;
+  },
+);
+
+// The domain a namespace belongs to, for labelling the picker.
+export function clusterFor(slug: string, list: ClusterInfo[]): ClusterInfo | undefined {
+  return list.find((c) => c.slugs.includes(slug));
+}
 
 // Load namespaces from the backend and default-select the first one.
 export async function loadNamespaces(): Promise<void> {

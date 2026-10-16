@@ -147,6 +147,55 @@ func (a *App) BuildMultiGraph(slugs []string) (*graph.Graph, error) {
 	return merged, nil
 }
 
+// ClusterView is the derived grouping of namespaces into knowledge domains,
+// plus the pairwise overlaps behind it so the grouping can be explained.
+type ClusterView struct {
+	Clusters []graph.NamespaceCluster `json:"clusters"`
+	Links    []graph.ClusterLink      `json:"links"`
+}
+
+// ListClusters returns namespaces grouped by what they contain rather than by
+// how they were named. Namespaces used to be pure bookkeeping — a directory got
+// one, an imported bundle got its own — and nothing noticed when two of them
+// held the same knowledge, so a project could be split across several and every
+// lookup had to guess. The grouping is derived from shared entities, so the user
+// maintains nothing.
+//
+// refresh recomputes; otherwise a cached result is used when one exists, since
+// deriving the grouping means reading every cache.
+func (a *App) ListClusters(refresh bool) (ClusterView, error) {
+	dataDir, err := db.AppDataDir()
+	if err != nil {
+		return ClusterView{}, err
+	}
+	if !refresh {
+		if clusters, links, ok := graph.LoadClusters(dataDir); ok {
+			return ClusterView{Clusters: clusters, Links: links}, nil
+		}
+	}
+	clusters, links, err := graph.ClusterNamespaces(dataDir)
+	if err != nil {
+		return ClusterView{}, err
+	}
+	graph.SaveClusters(dataDir, clusters, links)
+	return ClusterView{Clusters: clusters, Links: links}, nil
+}
+
+// NamespacesFor returns every namespace that holds the same subject matter as
+// the given one, so a caller that was told about one namespace automatically
+// sees the knowledge that was filed under another. This is what removes the
+// manual multi-select: asking for "wanlian" also brings "Wanlian1".
+func (a *App) NamespacesFor(slug string) ([]string, error) {
+	view, err := a.ListClusters(false)
+	if err != nil {
+		return nil, err
+	}
+	if c := graph.ClusterOf(view.Clusters, slug); c != nil {
+		return c.Slugs, nil
+	}
+	return []string{slug}, nil
+}
+
 // GetGraph returns the stored knowledge graph for a project.
 func (a *App) GetGraph(projectSlug string) (*graph.Graph, error) {
 	dataDir, err := db.AppDataDir()
@@ -497,6 +546,29 @@ func (a *App) migrateStaleCaches() {
 		log.Printf("axon: 升级陈旧知识缓存 %s: %d 个会话（补齐来源与标签归一）", slug, n)
 	}
 	log.Printf("axon: 共升级 %d 个缓存文件，用时 %s", total, time.Since(started).Round(time.Millisecond))
+}
+
+// refreshClusters derives the namespace grouping and caches it. Runs at startup
+// in the background: the grouping is what lets a lookup on one namespace see the
+// knowledge filed under another, and the MCP server is a separate process, so it
+// reads this file rather than recomputing (which means reading every cache).
+// Best-effort — the app works without it, the grouping just stays one-per-
+// namespace until the user opens the knowledge view.
+func (a *App) refreshClusters() {
+	dataDir, err := db.AppDataDir()
+	if err != nil {
+		return
+	}
+	clusters, links, err := graph.ClusterNamespaces(dataDir)
+	if err != nil {
+		return
+	}
+	graph.SaveClusters(dataDir, clusters, links)
+	for _, c := range clusters {
+		if len(c.Slugs) > 1 {
+			log.Printf("axon: 知识域「%s」自动合并 %v（共 %d 实体）", c.Name, c.Slugs, c.Entities)
+		}
+	}
 }
 
 // entityEmbedText builds the text embedded for an entity: its name plus its

@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Axon 知识库自动归组 — 让相关的事情自己组成一个图</title>
+<style>
+  :root{
+    --ink:#1c1c1a; --ink2:#5f5e5a; --ink3:#8a8880;
+    --line:#e3e1da; --line2:#cfcdc5;
+    --bg:#fbfaf7; --card:#fff; --soft:#f5f3ee;
+    --red:#A32D2D; --redbg:#FCEBEB; --redline:#F09595;
+    --grn:#0F6E56; --grnbg:#E1F5EE; --grnline:#5DCAA5;
+    --amb:#854F0B; --ambbg:#FAEEDA; --ambline:#EF9F27;
+    --blu:#185FA5; --blubg:#E6F1FB; --bluline:#85B7EB;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:15px/1.75 -apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    -webkit-font-smoothing:antialiased}
+  .wrap{max-width:900px;margin:0 auto;padding:56px 32px 96px}
+  header{border-bottom:2px solid var(--ink);padding-bottom:20px;margin-bottom:34px}
+  .kicker{font-size:12px;letter-spacing:.14em;color:var(--ink3);text-transform:uppercase;margin-bottom:10px}
+  h1{font-size:26px;line-height:1.35;margin:0 0 12px;font-weight:600}
+  .sub{color:var(--ink2);font-size:14px;margin:0}
+  .meta{margin-top:16px;display:flex;flex-wrap:wrap;gap:8px}
+  .chip{font-size:12px;padding:3px 10px;border:1px solid var(--line2);border-radius:99px;color:var(--ink2);background:var(--card)}
+  h2{font-size:19px;margin:46px 0 8px;font-weight:600;padding-top:6px}
+  h2 .n{color:var(--ink3);font-weight:400;margin-right:8px;font-variant-numeric:tabular-nums}
+  h3{font-size:15px;margin:24px 0 8px;font-weight:600}
+  p{margin:10px 0}
+  .lede{font-size:15.5px;background:var(--card);border:1px solid var(--line);border-left:3px solid var(--grn);
+    border-radius:0 8px 8px 0;padding:16px 20px;margin:0 0 8px}
+  code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;
+    background:var(--soft);border:1px solid var(--line);border-radius:4px;padding:1px 5px;color:#3a3a36}
+  table{width:100%;border-collapse:collapse;margin:14px 0;font-size:13.5px;background:var(--card);
+    border:1px solid var(--line);border-radius:8px;overflow:hidden}
+  th{text-align:left;font-weight:600;background:var(--soft);padding:9px 12px;border-bottom:1px solid var(--line);
+    color:var(--ink2);font-size:12.5px}
+  td{padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  tr:last-child td{border-bottom:none}
+  td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .bad{color:var(--red);font-weight:600}
+  .good{color:var(--grn);font-weight:600}
+  .warn{color:var(--amb);font-weight:600}
+  .mute{color:var(--ink3)}
+  .box{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:18px 22px;margin:18px 0}
+  .box.fix{border-color:var(--grnline);background:var(--grnbg)}
+  .box.hot{border-color:var(--redline);background:var(--redbg)}
+  .box.note{border-color:var(--bluline);background:var(--blubg)}
+  .box.warn{border-color:var(--ambline);background:var(--ambbg)}
+  .box h4{margin:0 0 8px;font-size:14px;font-weight:600}
+  .box.fix h4{color:var(--grn)} .box.hot h4{color:var(--red)}
+  .box.note h4{color:var(--blu)} .box.warn h4{color:var(--amb)}
+  .box p:last-child{margin-bottom:0}
+  ul{margin:10px 0;padding-left:22px} li{margin:6px 0}
+  pre{background:#2c2c2a;color:#ece9e0;border-radius:8px;padding:14px 16px;overflow-x:auto;
+    font-size:12.5px;line-height:1.65;margin:14px 0}
+  pre .c{color:#9a978d} pre .g{color:#97c459} pre .r{color:#f0997b} pre .b{color:#85b7eb}
+  footer{margin-top:60px;padding-top:20px;border-top:1px solid var(--line);color:var(--ink3);font-size:12.5px}
+  .cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px;margin:18px 0}
+  .stat{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px 18px}
+  .stat .v{font-size:24px;font-weight:600;line-height:1.15;font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+  .stat .l{font-size:12.5px;color:var(--ink2);margin-top:5px}
+  .stat .d{font-size:11.5px;color:var(--ink3);margin-top:3px}
+  .bar{display:inline-block;height:10px;border-radius:99px;background:var(--grn);vertical-align:middle}
+  .bar.lo{background:var(--line2)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="kicker">Axon-x · 知识库自动归组</div>
+  <h1>让相关的事情自己组成一个图<br><span class="mute" style="font-weight:400;font-size:20px">不用在界面上手动选命名空间</span></h1>
+  <p class="sub">命名空间此前是纯手工记账，没有任何机制检查两份是不是同一个东西。现在归组由内容自己决定。</p>
+  <div class="meta">
+    <span class="chip">新增 internal/graph/cluster.go</span>
+    <span class="chip">新增 17 个测试</span>
+    <span class="chip">14/14 包通过</span>
+    <span class="chip">已装 0.4.6 运行中</span>
+  </div>
+</header>
+
+<p class="lede">
+<b>诊断结果：</b>你有 8 个命名空间，其中 <code>wanlian</code> 与 <code>Wanlian1</code> 的实体<b>重叠 99.7%</b>——它们本来就是同一个项目。更要紧的是：<b><code>Wanlian1</code> 就是你自己导出的知识包又导回来</b>（导出版被脱敏了），同一份知识存了两遍，每次查询还得猜该看哪一个。
+</p>
+
+<h2><span class="n">01</span>先量化：到底有几个是真的独立</h2>
+
+<p>两个命名空间的「实体键」（名字 + 所有别名，即检索实际使用的键）重叠到什么程度：</p>
+
+<table>
+  <thead><tr><th>命名空间对</th><th class="num">共享键</th><th class="num">Jaccard</th><th class="num">覆盖较小侧</th><th></th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>Wanlian1</code> ↔ <code>wanlian</code></td>
+      <td class="num">3146</td><td class="num">0.98</td>
+      <td class="num good">99.7%</td>
+      <td><span class="bar" style="width:150px"></span></td>
+    </tr>
+    <tr>
+      <td><code>Wanlian1</code> ↔ <code>_global_</code></td>
+      <td class="num">8</td><td class="num">0.00</td>
+      <td class="num">7.3%</td>
+      <td><span class="bar lo" style="width:11px"></span></td>
+    </tr>
+    <tr>
+      <td>其余 26 对</td>
+      <td class="num">≤ 8</td><td class="num">0.00</td>
+      <td class="num">≤ 7%</td>
+      <td><span class="bar lo" style="width:6px"></span></td>
+    </tr>
+  </tbody>
+</table>
+
+<p>这个分界干净得出乎意料：<b>99.7% 对 7.3%</b>，中间是一大片空白。也就是说"是不是同一个东西"这个问题在数据上毫不含糊，阈值取 50% 还是 30% 结果都一样（我取 50%，放在空白正中间）。次高的那 7.3% 还是 <code>gaia</code>、<code>glite</code> 这类通用词的偶然重合，不是真关系。</p>
+
+<h2><span class="n">02</span>根因：Wanlian1 是你自己导出的知识包</h2>
+
+<p>我没有停在"重叠高"这个结论上，而是去查了各自的独有内容：</p>
+
+<pre><span class="c">// Wanlian1 独有的 11 个键（全部）</span>
+<span class="r">&lt;id&gt;</span>
+<span class="r">&lt;内网地址&gt;.33</span>
+<span class="r">&lt;内网地址&gt;.33:80</span>
+<span class="r">&lt;本地路径&gt;/agent-reach</span>
+…
+
+<span class="c">// wanlian 里对应的真实值</span>
+<span class="g">10.99.146.33</span>
+<span class="g">10.99.146.33:80</span>
+<span class="g">10.12.0.78:5000/ufl-release/bestudio:2.0.2.301-stable-73aa8c1</span></pre>
+
+<p><b><code>Wanlian1</code> 独有的键全是脱敏占位符</b>，而 <code>wanlian</code> 里是完整原文。结论很清楚：这是一次「导出 → 再导入」的往返——导出时按脱敏策略把内网地址和路径替换成了 <code>&lt;…&gt;</code>，同一个知识包又导了回来，于是变成了第二个命名空间。</p>
+
+<p>量化的代价：两份分开是 1165 + 1003 = <b>2168</b> 个实体，合并后只有 <b>1056</b>——<b>重复了超过一半</b>。这就是你感觉"知识库没归到一起"的实际数字。</p>
+
+<h2><span class="n">03</span>做法：按内容自动归组，界面不再要求手选</h2>
+
+<h3>归组逻辑（新增 <code>internal/graph/cluster.go</code>）</h3>
+
+<ul>
+  <li><b>按内容判定</b>，不看名字。两个命名空间的实体键重叠达到较小侧 50% 以上即归为同一「知识域」。</li>
+  <li><b>传递</b>：A~B、B~C 则三者同域。所以答案是<b>连通分量</b>，而不是逐对判断——知识包套知识包的情况也能正确归并。</li>
+  <li><b>用较小侧做分母</b>而不是 Jaccard：命名空间的关系通常是<b>包含</b>（知识包是一个项目的一部分），Jaccard 会因为大小差异而无端惩罚它。</li>
+  <li><b>可解释</b>：<code>ClusterLink</code> 保留每一对的重叠度与是否合并，所以「为什么这两个在一起」是能查的，不是黑箱。</li>
+</ul>
+
+<h3>界面：选一个命名空间，自动带上同域的</h3>
+
+<p>这是你诉求的核心。改动前 GraphView 的代码注释写着：</p>
+
+<pre><span class="r">// Multi-namespace does NOT merge — user switches between them via tags</span>
+<span class="c">// 多命名空间不合并，用户靠标签切换</span></pre>
+
+<p><b>这条设计正是知识被割裂的来源。</b>现在改成：选中 <code>wanlian</code>，系统自动把 <code>Wanlian1</code> 一起加载，并用已有的 <code>BuildMultiGraph</code> <b>合并成一张图</b>——共享的实体合成一个节点，跨命名空间的关系得以显现。</p>
+
+<p>界面上标签会标 <code>＋1</code> 表示自动并入了 1 个同域命名空间，悬浮可以看到具体是哪个。你不用知道自己有 <code>Wanlian1</code> 这个名字。</p>
+
+<h3>MCP 查询同样受益</h3>
+
+<p>agent 问「wanlian」时也会自动扩展到整个域。否则会出现搜索能搜到、但点进去看不到的矛盾。为此统一了一个「按域取图」的入口 <code>assembleDomain</code>，让 <code>search_knowledge</code> 与 <code>get_entity</code> 口径一致。</p>
+
+<div class="box fix">
+  <h4>实测验证（用装好的 MCP）</h4>
+  <p><code>&lt;内网地址&gt;.33:80</code> 这个实体<b>只存在于 <code>Wanlian1</code></b>。用它做决定性测试：</p>
+  <pre>project=<span class="b">wanlian</span>    → 找到 ✓
+project=<span class="b">Wanlian1</span>  → 找到 ✓   <span class="c">（两者返回完全一致）</span></pre>
+  <p>归组前的行为是：问 <code>wanlian</code> 永远查不到它。启动日志也会明确报告：<code>知识域「wanlian」自动合并 [wanlian Wanlian1]（共 1056 实体）</code>。</p>
+</div>
+
+<h2><span class="n">04</span>最终归组结果</h2>
+
+<table>
+  <thead><tr><th>知识域</th><th>成员</th><th class="num">合并后实体</th></tr></thead>
+  <tbody>
+    <tr><td><b>wanlian</b></td><td class="good">wanlian + Wanlian1 <span class="mute">（自动合并）</span></td><td class="num">1056</td></tr>
+    <tr><td>axon</td><td>axon</td><td class="num">678</td></tr>
+    <tr><td>_global_</td><td>_global_</td><td class="num">43</td></tr>
+    <tr><td>glite</td><td>glite</td><td class="num">43</td></tr>
+    <tr><td>couple-space</td><td>couple-space</td><td class="num">27</td></tr>
+    <tr><td>personal</td><td>personal</td><td class="num">12</td></tr>
+    <tr><td>gaiac</td><td>gaiac</td><td class="num">7</td></tr>
+  </tbody>
+</table>
+
+<p>28 组比较里只有 1 组被合并。其余命名空间都是真的独立——<b>没有硬凑</b>，这正是判据可信的旁证。</p>
+
+<div class="box note">
+  <h4>一个我如实报告的观察</h4>
+  <p>合并后是 1056 个实体，而 <code>wanlian</code> 单独就有 1170 个——<b>变少了 114 个</b>。这不是丢失，是 <code>Wanlian1</code> 带来了新的别名，让 <code>wanlian</code> 内部本来分开的两个节点被归并了（例如 <code>middleware-release/gaia-lite</code> 这条别名把相关实体连了起来）。</p>
+  <p>这正是我上一轮收紧「别名误合」规则要处理的那类操作，现在的规则只在碰撞键是某一方的实际命名时才折叠，所以是有依据的归并。但如果哪一天发现合错了，两轮改动都留了审计记录可以追。</p>
+</div>
+
+<h2><span class="n">05</span>一个留给你的选择</h2>
+
+<div class="box warn">
+  <h4>要不要把 <code>Wanlian1</code> 从磁盘上删掉？</h4>
+  <p>现在它已经不影响使用了（查询和图都会自动合并），保留它只是占一份存储。从数据看删掉是安全的：它独有的 2 个实体名、11 个键<b>全是脱敏占位符</b>，没有任何 <code>wanlian</code> 里找不到的真实知识。</p>
+  <p>但删除不可逆，所以<b>我没有动</b>。你说一声我就清（会先备份）。也可以就这么放着——反正你感觉不到它的存在了。</p>
+</div>
+
+<h2><span class="n">06</span>顺带</h2>
+
+<p>另有一批空壳命名空间（<code>-Users-xiangxiao-projects</code>、<code>.</code> 等 5 个，0 实体），归组时已被自动排除。它们只在磁盘上留了空目录，没有影响，但如果你想要整洁也可以一并清掉。另外 <code>graphs/zz-import-probe.json</code> 是 9 月那次知识包往返测试的遗留。</p>
+
+<footer>
+  验证方式：所有数字取自本机真实数据（<code>~/Library/Application Support/axon/graphcache</code>，8 个命名空间 / 245 个缓存 / 6745 条关系）。归组结果缓存在 <code>clusters.json</code>，应用启动时后台重算。复现：<code>go test -tags realdata ./internal/graph/ -run TestRealDataCluster -v</code><br>
+  生成于 2026-10-16 · <code>go build ./... &amp;&amp; go vet ./... &amp;&amp; go test ./...</code> 全部通过（14/14 包）· 前端 <code>npm run build</code> 通过
+</footer>
+
+</div>
+</body>
+</html>

@@ -124,6 +124,12 @@ func (a *App) startup(ctx context.Context) {
 	// LLM-free: a failure here must not stop the app from starting.
 	a.migrateStaleCaches()
 
+	// Derive the namespace grouping in the background. It is what lets a lookup
+	// on one namespace include the knowledge filed under another, and the MCP
+	// server runs as a separate process reading the same cache file, so doing it
+	// here means neither the UI nor an agent call pays to recompute it.
+	go a.refreshClusters()
+
 	log.Printf("axon: ready at %s", dataDir)
 }
 

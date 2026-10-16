@@ -220,6 +220,28 @@ export namespace graph {
 	        this.mergedAfterScrub = source["mergedAfterScrub"];
 	    }
 	}
+	export class ClusterLink {
+	    a: string;
+	    b: string;
+	    shared: number;
+	    smaller: number;
+	    overlap: number;
+	    merged: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new ClusterLink(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.a = source["a"];
+	        this.b = source["b"];
+	        this.shared = source["shared"];
+	        this.smaller = source["smaller"];
+	        this.overlap = source["overlap"];
+	        this.merged = source["merged"];
+	    }
+	}
 	export class Entity {
 	    name: string;
 	    type: string;
@@ -407,6 +429,28 @@ export namespace graph {
 		}
 	}
 	
+	export class NamespaceCluster {
+	    name: string;
+	    slugs: string[];
+	    entities: number;
+	    relations: number;
+	    soleSource: number;
+	    redundant: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new NamespaceCluster(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.slugs = source["slugs"];
+	        this.entities = source["entities"];
+	        this.relations = source["relations"];
+	        this.soleSource = source["soleSource"];
+	        this.redundant = source["redundant"];
+	    }
+	}
 
 }
 
@@ -438,6 +482,38 @@ export namespace main {
 	        this.redactions = this.convertValues(source["redactions"], sanitize.Hit);
 	        this.notes = source["notes"];
 	        this.suggestedNamespace = source["suggestedNamespace"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class ClusterView {
+	    clusters: graph.NamespaceCluster[];
+	    links: graph.ClusterLink[];
+	
+	    static createFrom(source: any = {}) {
+	        return new ClusterView(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.clusters = this.convertValues(source["clusters"], graph.NamespaceCluster);
+	        this.links = this.convertValues(source["links"], graph.ClusterLink);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

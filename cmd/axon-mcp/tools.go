@@ -355,7 +355,7 @@ func (h *toolHandler) resolveSearchSlugs(project string) []string {
 	if project == "" {
 		// If a scope is active, use it; otherwise search all.
 		if len(h.activeScope) > 0 {
-			return h.activeScope
+			return h.expandToDomains(h.activeScope)
 		}
 		return h.namespaceDirs()
 	}
@@ -369,7 +369,84 @@ func (h *toolHandler) resolveSearchSlugs(project string) []string {
 			out = append(out, s)
 		}
 	}
+	return h.expandToDomains(out)
+}
+
+// expandToDomains widens an explicit namespace selection to the knowledge
+// domains those namespaces belong to, so asking about one namespace also sees
+// the knowledge filed under another that holds the same subject matter.
+//
+// Namespaces are bookkeeping — a directory gets one, an imported bundle takes
+// its own title — and nothing noticed when two held the same work, so the same
+// project could sit in two namespaces at once: this machine had "wanlian" and
+// "Wanlian1" sharing 99.7% of their entities, and a query naming either one
+// silently missed whatever the other had recorded. The grouping is derived from
+// shared entities (graph.ClusterNamespaces) and cached by the app at startup;
+// when no cache exists yet the selection is passed through unchanged rather than
+// paying to recompute it on a hot path.
+func (h *toolHandler) expandToDomains(slugs []string) []string {
+	clusters, _, ok := graph.LoadClusters(h.dataDir)
+	if !ok {
+		return slugs
+	}
+	out := make([]string, 0, len(slugs))
+	for _, slug := range slugs {
+		if c := graph.ClusterOf(clusters, slug); c != nil {
+			for _, member := range c.Slugs {
+				if !containsSlug(out, member) {
+					out = append(out, member)
+				}
+			}
+			continue
+		}
+		if !containsSlug(out, slug) {
+			out = append(out, slug)
+		}
+	}
 	return out
+}
+
+func containsSlug(list []string, want string) bool {
+	for _, s := range list {
+		if s == want {
+			return true
+		}
+	}
+	return false
+}
+
+// assembleDomain assembles the graph a namespace lookup should see: the
+// namespace alone, or the merged graph of its whole knowledge domain when other
+// namespaces hold the same subject matter.
+//
+// Every project-scoped tool goes through here so they agree. Reading a single
+// namespace would let search_knowledge find a fact that get_entity then could not
+// show, because the two halves of one project sat in different namespaces.
+func (h *toolHandler) assembleDomain(slug string) (*graph.Graph, error) {
+	members := h.expandToDomains([]string{slug})
+	if len(members) <= 1 {
+		return retrieve.AssembleGraph(h.dataDir, slug)
+	}
+	merged := &graph.Graph{
+		ProjectSlug: strings.Join(members, "+"),
+		Entities:    []graph.Entity{},
+		Relations:   []graph.Relation{},
+	}
+	assembled := 0
+	for _, m := range members {
+		g, err := retrieve.AssembleGraph(h.dataDir, m)
+		if err != nil {
+			continue
+		}
+		assembled++
+		merged.Merge(g.Entities, g.Relations)
+	}
+	// Nothing assembled: fall back so the caller reports the real namespace's
+	// state rather than an empty merged graph.
+	if assembled == 0 {
+		return retrieve.AssembleGraph(h.dataDir, slug)
+	}
+	return merged, nil
 }
 
 // getEntityArgs is the get_entity argument shape.
@@ -394,7 +471,7 @@ func (h *toolHandler) getEntity(raw json.RawMessage) (*toolResult, error) {
 		return nil, fmt.Errorf("无法确定项目：当前目录没有 .axon-project 文件，请显式传 project 参数或创建 .axon-project")
 	}
 	a.Project = slug
-	g, err := retrieve.AssembleGraph(h.dataDir, a.Project)
+	g, err := h.assembleDomain(a.Project)
 	if err != nil {
 		return nil, fmt.Errorf("assemble graph: %w", err)
 	}
