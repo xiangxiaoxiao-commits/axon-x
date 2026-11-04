@@ -359,3 +359,15 @@ go test ./...
 - API key **只存 OS 凭证库**，不落明文。
 - 单机单用户，无云同步。
 - **唯一会离开本机的是你主动导出的知识包**，且已按上述规则剪除个人信息；导出是只读操作，不影响本地图谱。
+
+---
+
+## 常用开发与构建命令速查
+
+| 命令 | 用途 | 说明 |
+| --- | --- | --- |
+| `wails dev` | 本地实时开发 | 启动 Wails 开发模式，前端热更新、Go 后端改动自动重编译 |
+| `wails build` | 生产构建 | 只产出本机架构的 `build/bin/Axon-x.app`，**不含 `axon-mcp`** |
+| `bash scripts/make-dmg.sh [版本号]` | 完整打包分发 | 需先执行 `wails build -clean`；会把 `axon-mcp` 编进 app 包、重新签名并生成 `.dmg` |
+
+> 单独运行 `wails build` 得到的 `.app` 里没有 `axon-mcp`，直接分发会导致 Agent 一键接入找不到它；面向用户发布请用 `scripts/make-dmg.sh` 完整打包。环境准备与测试命令见上文「从源码构建」。
