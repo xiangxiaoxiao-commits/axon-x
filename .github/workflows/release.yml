@@ -86,7 +86,10 @@ jobs:
         shell: pwsh
         run: |
           $tag = "${{ steps.tag.outputs.tag }}"
-          $zip = "build/bin/Axon-x-$tag-windows-${{ matrix.arch }}.zip"
+          # Strip the leading "v" so the zip name matches the dmg
+          # (Axon-x-0.4.7.dmg / Axon-x-0.4.7-windows-amd64.zip).
+          $ver = $tag -replace '^v', ''
+          $zip = "build/bin/Axon-x-$ver-windows-${{ matrix.arch }}.zip"
           Compress-Archive -Path build/bin/Axon-x.exe, build/bin/axon-mcp.exe -DestinationPath $zip -Force
           echo "ASSET=$zip" >> $env:GITHUB_ENV
       - name: Upload to release
