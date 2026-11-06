@@ -34,3 +34,6 @@ frontend/package.json.md5
 .vscode/*
 !.vscode/extensions.json
 axon.exe
+dist/
+# Local agent notes (private work log, never commit)
+.workbuddy/

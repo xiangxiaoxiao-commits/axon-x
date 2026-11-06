@@ -7,6 +7,7 @@ import (
 
 	"axon/internal/db"
 	"axon/internal/graph"
+	"axon/internal/orchestr"
 	"axon/internal/task"
 )
 
@@ -129,7 +130,7 @@ func buildTaskTranscript(t task.Task, result string) string {
 		b.WriteString(s)
 		b.WriteString("\n\n")
 	}
-	if spec := strings.TrimSpace(renderSpec(t.Spec)); spec != "" {
+	if spec := strings.TrimSpace(orchestr.RenderSpec(t.Spec)); spec != "" {
 		b.WriteString("任务规格:\n")
 		b.WriteString(spec)
 		b.WriteString("\n\n")

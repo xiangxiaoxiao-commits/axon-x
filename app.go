@@ -13,6 +13,7 @@ import (
 	"axon/internal/db"
 	"axon/internal/embed"
 	"axon/internal/model"
+	"axon/internal/orchestr"
 	"axon/internal/provider"
 	"axon/internal/secret"
 	"axon/internal/store"
@@ -59,12 +60,11 @@ type App struct {
 	// term is the embedded PTY shell session (Terminal tab).
 	term termState
 
-	// Task orchestration: persistence, a concurrency semaphore (buffered =
-	// max parallel executions) and per-task cancel funcs guarded by taskMu.
-	taskStore   task.Store
-	taskSem     chan struct{}
-	taskMu      sync.Mutex
-	taskCancels map[string]context.CancelFunc
+	// Task orchestration persistence and the extracted engine that runs the
+	// enrich/execute/review loop. The engine itself lives in internal/orchestr
+	// so the CLI and MCP entry points can drive the same code path.
+	taskStore task.Store
+	orch      *orchestr.Engine
 
 	// graphMu serializes manual knowledge-graph edits (load→modify→save) so
 	// concurrent edits can't clobber each other's writes. Graph persistence is
@@ -81,10 +81,8 @@ type App struct {
 // NewApp creates a new App application struct.
 func NewApp() *App {
 	return &App{
-		cancels:     make(map[string]context.CancelFunc),
-		taskSem:     make(chan struct{}, defaultTaskConcurrency),
-		taskCancels: make(map[string]context.CancelFunc),
-		embedProbe:  embed.NewProbeCache(),
+		cancels:    make(map[string]context.CancelFunc),
+		embedProbe: embed.NewProbeCache(),
 	}
 }
 
@@ -108,7 +106,6 @@ func (a *App) startup(ctx context.Context) {
 	}
 	a.store = sqlite.New(sqlDB)
 	a.taskStore = sqlite.NewTaskStore(sqlDB)
-	a.recoverStaleTasks() // reset tasks left mid-flight by a crash/quit
 
 	cfg, err := config.Load(dataDir)
 	if err != nil {
@@ -116,6 +113,22 @@ func (a *App) startup(ctx context.Context) {
 	}
 	a.cfg = cfg
 	a.secrets = secret.New()
+
+	// Wire the orchestration engine to this app's provider/config/secrets and its
+	// event emitter, then reset tasks left mid-flight by a crash/quit.
+	eng, err := orchestr.New(orchestr.Deps{
+		Ctx:       ctx,
+		Store:     a.taskStore,
+		Provider:  a.buildProvider,
+		Recall:    appRecaller{a},
+		Writeback: appWritebacker{a},
+		Emit:      a.emit,
+	})
+	if err != nil {
+		log.Fatalf("init orchestrator: %v", err)
+	}
+	a.orch = eng
+	a.orch.RecoverStaleTasks()
 
 	// Bring every cached session up to the current cache schema before anything
 	// reads the graph. IndexProject can only back-fill sessions it rediscovers,
