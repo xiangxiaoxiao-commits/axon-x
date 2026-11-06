@@ -2,6 +2,25 @@
 
 ## 未发布
 
+### 编排引擎抽出独立包，新增 orch 命令行
+
+任务编排的 enrich/execute/review 循环原本长在 `app.go` / `orchestrate.go` 里，只有桌面端能驱动。
+现在整体搬进 `internal/orchestr`，宿主相关的三件事（provider 解析、知识召回、验收回写）改成
+`Deps` 注入，于是桌面端和命令行可以走**同一条代码路径**，不存在两套行为对不上的可能。
+
+- `orchestrate.go` 从 687 行瘦到 107 行，只剩 Wails 适配层；`app.go` 用单个 `orch` 字段取代
+  原来的 `taskSem` / `taskCancels` / `taskMu` 三件套，`startup` 里组装 Engine 并接管
+  `recoverStaleTasks`。
+- 新增 `cmd/orch`：`new` / `enrich` / `show` / `run` / `accept` / `reject` / `list` / `delete` /
+  `config`，外加 `do` 一条命令走完「补全 → 确认 → 执行 → 采纳/打回」。
+- 模型配置只走环境变量（`ORCH_PROVIDER` / `ORCH_BASE_URL` / `ORCH_API_KEY` / `ORCH_MODEL`），
+  不进钥匙串、不写配置文件；`ORCH_PROJECT` 可选，给了就以**只读**方式注入该项目的知识图谱背景
+  （图谱为空时退化为「没有背景」，不失败）。
+- 与桌面版共用同一份数据目录与数据库，任务在两边是同一批。
+- `docs/ORCH_CLI.md` 与 `scripts/install-orch.sh`（装到 `~/.local/bin/orch`）。
+
+引擎逻辑是原样平移，行为不变；`go test ./...` 全绿。
+
 ### 知识库自动归组：相关的事情自己组成一个图，不用手动选
 
 命名空间此前是**纯手工记账**：一个目录建一个、导入的知识包按自己的标题建一个，
