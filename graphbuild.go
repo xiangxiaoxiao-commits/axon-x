@@ -7,7 +7,9 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"axon/internal/claudedata"
@@ -21,11 +23,12 @@ import (
 // graphModelDefault is the fallback when no GraphModel is configured. It
 // matches the user's private gateway (gpt-5.6-sol), but any OpenAI-compatible
 // model works — a different provider simply configures its preferred model in
-// settings.
+// settings. Note it must be a distillation-capable chat model that the gateway
+// actually serves; the chat default ("gpt-5") is not interchangeable.
 const graphModelDefault = "gpt-5.6-sol"
 
-// graphModel returns the model used for knowledge distillation, preferring the
-// config value when set, then the default.
+// graphModel returns the model used for knowledge distillation: the explicit
+// config value when set, otherwise this package's own default.
 func (a *App) graphModel() string {
 	if m := a.cfg.GraphModel(); m != "" {
 		return m
@@ -84,40 +87,127 @@ const extractPrompt = `你是一个知识提炼器。从下面的对话中，只
 - 目的是让同一事物在图谱里只保留一个节点，不要因为叫法不同而拆成多个。
 - 没有别名就给空数组 []。
 
+【作用域 scope：区分「项目专属」和「通用」】
+scope 决定这条知识以后能不能跨项目复用，填错会让 assistant 把 A 项目的事实搬到 B 项目。
+- "project"（默认）：只在当前项目成立。
+  · 具体模块/服务/接口/表名/目录结构、这个仓库的架构决策、这里的部署方式
+  · 例：「jewel-market 的订单列表走 inst_id 过滤」「glite 的交付单状态机有 5 个态」
+- "global"：换个项目照样成立，属于工具链习惯、通用踩坑或人的偏好。
+  · 例：「uv 安装依赖要走清华镜像」「这台机器的网关不支持 gpt-5」「改完代码要先自检再交付」
+  · 只有当你确定它与本项目无关、任何仓库都适用时才标 global。
+- 拿不准一律填 "project"。宁可少标 global，也不要把项目知识污染成通用知识。
+
 只输出如下 JSON，不要任何解释：
-{"entities":[{"name":"实体名","type":"module|service|concept|decision|constraint","aliases":["别名"],"observations":["关于它的事实"]}],"relations":[{"from":"实体A","to":"实体B","label":"关系","inferred":false,"state":"asserted","confidence":0.9,"evidence":["关系依据"]}]}`
+{"entities":[{"name":"实体名","type":"module|service|concept|decision|constraint","scope":"project|global","aliases":["别名"],"observations":["关于它的事实"]}],"relations":[{"from":"实体A","to":"实体B","label":"关系","inferred":false,"state":"asserted","confidence":0.9,"evidence":["关系依据"]}]}`
+
+// GlobalNamespace is the reserved namespace holding cross-project knowledge:
+// tooling conventions, general lessons and personal preferences that apply in
+// any directory. It is deliberately hidden from the project picker and shown as
+// a separate section, so it can never be mistaken for project-specific facts.
+const GlobalNamespace = "_global_"
+
+// globalCacheSuffix keeps a session's global half in its own cache file so
+// writing it does not overwrite the project half.
+const globalCacheSuffix = "-global"
+
+// splitByScope separates one distillation result into project-specific and
+// globally applicable knowledge. Relations survive only when both ends land in
+// the same bucket — a half-global edge would link two independent graphs.
+func splitByScope(ex extracted) (project, global extracted) {
+	globalNames := map[string]bool{}
+	for _, e := range ex.Entities {
+		if strings.EqualFold(strings.TrimSpace(e.Scope), "global") {
+			e.Scope = "global"
+			global.Entities = append(global.Entities, e)
+			globalNames[e.Name] = true
+			continue
+		}
+		// Project knowledge is the default; leave the field empty so it never
+		// shows up as a badge on ordinary cards.
+		e.Scope = ""
+		project.Entities = append(project.Entities, e)
+	}
+	for _, r := range ex.Relations {
+		if globalNames[r.From] && globalNames[r.To] {
+			global.Relations = append(global.Relations, r)
+		} else {
+			project.Relations = append(project.Relations, r)
+		}
+	}
+	return project, global
+}
 
 // Namespace is one named knowledge-graph namespace returned by ListNamespaces.
 type Namespace struct {
 	Name     string `json:"name"`
 	Entities int    `json:"entities"`
+	// Path is the project directory this knowledge belongs to. Everything in
+	// Axon is scoped by directory, so the picker shows the directory rather
+	// than the internal slug (a Claude dir encodes to "-Users-me-xx-axon",
+	// which means nothing to a human).
+	Path string `json:"path,omitempty"`
+	// Sessions is how many transcripts would be distilled for this project.
+	Sessions int `json:"sessions,omitempty"`
 }
 
-// ListNamespaces returns all named namespaces that have a graphcache directory,
-// with their entity counts. Used by the frontend project selector.
+// ListNamespaces returns every namespace the picker can offer: the ones that
+// already hold knowledge (entity counts from their caches), plus the projects
+// that have sessions but no knowledge yet (entity count 0).
+//
+// Without the second group a freshly reset knowledge base leaves the picker
+// empty, so there is nothing to click and no way to start indexing.
 func (a *App) ListNamespaces() ([]Namespace, error) {
 	dataDir, err := db.AppDataDir()
 	if err != nil {
 		return nil, err
 	}
+	projects := claudedata.ListIndexableProjects()
+	byName := map[string]claudedata.Project{}
+	for _, p := range projects {
+		byName[p.Slug] = p
+	}
+
+	out := []Namespace{}
+	seen := map[string]bool{}
+
 	entries, readErr := os.ReadDir(filepath.Join(dataDir, "graphcache"))
-	if readErr != nil {
-		if os.IsNotExist(readErr) {
-			return []Namespace{}, nil
-		}
+	if readErr != nil && !os.IsNotExist(readErr) {
 		return nil, readErr
 	}
-	var out []Namespace
 	for _, e := range entries {
 		if !e.IsDir() {
 			continue
 		}
-		g, err := retrieve.AssembleGraph(dataDir, e.Name())
-		if err != nil {
+		g, gerr := retrieve.AssembleGraph(dataDir, e.Name())
+		if gerr != nil {
 			continue
 		}
-		out = append(out, Namespace{Name: e.Name(), Entities: len(g.Entities)})
+		seen[e.Name()] = true
+		ns := Namespace{Name: e.Name(), Entities: len(g.Entities)}
+		if p, ok := byName[e.Name()]; ok {
+			ns.Path, ns.Sessions = p.Path, p.SessionCount
+		} else if strings.HasPrefix(e.Name(), "-") {
+			// Knowledge filed under a bare Claude directory slug: recover the
+			// path so it is still presented as a directory.
+			ns.Path = claudedata.DecodeProjectSlug(e.Name())
+		}
+		out = append(out, ns)
 	}
+
+	for _, p := range projects {
+		if p.Slug == "" || p.Slug == "_global_" || seen[p.Slug] {
+			continue
+		}
+		seen[p.Slug] = true
+		out = append(out, Namespace{Name: p.Slug, Path: p.Path, Sessions: p.SessionCount})
+	}
+
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Entities != out[j].Entities {
+			return out[i].Entities > out[j].Entities
+		}
+		return out[i].Name < out[j].Name
+	})
 	return out, nil
 }
 
@@ -207,15 +297,28 @@ func (a *App) GetGraph(projectSlug string) (*graph.Graph, error) {
 
 // GetGraphHealth returns actionable quality metrics for the governed graph.
 func (a *App) GetGraphHealth(projectSlug string) (graph.GraphHealth, error) {
-	g, err := a.assembleGraph(projectSlug, "")
+	candidates := a.candidateSlugs(projectSlug)
+	var g *graph.Graph
+	var err error
+	if len(candidates) > 1 {
+		g, err = a.BuildMultiGraph(candidates)
+	} else if len(candidates) == 1 {
+		g, err = a.assembleGraph(candidates[0], "")
+	} else {
+		g, err = a.assembleGraph(projectSlug, "")
+	}
 	if err != nil {
 		return graph.GraphHealth{}, err
 	}
 	health := graph.AssessHealth(g, time.Now())
 	if dataDir, dirErr := db.AppDataDir(); dirErr == nil {
-		if ex, exErr := graph.LoadExclusions(dataDir, projectSlug); exErr == nil {
-			health.GovernanceActions = len(ex.ReviewHistory)
-			health.CanUndo = ex.UndoableReviews() > 0
+		for _, slug := range candidates {
+			if ex, exErr := graph.LoadExclusions(dataDir, slug); exErr == nil {
+				health.GovernanceActions += len(ex.ReviewHistory)
+				if ex.UndoableReviews() > 0 {
+					health.CanUndo = true
+				}
+			}
 		}
 	}
 	return health, nil
@@ -410,6 +513,30 @@ func (a *App) IndexProject(projectSlug string) error {
 		return err
 	}
 
+	// Bound the window: transcripts older than the configured horizon describe
+	// code that has since moved on, and keeping them makes the catalog grow
+	// without getting more useful. Skipped, not deleted — a re-run with a wider
+	// window still picks them up.
+	if days := a.cfg.MaxAgeDays(); days > 0 {
+		cutoff := time.Now().AddDate(0, 0, -days).UnixMilli()
+		kept := plan.Sources[:0]
+		skippedOld := 0
+		for _, src := range plan.Sources {
+			if src.Meta.UpdatedAt > 0 && src.Meta.UpdatedAt < cutoff {
+				skippedOld++
+				continue
+			}
+			kept = append(kept, src)
+		}
+		plan.Sources = kept
+		if skippedOld > 0 {
+			a.emit(EventGraphProgress, map[string]any{
+				"projectSlug": projectSlug, "phase": "window",
+				"skippedOld": skippedOld, "days": days,
+			})
+		}
+	}
+
 	// Build an embedder per the user's mode. Keyword mode always returns the
 	// local lexical embedder. Semantic mode returns the cloud model, or an error
 	// if it's unavailable — in which case we do NOT fall back: indexing proceeds
@@ -434,6 +561,29 @@ func (a *App) IndexProject(projectSlug string) error {
 
 	newly := 0
 	total := len(plan.Sources)
+	// Failures used to be swallowed (`continue`), so a run where every session
+	// 404'd reported success and the UI showed an unchanged, apparently broken
+	// catalog. Track them and surface the first cause.
+	failed := 0
+	firstErr := ""
+	var mu sync.Mutex
+
+	// Each session costs one LLM round-trip and they are independent, so a few
+	// run at once. Serially, a project with hundreds of sessions took hours and
+	// was effectively impossible to keep up to date.
+	const maxParallel = 4
+	sem := make(chan struct{}, maxParallel)
+	var wg sync.WaitGroup
+
+	fail := func(reason string) {
+		mu.Lock()
+		failed++
+		if firstErr == "" {
+			firstErr = reason
+		}
+		mu.Unlock()
+	}
+
 	for i, src := range plan.Sources {
 		s := src.Meta
 		if _, ok := graph.LoadCache(dataDir, plan.Namespace, s.ID, s.UpdatedAt); ok {
@@ -443,66 +593,109 @@ func (a *App) IndexProject(projectSlug string) error {
 			"projectSlug": projectSlug, "current": i + 1, "total": total,
 			"title": s.Title, "phase": src.Agent,
 		})
-		msgs, readErr := src.read()
-		if readErr != nil || len(msgs) == 0 {
-			continue
-		}
 
-		// Incremental back-fill: if a same-mtime cache already exists but is only
-		// stale due to a schema bump, reuse its distilled entities/relations (skip
-		// the LLM) and just add the new chunk field. This makes upgrades cost only
-		// embedding calls, never re-distillation.
-		if prev, ok := graph.LoadCacheRaw(dataDir, plan.Namespace, s.ID); ok && prev.Mtime == s.UpdatedAt {
-			graph.StampEntityAssertions(prev.Entities, s.ID, time.Now().UnixMilli(), graph.RelationAsserted, 0.85)
-			stampRelationMetadata(prev.Relations, s.ID)
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(i int, src indexSource) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			s := src.Meta
+
+			msgs, readErr := src.read()
+			if readErr != nil || len(msgs) == 0 {
+				if readErr != nil {
+					fail(fmt.Sprintf("读取会话失败（%s）: %v", src.Agent, readErr))
+				} else {
+					fail(fmt.Sprintf("%s 会话没有可提炼的对话内容", src.Agent))
+				}
+				return
+			}
+
+			// Incremental back-fill: if a same-mtime cache already exists but is only
+			// stale due to a schema bump, reuse its distilled entities/relations (skip
+			// the LLM) and just add the new chunk field. This makes upgrades cost only
+			// embedding calls, never re-distillation.
+			if prev, ok := graph.LoadCacheRaw(dataDir, plan.Namespace, s.ID); ok && prev.Mtime == s.UpdatedAt {
+				graph.StampEntityAssertions(prev.Entities, s.ID, s.UpdatedAt, graph.RelationAsserted, 0.85)
+				stampRelationMetadata(prev.Relations, s.ID)
+				chunks := chunkTranscript(s.ID, msgs)
+				a.embedChunks(emb, chunks)
+				_ = graph.SaveCache(dataDir, plan.Namespace, &graph.SessionCache{
+					SessionID: s.ID, Mtime: s.UpdatedAt, Schema: graph.CacheSchema,
+					Entities: prev.Entities, Relations: prev.Relations, Chunks: chunks,
+				})
+				mu.Lock()
+				newly++
+				mu.Unlock()
+				return
+			}
+
+			ex := extracted{}
+			transcript := buildTranscript(msgs)
+			if strings.TrimSpace(transcript) != "" {
+				var exErr error
+				ex, exErr = a.extractFromText(a.ctx, prov, transcript)
+				if exErr != nil {
+					fail(exErr.Error())
+					a.emit(EventGraphProgress, map[string]any{
+						"projectSlug": projectSlug, "current": i + 1, "total": total,
+						"title": s.Title, "error": exErr.Error(), "phase": src.Agent,
+					})
+					return // skip; will retry next index run
+				}
+			}
+
+			// Stamp provenance: every observation distilled from this session is
+			// sourced to this session id, so merged knowledge stays traceable.
+			stampObsSourcesAt(ex.Entities, s.ID, s.UpdatedAt)
+			stampRelationMetadata(ex.Relations, s.ID)
+
+			// Split by scope: project-specific knowledge stays in this directory's
+			// namespace, while conventions that hold everywhere go to the reserved
+			// _global_ namespace. Keeping them in one pile is what lets an assistant
+			// recite project A's facts as if they applied to project B.
+			projEx, globEx := splitByScope(ex)
+			stampObsSourcesAt(projEx.Entities, s.ID, s.UpdatedAt)
+			stampObsSourcesAt(globEx.Entities, s.ID, s.UpdatedAt)
+
+			// Raw-context channel: chunk the FULL session (not the bounded transcript)
+			// and embed the blocks so they are semantically recallable alongside
+			// entities.
 			chunks := chunkTranscript(s.ID, msgs)
-			a.embedChunks(emb, chunks)
+			if emb != nil {
+				a.embedEntities(emb, projEx.Entities)
+				a.embedEntities(emb, globEx.Entities)
+				a.embedChunks(emb, chunks)
+			}
+			if len(globEx.Entities) > 0 {
+				_ = graph.SaveCache(dataDir, GlobalNamespace, &graph.SessionCache{
+					SessionID: s.ID + globalCacheSuffix, Mtime: s.UpdatedAt, Schema: graph.CacheSchema,
+					Entities: globEx.Entities, Relations: globEx.Relations,
+				})
+			}
 			_ = graph.SaveCache(dataDir, plan.Namespace, &graph.SessionCache{
 				SessionID: s.ID, Mtime: s.UpdatedAt, Schema: graph.CacheSchema,
-				Entities: prev.Entities, Relations: prev.Relations, Chunks: chunks,
+				Entities: projEx.Entities, Relations: projEx.Relations, Chunks: chunks,
 			})
+			mu.Lock()
 			newly++
-			continue
-		}
-
-		ex := extracted{}
-		transcript := buildTranscript(msgs)
-		if strings.TrimSpace(transcript) != "" {
-			ex, err = a.extractFromText(a.ctx, prov, transcript)
-			if err != nil {
-				a.emit(EventGraphProgress, map[string]any{
-					"projectSlug": projectSlug, "current": i + 1, "total": total,
-					"title": s.Title, "error": err.Error(), "phase": src.Agent,
-				})
-				continue // skip; will retry next index run
-			}
-		}
-		// Stamp provenance: every observation distilled from this session is
-		// sourced to this session id, so merged knowledge stays traceable.
-		stampObsSources(ex.Entities, s.ID)
-		stampRelationMetadata(ex.Relations, s.ID)
-		// Raw-context channel: chunk the FULL session (not the bounded transcript)
-		// and embed the blocks so they are semantically recallable alongside
-		// entities.
-		chunks := chunkTranscript(s.ID, msgs)
-		if emb != nil {
-			a.embedEntities(emb, ex.Entities)
-			a.embedChunks(emb, chunks)
-		}
-		_ = graph.SaveCache(dataDir, plan.Namespace, &graph.SessionCache{
-			SessionID: s.ID, Mtime: s.UpdatedAt, Schema: graph.CacheSchema,
-			Entities: ex.Entities, Relations: ex.Relations, Chunks: chunks,
-		})
-		newly++
+			mu.Unlock()
+		}(i, src)
 	}
+	wg.Wait()
 
 	a.emit(EventGraphDone, map[string]any{
 		"projectSlug": projectSlug, "phase": "index",
 		"namespace": plan.Namespace,
-		"processed": newly, "total": total,
+		"processed": newly, "total": total, "failed": failed,
 		"claude": plan.Claude, "codex": plan.Codex, "buddy": plan.Buddy,
 		"unmanaged": plan.Unmanaged,
 	})
+	// Nothing distilled but something tried: that is a failure the user must
+	// see, not a silent no-op.
+	if newly == 0 && failed > 0 {
+		return fmt.Errorf("提炼失败（%d 个会话未成功）。首个原因：%s", failed, firstErr)
+	}
 	return nil
 }
 
@@ -510,6 +703,15 @@ func (a *App) IndexProject(projectSlug string) error {
 // marking every fact as originating from sessionID. Best-effort provenance for
 // later traceability; the array stays aligned one-to-one with Observations.
 func stampObsSources(entities []graph.Entity, sessionID string) {
+	stampObsSourcesAt(entities, sessionID, time.Now().UnixMilli())
+}
+
+// stampObsSourcesAt is the same, but records when the fact was actually true
+// (the session's own timestamp) instead of when distillation ran. That is what
+// makes knowledge ageable: a fact learned in September keeps its September
+// date, so environment details that have since been recycled can be pruned
+// rather than silently recited forever.
+func stampObsSourcesAt(entities []graph.Entity, sessionID string, observedAt int64) {
 	for i := range entities {
 		src := make([]string, len(entities[i].Observations))
 		for j := range src {
@@ -517,7 +719,7 @@ func stampObsSources(entities []graph.Entity, sessionID string) {
 		}
 		entities[i].ObsSources = src
 	}
-	graph.StampEntityAssertions(entities, sessionID, time.Now().UnixMilli(), graph.RelationAsserted, 0.85)
+	graph.StampEntityAssertions(entities, sessionID, observedAt, graph.RelationAsserted, 0.85)
 }
 
 // stampRelationMetadata makes relationship provenance as auditable as entity

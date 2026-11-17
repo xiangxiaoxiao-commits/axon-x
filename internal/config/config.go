@@ -39,9 +39,21 @@ type Config struct {
 	// Empty is treated as "keyword" (safe, offline default).
 	EmbeddingMode string `json:"embeddingMode"`
 	// GraphModel is the model used for knowledge distillation (IndexProject,
-	// GenerateArticle, code enrichment). Empty falls back to DefaultModel.
+	// GenerateArticle, code enrichment). Empty falls back to the package default,
+	// never to DefaultModel (that one belongs to the chat provider).
 	GraphModel string `json:"graphModel,omitempty"`
+	// GraphMaxAgeDays bounds how far back distillation reads. Sessions older
+	// than this are skipped: stale transcripts describe code that no longer
+	// exists and dilute the knowledge base with facts nobody can act on.
+	// 0 means "use the default window".
+	GraphMaxAgeDays int `json:"graphMaxAgeDays,omitempty"`
 }
+
+// GraphMaxAgeDaysDefault is the distillation window applied when the user has
+// not chosen one. 30 days matches how work actually moves: older transcripts
+// describe code that has already changed, and distilling them mostly adds facts
+// nobody can act on.
+const GraphMaxAgeDaysDefault = 30
 
 // Embedding recall modes for Config.EmbeddingMode.
 const (
@@ -126,6 +138,14 @@ func (m *Manager) SetDefaults(providerName, modelID string) error {
 	return m.saveLocked()
 }
 
+// SetGraphModel updates the knowledge distillation model and persists.
+func (m *Manager) SetGraphModel(modelID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.cfg.GraphModel = modelID
+	return m.saveLocked()
+}
+
 // SetEmbedding updates the embedding provider/model and persists.
 func (m *Manager) SetEmbedding(providerName, model string) error {
 	m.mu.Lock()
@@ -135,15 +155,29 @@ func (m *Manager) SetEmbedding(providerName, model string) error {
 	return m.saveLocked()
 }
 
-// GraphModel returns the model to use for knowledge distillation. Falls back
-// to DefaultModel when GraphModel is unset.
+// GraphModel returns the model explicitly chosen for knowledge distillation, or
+// "" when the user never picked one.
+//
+// It deliberately does NOT fall back to DefaultModel: that value belongs to the
+// chat/webview provider and is frequently a model the distillation gateway does
+// not serve ("gpt-5" on a gateway that only exposes gpt-5.6-*), which turned
+// every distillation call into a 404. graphbuild applies its own dedicated
+// default instead.
 func (m *Manager) GraphModel() string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	if m.cfg.GraphModel != "" {
-		return m.cfg.GraphModel
+	return m.cfg.GraphModel
+}
+
+// MaxAgeDays returns the distillation window in days, falling back to the
+// package default when unset.
+func (m *Manager) MaxAgeDays() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.cfg.GraphMaxAgeDays > 0 {
+		return m.cfg.GraphMaxAgeDays
 	}
-	return m.cfg.DefaultModel
+	return GraphMaxAgeDaysDefault
 }
 
 // SetEmbeddingMode persists the recall backend selection (semantic|keyword).

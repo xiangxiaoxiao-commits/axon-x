@@ -133,6 +133,14 @@ func (a *App) startup(ctx context.Context) {
 	log.Printf("axon: ready at %s", dataDir)
 }
 
+// domReady runs once the webview is live. It forces the window on-screen: a
+// saved frame from a disconnected display can leave the window above the menu
+// bar, and nothing else in the app would tell the user why it looks "broken".
+func (a *App) domReady(ctx context.Context) {
+	wruntime.WindowShow(ctx)
+	wruntime.WindowCenter(ctx)
+}
+
 // --- Conversation API ---
 
 // NewConversation creates an empty conversation and returns it.
@@ -201,9 +209,33 @@ func (a *App) SaveProvider(p provider.Config, apiKey string) error {
 	return a.cfg.UpsertProvider(p)
 }
 
+// DefaultsConfig is the persisted default provider/model + knowledge distillation model.
+type DefaultsConfig struct {
+	DefaultProvider string `json:"defaultProvider"`
+	DefaultModel    string `json:"defaultModel"`
+	GraphModel      string `json:"graphModel"`
+}
+
+// GetDefaults returns the configured default provider, default model, and graph
+// distillation model so the settings UI can prefill them.
+func (a *App) GetDefaults() DefaultsConfig {
+	cfg := a.cfg.Get()
+	return DefaultsConfig{
+		DefaultProvider: cfg.DefaultProvider,
+		DefaultModel:    cfg.DefaultModel,
+		GraphModel:      cfg.GraphModel,
+	}
+}
+
 // SetDefaults sets the default provider and model.
 func (a *App) SetDefaults(providerName, modelID string) error {
 	return a.cfg.SetDefaults(providerName, modelID)
+}
+
+// SetGraphModel sets the model used for knowledge distillation (IndexProject /
+// GenerateArticle). Pass empty string to follow DefaultModel.
+func (a *App) SetGraphModel(modelID string) error {
+	return a.cfg.SetGraphModel(strings.TrimSpace(modelID))
 }
 
 // EmbeddingConfig is the current semantic-memory embedding selection for the UI.

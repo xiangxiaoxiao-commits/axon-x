@@ -29,6 +29,15 @@ type Entity struct {
 	// Assertions is the governed form of Observations. Observations/ObsSources
 	// remain as a compatibility projection for old caches and MCP clients.
 	Assertions []Assertion `json:"assertions,omitempty"`
+	// Scope separates knowledge that only holds inside one project directory
+	// ("project", the default) from conventions that apply everywhere
+	// ("global": tooling habits, cross-project lessons, personal preferences).
+	//
+	// Mixing the two is what makes an assistant hallucinate: a fact learned in
+	// project A gets recited as if it were true in project B. Global entities
+	// are filed under the reserved _global_ namespace instead of a project, and
+	// surfaces that read knowledge must keep the two apart.
+	Scope string `json:"scope,omitempty"`
 	// Embedding is the dense vector of name+observations, used for semantic
 	// (HybridRAG) retrieval. Optional: empty when no embedder was available at
 	// index time, in which case matching falls back to substring lookup.
