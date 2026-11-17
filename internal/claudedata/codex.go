@@ -346,6 +346,9 @@ func namespaceFromChildren(cwd string) string {
 	if home, err := os.UserHomeDir(); err == nil && home != "" && filepath.Clean(cwd) == filepath.Clean(home) {
 		return ""
 	}
+	if isProtectedUserDir(cwd) {
+		return ""
+	}
 
 	entries, err := os.ReadDir(cwd)
 	if err != nil {
@@ -390,6 +393,13 @@ func resolveProjectFromCwd(cwd string) string {
 		return ""
 	}
 	for dir := cwd; ; {
+		// Reading inside macOS's protected folders raises a TCC consent dialog
+		// and — while it is unanswered — blocks the calling goroutine. Session
+		// directories under ~/Documents or ~/Desktop are scratch workspaces, not
+		// managed projects, so stop climbing before touching them.
+		if isProtectedUserDir(dir) {
+			return ""
+		}
 		if ns := readMark(dir); ns != "" {
 			return ns
 		}
@@ -400,6 +410,25 @@ func resolveProjectFromCwd(cwd string) string {
 		dir = parent
 	}
 	return ""
+}
+
+// isProtectedUserDir reports whether dir sits inside a macOS privacy-protected
+// folder (Documents, Desktop, Downloads, …), which must not be probed.
+func isProtectedUserDir(dir string) bool {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return false
+	}
+	rel, err := filepath.Rel(home, dir)
+	if err != nil || rel == "." || strings.HasPrefix(rel, "..") {
+		return false
+	}
+	first := strings.Split(rel, string(filepath.Separator))[0]
+	switch first {
+	case "Documents", "Desktop", "Downloads", "Library", "Movies", "Music", "Pictures", "Applications":
+		return true
+	}
+	return false
 }
 
 // readMark returns the first non-empty line of dir/.axon-project, or "".

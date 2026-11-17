@@ -67,22 +67,15 @@ func ReadSessionFile(path string) ([]SessionMessage, error) {
 	sc.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
 	out := make([]SessionMessage, 0)
 	for sc.Scan() {
-		var ev rawEvent
-		if json.Unmarshal(sc.Bytes(), &ev) != nil {
+		// One parser for all three on-disk shapes (Claude Code, Codex rollouts,
+		// WorkBuddy/CodeBuddy). Reading only the Claude shape silently produced
+		// zero messages for the other two, which made "提炼" finish with nothing
+		// indexed while reporting success.
+		role, text, ok := parseTranscriptLine(sc.Bytes())
+		if !ok {
 			continue
 		}
-		if ev.Type != "user" && ev.Type != "assistant" {
-			continue
-		}
-		var im innerMessage
-		if json.Unmarshal(ev.Message, &im) != nil {
-			continue
-		}
-		text := extractText(im.Content)
-		if strings.TrimSpace(text) == "" {
-			continue
-		}
-		out = append(out, SessionMessage{Role: ev.Type, Text: text})
+		out = append(out, SessionMessage{Role: role, Text: text})
 	}
 	if err := sc.Err(); err != nil {
 		return nil, fmt.Errorf("scan session: %w", err)
@@ -267,7 +260,9 @@ func extractText(raw json.RawMessage) string {
 	if json.Unmarshal(raw, &blocks) == nil {
 		var b strings.Builder
 		for _, blk := range blocks {
-			if blk.Type == "text" && blk.Text != "" {
+			// Claude uses "text"; WorkBuddy/CodeBuddy use "input_text" and
+			// "output_text" for the same thing.
+			if (blk.Type == "text" || blk.Type == "input_text" || blk.Type == "output_text") && blk.Text != "" {
 				if b.Len() > 0 {
 					b.WriteString("\n")
 				}
