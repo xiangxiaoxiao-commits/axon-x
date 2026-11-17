@@ -48,8 +48,9 @@ func (h *toolHandler) list() map[string]interface{} {
 				Name: "search_knowledge",
 				Description: "查询项目沉淀的业务知识图谱：给一段自然语言 query，返回相关的实体+事实(结构)与原文片段(内容)，带来源标注。" +
 					"用于回忆设计决策、踩过的坑、约束、接口约定等。" +
-					"project 省略时默认搜索所有命名空间，确保信息完整不遗漏。" +
-					"涉及跨服务交互时可传逗号分隔的多命名空间（如 \"gaia,gaiac\"）同时搜索；传 \"*\" 搜全部。",
+					"project 省略时默认只查「当前项目 + _global_ 通用知识」——不同项目的知识不混在一起，避免把 A 项目的事实当成 B 项目的。" +
+					"确实要看别的项目时才显式传 project（逗号分隔多命名空间，如 \"gaia,gaiac\"；传 \"*\" 才搜全部）。" +
+					"结果中「跨项目通用知识」段落只代表约定/习惯，不是本仓库的实现事实。",
 				InputSchema: map[string]interface{}{
 					"type": "object",
 					"properties": map[string]interface{}{
@@ -322,7 +323,11 @@ func (h *toolHandler) searchKnowledge(raw json.RawMessage) (*toolResult, error) 
 		}
 		anyHit = true
 		titles := sessionTitleMap(slug)
-		fmt.Fprintf(&b, "# 项目 `%s` 与「%s」相关的业务知识\n", slug, a.Query)
+		if slug == globalNamespace {
+			b.WriteString("# 跨项目通用知识（非本项目事实，仅供参考约定与习惯，勿当作本仓库的实现细节）\n")
+		} else {
+			fmt.Fprintf(&b, "# 项目 `%s` 与「%s」相关的业务知识\n", slug, a.Query)
+		}
 		writeStructure(&b, g, res.Hit, res.Derived, titles)
 		writeChunks(&b, res.Chunks, titles)
 		b.WriteString("\n---\n\n")
@@ -350,14 +355,28 @@ func (h *toolHandler) searchKnowledge(raw json.RawMessage) (*toolResult, error) 
 //   - "*": all namespaces
 //   - comma-separated: each named namespace
 //   - single string: just that namespace
+// globalNamespace is the reserved namespace for knowledge that holds in any
+// project (tooling conventions, general lessons, personal preferences). It is
+// kept apart from project namespaces everywhere it is read.
+const globalNamespace = "_global_"
+
 func (h *toolHandler) resolveSearchSlugs(project string) []string {
 	project = strings.TrimSpace(project)
 	if project == "" {
-		// If a scope is active, use it; otherwise search all.
+		// If a scope is active, use it; otherwise stay inside the current
+		// project plus _global_.
 		if len(h.activeScope) > 0 {
 			return h.expandToDomains(h.activeScope)
 		}
-		return h.namespaceDirs()
+		// Searching every namespace by default was the direct cause of
+		// cross-project hallucination: project A's facts came back while working
+		// in project B, with nothing marking them as foreign.
+		base := h.namespaceDirs()
+		cur, src := h.resolveSlug("")
+		if src != slugUnknown && cur != "" {
+			base = []string{cur}
+		}
+		return appendGlobal(base)
 	}
 	if project == "*" {
 		return h.namespaceDirs()
@@ -370,6 +389,18 @@ func (h *toolHandler) resolveSearchSlugs(project string) []string {
 		}
 	}
 	return h.expandToDomains(out)
+}
+
+// appendGlobal adds the reserved _global_ namespace to a project selection so
+// cross-project conventions are still reachable — but always appended last and
+// rendered under its own heading, never mixed into the project's own facts.
+func appendGlobal(slugs []string) []string {
+	for _, s := range slugs {
+		if s == globalNamespace {
+			return slugs
+		}
+	}
+	return append(slugs, globalNamespace)
 }
 
 // expandToDomains widens an explicit namespace selection to the knowledge
