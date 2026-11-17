@@ -1,5 +1,7 @@
 # Wails / build artifacts
 build/bin
+# Packaged standalone binaries (orch-*, 10MB each, never commit)
+/dist/
 # Compiled binaries (produced by build, never commit)
 /axon
 /axon-mcp
@@ -34,3 +36,6 @@ frontend/package.json.md5
 .vscode/*
 !.vscode/extensions.json
 axon.exe
+
+# WorkBuddy session data (local assistant state, never commit)
+.workbuddy/
