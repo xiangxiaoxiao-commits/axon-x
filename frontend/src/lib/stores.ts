@@ -70,7 +70,11 @@ export function projectOptions(list: claudedata.Project[]): ProjectOption[] {
 // --- Named namespaces (new) -------------------------------------------
 // All available knowledge-graph namespaces. Populated on startup from
 // ListNamespaces (scans graphcache/).
-export type NamespaceInfo = { name: string; entities: number };
+export type NamespaceInfo = { name: string; entities: number; path?: string; sessions?: number };
+
+// Set when the namespace listing fails, so the UI can say why the picker is
+// empty instead of silently looking like the knowledge disappeared.
+export const nsLoadError = writable<string>("");
 export const namespaces = writable<NamespaceInfo[]>([]);
 
 // Which namespaces are currently selected for graph viewing (multi-select).
@@ -137,22 +141,29 @@ export function clusterFor(slug: string, list: ClusterInfo[]): ClusterInfo | und
   return list.find((c) => c.slugs.includes(slug));
 }
 
-// Load namespaces from the backend and default-select the first one.
+// Load namespaces from the backend and default-select the best one with entities.
 export async function loadNamespaces(): Promise<void> {
   try {
     const list: NamespaceInfo[] = await ListNamespaces();
     namespaces.set(list);
+    nsLoadError.set("");
     const current = get(selectedNamespaces);
-    if (current.length === 0 && !get(currentProject) && list.length > 0) {
-      // Default: select the first non-global namespace, or just the first.
-      const first = list.find((ns) => ns.name !== "_global_") || list[0];
-      selectedNamespaces.set([first.name]);
-      // Keep project selection independent from graph namespace selection.
-      // The app may already have selected a Claude project; in that case the
-      // project picker must not be overwritten by the namespace bootstrap.
+    if (current.length === 0 && list.length > 0) {
+      // Open the knowledge base that actually holds the most knowledge. Keying
+      // this off currentProject used to open whichever Claude directory happened
+      // to be newest, which is rarely the project being worked on.
+      const nonGlobal = [...list]
+        .filter((ns) => ns.name !== "_global_" && ns.entities > 0)
+        .sort((a, b) => b.entities - a.entities);
+      const chosen = nonGlobal[0];
+      if (chosen) {
+        selectedNamespaces.set([chosen.name]);
+        currentProject.set(chosen.name);
+      }
     }
   } catch (e) {
     console.error("load namespaces", e);
+    nsLoadError.set(String(e));
   }
 }
 
@@ -192,3 +203,44 @@ export const indexRequest = writable<number>(0);
 export function requestIndex(): void {
   indexRequest.update((n) => n + 1);
 }
+
+// --- Cross-view deep-link signals (Graph <-> Sessions / Cmd+K) ------------
+// Jump from a knowledge entity's source session chip (or SearchView / Cmd+K)
+// directly to that session inside SessionsView and expand its knowledge panel.
+export type SessionJumpRequest = {
+  sessionId: string;
+  projectKey?: string;
+  expandKnowledge?: boolean;
+};
+export const sessionJumpRequest = writable<SessionJumpRequest | null>(null);
+
+export function jumpToSession(sessionId: string, projectKey?: string, expandKnowledge = true): void {
+  if (!sessionId) return;
+  if (projectKey) {
+    currentProject.set(projectKey);
+  }
+  sessionJumpRequest.set({ sessionId, projectKey, expandKnowledge });
+  activeView.set("sessions");
+}
+
+// Jump from Cmd+K (or another view) to a specific entity inside GraphView.
+export type EntityJumpRequest = {
+  name: string;
+  namespace?: string;
+};
+export const entityJumpRequest = writable<EntityJumpRequest | null>(null);
+
+export function jumpToEntity(name: string, namespace?: string): void {
+  if (!name) return;
+  if (namespace) {
+    selectedNamespaces.set([namespace]);
+    currentProject.set(namespace);
+  }
+  entityJumpRequest.set({ name, namespace });
+  activeView.set("graph");
+}
+
+// Sidebar collapse state & global Cmd+K command palette visibility.
+export const sidebarCollapsed = writable<boolean>(false);
+export const commandPaletteOpen = writable<boolean>(false);
+

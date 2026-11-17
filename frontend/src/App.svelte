@@ -1,113 +1,311 @@
 <script lang="ts">
-  import { onMount } from "svelte";
-  import { activeView, currentProject, projects, loadProjects, namespaces, selectedNamespaces, loadNamespaces, clusters, clusterFor, loadClusters, projectOptions, type ProjectOption, type View } from "./lib/stores";
+  import { onMount, onDestroy } from "svelte";
+  import {
+    activeView,
+    currentProject,
+    projects,
+    loadProjects,
+    namespaces,
+    selectedNamespaces,
+    effectiveNamespaces,
+    loadNamespaces,
+    clusters,
+    clusterFor,
+    loadClusters,
+    projectOptions,
+    nsLoadError,
+    sidebarCollapsed,
+    commandPaletteOpen,
+    type View,
+  } from "./lib/stores";
   import GraphView from "./views/GraphView.svelte";
   import SettingsView from "./views/SettingsView.svelte";
   import AboutView from "./views/AboutView.svelte";
   import SessionsView from "./views/SessionsView.svelte";
   import TerminalView from "./views/TerminalView.svelte";
+  import CommandPalette from "./views/CommandPalette.svelte";
 
-  // Navigation is a plain sidebar (VSCode/Linear style): a narrow vertical rail
-  // of icon + label entries. The product is an agent-context enhancer: build a
-  // per-project knowledge graph and feed it to Claude Code over MCP. Kept
-  // intentionally focused — browse/curate business knowledge, and configure
-  // providers + MCP one-click install.
-  const NAV: { view: View; label: string; icon: string }[] = [
-    { view: "graph", label: "知识", icon: "⊹" },
-    { view: "sessions", label: "会话", icon: "⇆" },
-    { view: "terminal", label: "终端", icon: "❯" },
-    { view: "settings", label: "设置", icon: "⚙" },
+  const NAV: { view: View; label: string; icon: string; shortcut: string }[] = [
+    { view: "graph", label: "知识库", icon: "✦", shortcut: "⌘1" },
+    { view: "sessions", label: "会话", icon: "⇆", shortcut: "⌘2" },
+    { view: "terminal", label: "终端", icon: "❯", shortcut: "⌘3" },
+    { view: "settings", label: "设置", icon: "⚙", shortcut: "⌘4" },
   ];
 
   let ready = false;
   let showAbout = false;
+  let pickerFilter = "";
+  // Expanded by default: indexable-but-empty projects are the only actionable
+  // thing in the sidebar when the knowledge base is fresh.
+  let showUnindexedProjects = true;
+
   onMount(async () => {
     ready = true;
-    await loadProjects();
-    await loadNamespaces();
-    // Group namespaces by what they contain, so the picker can show which ones
-    // are really the same body of knowledge.
-    await loadClusters();
+    window.addEventListener("keydown", onGlobalKeydown);
+    try {
+      await loadProjects();
+      await loadNamespaces();
+      await loadClusters();
+    } catch (e) {
+      // Surface bootstrap failures instead of rendering an empty sidebar that
+      // looks like "there is no knowledge".
+      document.title = "Axon-x — 加载失败: " + String(e);
+    }
   });
+
+  onDestroy(() => {
+    window.removeEventListener("keydown", onGlobalKeydown);
+  });
+
+  function onGlobalKeydown(e: KeyboardEvent) {
+    const mod = e.metaKey || e.ctrlKey;
+    if (!mod) return;
+    const k = e.key.toLowerCase();
+    if (k === "k") {
+      e.preventDefault();
+      $commandPaletteOpen = !$commandPaletteOpen;
+      return;
+    }
+    if (k === "b") {
+      e.preventDefault();
+      $sidebarCollapsed = !$sidebarCollapsed;
+      return;
+    }
+    if (k >= "1" && k <= "4") {
+      const idx = parseInt(k, 10) - 1;
+      if (NAV[idx]) {
+        e.preventDefault();
+        $activeView = NAV[idx].view;
+      }
+    }
+  }
+
   function refreshProviders() {}
 
-  function go(v: View) { $activeView = v; }
+  function go(v: View) {
+    $activeView = v;
+  }
 
-  // One option per namespace (or per unmanaged Claude directory). A namespace is
-  // the unit both the graph and the indexer work in, so the picker must not offer
-  // the same namespace once per repository directory.
+  // Unified workspace items: combine knowledge namespaces with Claude Code projects
+  type UnifiedItem = {
+    key: string;
+    entities: number;
+    sessions: number;
+    hasGraph: boolean;
+    extraMerged: string[];
+    mergedTotalEntities: number;
+    label: string;
+  };
+
   $: options = projectOptions($projects);
+  $: unifiedItems = buildUnifiedItems($namespaces, options, $clusters, pickerFilter);
+  $: graphItems = unifiedItems.filter((i) => i.hasGraph);
+  $: unindexedItems = unifiedItems.filter((i) => !i.hasGraph);
 
-  function toggleNs(name: string) {
-    // Selecting one namespace brings its whole domain: namespaces holding the
-    // same entities are merged into one graph automatically (see
-    // effectiveNamespaces), so the user never has to know that a project was
-    // filed under more than one name.
-    selectedNamespaces.set([name]);
-    currentProject.set(name);
+  // A reset knowledge base has no loaded projects at all, so the one actionable
+  // group would be collapsed behind a chevron and the app would look empty.
+  let autoExpandedUnindexed = false;
+  $: if (!autoExpandedUnindexed && $namespaces.length > 0 && graphItems.length === 0) {
+    autoExpandedUnindexed = true;
+    showUnindexedProjects = true;
   }
 
-  // How many namespaces the graph build will actually read for a selection.
-  function mergedCount(name: string): number {
-    return clusterFor(name, $clusters)?.slugs.length ?? 1;
+  function buildUnifiedItems(
+    nsList: typeof $namespaces,
+    projOpts: typeof options,
+    clusterList: typeof $clusters,
+    filterText: string,
+  ): UnifiedItem[] {
+    const q = filterText.trim().toLowerCase();
+    const map = new Map<string, UnifiedItem>();
+
+    for (const ns of nsList) {
+      // Cross-project knowledge is not a project: it is shown inside the
+      // knowledge view as its own section, never as a selectable workspace.
+      if (ns.name === "_global_") continue;
+      const cl = clusterFor(ns.name, clusterList);
+      const extra = (cl?.slugs ?? [ns.name]).filter((s) => s !== ns.name);
+      map.set(ns.name, {
+        key: ns.name,
+        entities: ns.entities,
+        sessions: ns.sessions ?? 0,
+        // A namespace with zero cards is an indexable project that has not been
+        // distilled yet: it belongs in the collapsed "no knowledge yet" group,
+        // not in the main list pretending to be a loaded knowledge base.
+        hasGraph: ns.entities > 0,
+        extraMerged: extra,
+        mergedTotalEntities: cl?.entities ?? ns.entities,
+        // Knowledge is scoped by directory, so the directory is what the picker
+        // shows; the internal namespace name stays as the key.
+        label: shortPath(ns.path) || ns.name,
+      });
+    }
+
+    for (const o of projOpts) {
+      const existing = map.get(o.key);
+      if (existing) {
+        // Keep the directory label already set above; the Claude option's
+        // "namespace · path" form is noisier and hides the directory scoping.
+        existing.sessions += o.sessions;
+      } else {
+        map.set(o.key, {
+          key: o.key,
+          entities: 0,
+          sessions: o.sessions,
+          hasGraph: false,
+          extraMerged: [],
+          mergedTotalEntities: 0,
+          label: shortPath(o.label.split(" · ").pop()) || o.label,
+        });
+      }
+    }
+
+    return [...map.values()].filter((it) => {
+      if (!q) return true;
+      return it.key.toLowerCase().includes(q) || it.label.toLowerCase().includes(q);
+    });
   }
 
-  function mergedNames(name: string): string[] {
-    const cl = clusterFor(name, $clusters);
-    return (cl?.slugs ?? [name]).filter((s) => s !== name);
+  // Only the last two path segments; the full path stays in the tooltip.
+  function shortPath(p?: string): string {
+    if (!p) return "";
+    const parts = p.replace(/\/+$/, "").split("/").filter(Boolean);
+    if (parts.length <= 2) return p;
+    return "…/" + parts.slice(-2).join("/");
   }
 
-  function chooseProject(key: string) {
-    currentProject.set(key);
-    // Align the graph with the picker: when the chosen key is a namespace the
-    // graph view knows about, select it, so 「建索引」 and the graph describe the
-    // same body of work. An unmanaged directory keeps the graph empty-selected.
-    if ($namespaces.some((ns) => ns.name === key)) selectedNamespaces.set([key]);
-    else selectedNamespaces.set([]);
+  // Primary click: switch both currentProject & selectedNamespaces to this workspace
+  function selectPrimary(item: UnifiedItem) {
+    currentProject.set(item.key);
+    if (item.hasGraph) {
+      selectedNamespaces.set([item.key]);
+    } else {
+      selectedNamespaces.set([]);
+    }
   }
 </script>
 
 <div class="app">
   {#if ready}
     <div class="shell">
-      <nav class="sidebar">
-        <button class="brand" on:click={() => (showAbout = true)} title="查看功能与原理">axon<span class="brand-hint">ⓘ</span></button>
+      <nav class="sidebar" class:collapsed={$sidebarCollapsed}>
+        <div class="brand-row">
+          {#if !$sidebarCollapsed}
+            <button class="brand" on:click={() => (showAbout = true)} title="查看功能与原理">
+              axon<span class="brand-hint">ⓘ</span>
+            </button>
+          {/if}
+          <button
+            class="collapse-btn"
+            on:click={() => ($sidebarCollapsed = !$sidebarCollapsed)}
+            title={$sidebarCollapsed ? "展开侧边栏 (⌘B)" : "折叠侧边栏 (⌘B)"}
+          >
+            {$sidebarCollapsed ? "»" : "«"}
+          </button>
+        </div>
+
+        {#if !$sidebarCollapsed}
+          <button class="cmdk-trigger" on:click={() => ($commandPaletteOpen = true)} title="全局检索实体、会话与快捷命令 (⌘K)">
+            <span class="cmdk-ic">⌕</span>
+            <span class="cmdk-tx">快速检索 / 命令…</span>
+            <kbd class="cmdk-kbd">⌘K</kbd>
+          </button>
+        {:else}
+          <button class="nav-item collapsed-cmdk" on:click={() => ($commandPaletteOpen = true)} title="快速检索 / 命令 (⌘K)">
+            <span class="ic">⌕</span>
+          </button>
+        {/if}
+
         <div class="nav">
           {#each NAV as n}
-            <button class="nav-item" class:active={$activeView === n.view} on:click={() => go(n.view)}>
+            <button
+              class="nav-item"
+              class:active={$activeView === n.view}
+              on:click={() => go(n.view)}
+              title={`${n.label} (${n.shortcut})`}
+            >
               <span class="ic">{n.icon}</span>
-              <span class="tx">{n.label}</span>
+              {#if !$sidebarCollapsed}
+                <span class="tx">{n.label}</span>
+                <span class="sc">{n.shortcut}</span>
+              {/if}
             </button>
           {/each}
         </div>
-        <div class="ns-pick">
-          <label class="proj-pick">
-            <span class="proj-label">项目</span>
-            <select value={$currentProject} on:change={(e) => chooseProject((e.currentTarget as HTMLSelectElement).value)}>
-              <option value="">请选择项目</option>
-              {#each options as o}<option value={o.key}>{o.label}（{o.sessions} 个会话）</option>{/each}
-            </select>
-          </label>
-          <span class="ns-label">
-            图谱
-            {#if $clusters.some((c) => c.slugs.length > 1)}
-              <span class="ns-auto" title="命名空间按内容自动归组：共享实体的命名空间会合并成一张图，无需手动多选">自动归组</span>
+
+        {#if !$sidebarCollapsed}
+          <div class="ns-pick">
+            <div class="ns-head">
+              <span class="ns-label">
+                项目知识库
+                {#if $clusters.some((c) => c.slugs.length > 1)}
+                  <span class="ns-auto" title="共享实体的同域命名空间已自动合并">自动归组</span>
+                {/if}
+              </span>
+            </div>
+
+            {#if $namespaces.length + options.length > 5}
+              <input
+                class="ns-filter"
+                placeholder="筛选项目…"
+                bind:value={pickerFilter}
+              />
             {/if}
-          </span>
-          <div class="ns-tags">
-            {#each $namespaces as ns}
-              {@const extra = mergedNames(ns.name)}
-              <button class="ns-tag" class:on={$selectedNamespaces.includes(ns.name)}
-                on:click={() => toggleNs(ns.name)}
-                title={extra.length
-                  ? `与 ${extra.join("、")} 自动合并为一张图（共 ${clusterFor(ns.name, $clusters)?.entities ?? ns.entities} 实体）`
-                  : `${ns.entities} 实体`}>
-                {ns.name}<span class="ns-cnt">{ns.entities}</span>
-                {#if extra.length}<span class="ns-merge" title="自动并入 {extra.length} 个同域命名空间">＋{extra.length}</span>{/if}
-              </button>
-            {/each}
+
+            <div class="ns-list">
+              {#each graphItems as item}
+                {@const isAutoMerged = !$selectedNamespaces.includes(item.key) && $effectiveNamespaces.includes(item.key)}
+                <div
+                  class="ws-item"
+                  class:on={$selectedNamespaces.includes(item.key)}
+                  class:auto-on={isAutoMerged}
+                  class:proj-only={!$selectedNamespaces.includes(item.key) && $currentProject === item.key}
+                  on:click={() => selectPrimary(item)}
+                  role="button"
+                  tabindex="0"
+                  on:keydown={(e) => e.key === "Enter" && selectPrimary(item)}
+                  title={item.extraMerged.length
+                    ? `${item.label}\n与 ${item.extraMerged.join("、")} 同域自动合并（共 ${item.mergedTotalEntities} 条卡片）`
+                    : `${item.label}\n${item.entities} 条知识卡片${item.sessions ? ` · ${item.sessions} 会话` : ""}`}
+                >
+                  <span class="ws-name">{item.label}</span>
+                  <span class="ws-badges">
+                    <span class="ws-cnt" title="知识卡片数">{item.entities}</span>
+                    {#if item.extraMerged.length}
+                      <span class="ws-merge" title="自动并入 {item.extraMerged.join('、')}">+{item.extraMerged.length}</span>
+                    {/if}
+                  </span>
+                </div>
+              {/each}
+
+              {#if unindexedItems.length > 0}
+                <button
+                  class="unindexed-toggle"
+                  on:click={() => (showUnindexedProjects = !showUnindexedProjects)}
+                >
+                  <span>可提炼的项目 ({unindexedItems.length})</span>
+                  <span>{showUnindexedProjects ? "▾" : "▸"}</span>
+                </button>
+                {#if showUnindexedProjects || pickerFilter.trim()}
+                  {#each unindexedItems as item}
+                    <button
+                      class="ws-item unindexed"
+                      class:proj-only={$currentProject === item.key}
+                      on:click={() => selectPrimary(item)}
+                      title={`${item.label}（${item.sessions} 个会话，尚未提炼知识）`}
+                    >
+                      <span class="ws-name">{item.label && item.label.length <= 34 ? item.label : item.key}</span>
+                      {#if item.sessions}<span class="ws-cnt">{item.sessions} 会话</span>{/if}
+                    </button>
+                  {/each}
+                {/if}
+              {/if}
+            </div>
+            {#if $nsLoadError}
+              <div class="ns-error">知识库列表加载失败：{$nsLoadError}</div>
+            {/if}
           </div>
-        </div>
+        {/if}
       </nav>
 
       <main class="view">
@@ -118,14 +316,14 @@
         {:else if $activeView !== "terminal"}
           <GraphView />
         {/if}
-        <!-- Terminal stays mounted so its shell (and any running claude
-             --resume session) survives tab switches; we only hide it. -->
         <div class="term-layer" class:hidden={$activeView !== "terminal"}>
           <TerminalView />
         </div>
       </main>
     </div>
   {/if}
+
+  <CommandPalette />
 
   {#if showAbout}
     <AboutView onClose={() => (showAbout = false)} />
@@ -137,64 +335,186 @@
   .shell { height: 100vh; display: flex; }
 
   .sidebar {
-    width: 176px; flex: 0 0 176px; display: flex; flex-direction: column;
-    background: var(--bg-surface); border-right: 1px solid var(--border);
+    width: 226px; flex: 0 0 226px; display: flex; flex-direction: column;
+    background: linear-gradient(180deg, #13161d 0%, #0d0f14 100%);
+    border-right: 1px solid var(--border);
+    box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.025);
+    transition: width 0.2s cubic-bezier(0.22, 1, 0.36, 1), flex-basis 0.2s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .sidebar.collapsed {
+    width: 56px; flex: 0 0 56px;
+  }
+
+  .brand-row {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 16px 12px 10px 16px;
+  }
+  .sidebar.collapsed .brand-row {
+    justify-content: center; padding: 16px 4px 10px;
   }
   .brand {
-    display: flex; align-items: center; gap: 6px;
-    padding: 14px 16px 10px; font-family: var(--font-mono); font-weight: 700;
-    font-size: 14px; letter-spacing: 1px; color: var(--accent);
-    background: transparent; border: none; cursor: pointer; text-align: left;
+    display: flex; align-items: center; gap: 7px;
+    padding: 2px 0; font-family: var(--font-ui); font-weight: 800;
+    font-size: 16px; letter-spacing: 0.8px;
+    background: linear-gradient(135deg, #fde68a 0%, var(--accent) 60%, #fb923c 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    border: none; cursor: pointer; text-align: left;
   }
   .brand:hover { filter: brightness(1.15); }
-  .brand-hint { font-size: 11px; opacity: .55; font-weight: 400; }
+  .brand-hint {
+    font-size: 11px; opacity: .65; font-weight: 400;
+    -webkit-text-fill-color: var(--text-muted);
+  }
   .brand:hover .brand-hint { opacity: 1; }
-  .nav { flex: 1; overflow-y: auto; padding: 4px 8px; }
+
+  .collapse-btn {
+    background: transparent; border: 1px solid transparent; color: var(--text-muted);
+    border-radius: 6px; width: 24px; height: 24px; font-size: 13px;
+    display: flex; align-items: center; justify-content: center; cursor: pointer;
+  }
+  .collapse-btn:hover {
+    background: var(--bg-elevated); border-color: var(--border); color: var(--text-primary);
+  }
+
+  .cmdk-trigger {
+    margin: 2px 12px 10px; padding: 8px 11px;
+    display: flex; align-items: center; gap: 8px;
+    background: rgba(27, 30, 38, 0.72); border: 1px solid var(--border);
+    border-radius: var(--radius-control); color: var(--text-muted);
+    font-size: 12px; cursor: pointer;
+    box-shadow: var(--shadow-sm);
+  }
+  .cmdk-trigger:hover {
+    border-color: var(--accent-border); color: var(--text-primary);
+    background: var(--bg-elevated);
+  }
+  .cmdk-ic { font-size: 13px; color: var(--accent); font-weight: 700; }
+  .cmdk-tx { flex: 1; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .cmdk-kbd {
+    font-family: var(--font-mono); font-size: 9.5px; padding: 1px 5px; border-radius: 4px;
+    background: var(--bg-base); border: 1px solid var(--border); color: var(--text-muted);
+  }
+  .collapsed-cmdk {
+    margin: 2px auto 6px; width: 38px !important; justify-content: center;
+  }
+
+  .nav { padding: 2px 10px 6px; }
+  .sidebar.collapsed .nav { padding: 2px 8px; }
   .nav-item {
     width: 100%; display: flex; align-items: center; gap: 10px;
-    padding: 8px 10px; margin-bottom: 2px; border-radius: var(--radius-control);
-    background: transparent; border: none; color: var(--text-muted);
-    font-size: 13px; text-align: left;
+    padding: 8.5px 12px; margin-bottom: 3px; border-radius: var(--radius-control);
+    background: transparent; border: 1px solid transparent; color: var(--text-muted);
+    font-size: 13px; text-align: left; cursor: pointer;
   }
-  .nav-item:hover { background: var(--bg-elevated); color: var(--text-primary); }
-  .nav-item.active { background: var(--bg-elevated); color: var(--text-primary); box-shadow: inset 2px 0 0 var(--accent); }
-  .nav-item .ic { width: 16px; text-align: center; font-size: 14px; }
-  .nav-item.active .ic { color: var(--accent); }
+  .sidebar.collapsed .nav-item {
+    justify-content: center; padding: 9px 0;
+  }
+  .nav-item:hover {
+    background: rgba(255, 255, 255, 0.04); color: var(--text-primary);
+  }
+  .nav-item.active {
+    background: linear-gradient(90deg, rgba(245, 158, 11, 0.16) 0%, rgba(245, 158, 11, 0.03) 100%);
+    color: var(--text-primary);
+    border-color: rgba(245, 158, 11, 0.25);
+    font-weight: 600;
+    box-shadow: inset 2.5px 0 0 var(--accent);
+  }
+  .nav-item .ic { width: 17px; text-align: center; font-size: 14px; flex-shrink: 0; }
+  .nav-item.active .ic {
+    color: var(--accent);
+    text-shadow: 0 0 10px rgba(245, 158, 11, 0.45);
+  }
+  .nav-item .tx { flex: 1; }
+  .nav-item .sc { font-size: 9.5px; opacity: 0; color: var(--text-muted); font-family: var(--font-mono); transition: opacity 0.14s; }
+  .nav-item:hover .sc { opacity: 0.72; }
 
   .ns-pick {
-    display: flex; flex-direction: column; gap: 4px;
-    padding: 10px 12px; border-top: 1px solid var(--border);
+    flex: 1; min-height: 0;
+    display: flex; flex-direction: column; gap: 8px;
+    padding: 14px 12px; border-top: 1px solid var(--border);
   }
-  .proj-pick {
-    display: flex; flex-direction: column; gap: 4px;
-    padding-bottom: 8px; margin-bottom: 6px;
-    border-bottom: 1px solid var(--border);
+  .ns-head {
+    display: flex; align-items: center; justify-content: space-between; gap: 4px;
   }
-  .proj-label { font-size: 11px; color: var(--text-muted); font-family: var(--font-mono); }
-  .proj-pick select {
-    width: 100%; min-width: 0;
-    background: var(--bg-elevated); color: var(--text-primary);
-    border: 1px solid var(--border); border-radius: var(--radius-control);
-    font-family: var(--font-mono); font-size: 11px; padding: 4px 6px; outline: none;
+  .ns-label {
+    font-size: 11px; font-weight: 600; color: var(--text-muted);
+    letter-spacing: 0.4px;
+    display: flex; align-items: center; gap: 6px;
   }
-  .proj-pick select:focus { border-color: var(--accent); }
-  .ns-label { font-size: 11px; color: var(--text-muted); font-family: var(--font-mono); display: flex; align-items: center; gap: 5px; }
   .ns-auto {
-    font-size: 9px; padding: 1px 5px; border-radius: 99px;
-    background: var(--bg-elevated); border: 1px solid var(--border); color: var(--text-muted);
+    font-size: 9.5px; font-weight: 500; padding: 1px 6px; border-radius: 99px;
+    background: var(--accent-soft); border: 1px solid var(--accent-border); color: var(--accent-hover);
   }
-  .ns-tags { display: flex; flex-wrap: wrap; gap: 4px; }
-  .ns-tag {
-    display: inline-flex; align-items: center; gap: 3px;
-    background: var(--bg-elevated); color: var(--text-muted);
+  .ns-filter {
+    width: 100%; background: var(--bg-base); color: var(--text-primary);
     border: 1px solid var(--border); border-radius: var(--radius-control);
-    font-family: var(--font-mono); font-size: 11px; padding: 2px 7px;
-    cursor: pointer; transition: all 0.15s;
+    font-size: 11.5px; padding: 6px 9px; outline: none;
   }
-  .ns-tag:hover { border-color: var(--accent); color: var(--text-primary); }
-  .ns-tag.on { background: var(--accent); color: #1c1206; border-color: var(--accent); font-weight: 600; }
-  .ns-cnt { font-size: 9px; opacity: 0.7; }
-  .ns-merge { font-size: 9px; opacity: 0.85; font-weight: 600; }
+  .ns-filter:focus { border-color: var(--accent); }
+
+  .ns-list {
+    flex: 1; min-height: 0; overflow-y: auto;
+    display: flex; flex-direction: column; gap: 4px;
+    padding-right: 2px;
+  }
+  .ws-item {
+    width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 6px;
+    background: rgba(27, 30, 38, 0.48); color: var(--text-secondary);
+    border: 1px solid transparent; border-radius: var(--radius-control);
+    font-size: 12px; padding: 7px 10px;
+    cursor: pointer; transition: all 0.14s ease; text-align: left;
+  }
+  .ws-item:hover {
+    border-color: var(--border); background: var(--bg-elevated); color: var(--text-primary);
+  }
+  .ws-item.on {
+    background: linear-gradient(90deg, rgba(245, 158, 11, 0.16) 0%, rgba(245, 158, 11, 0.04) 100%);
+    color: #ffffff; border-color: rgba(245, 158, 11, 0.32); font-weight: 600;
+    box-shadow: inset 2.5px 0 0 var(--accent);
+  }
+  .ws-item.auto-on {
+    border-color: var(--accent-border); color: var(--text-primary);
+    background: var(--accent-soft);
+  }
+  .ws-item.proj-only {
+    border-color: var(--cyan-border); color: var(--cyan);
+    background: var(--cyan-soft);
+  }
+  .ws-name {
+    flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    font-family: var(--font-ui); font-size: 12.5px; font-weight: 500;
+  }
+  .ws-badges {
+    display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0;
+    font-family: var(--font-mono);
+  }
+  .ws-cnt {
+    font-size: 10.5px; color: var(--text-muted);
+    background: rgba(255, 255, 255, 0.05);
+    padding: 1px 6px; border-radius: 99px;
+  }
+  .ws-item.on .ws-cnt {
+    color: var(--accent-hover);
+    background: rgba(245, 158, 11, 0.16);
+  }
+  .ws-merge { font-size: 9.5px; color: var(--accent); font-weight: 700; }
+
+  .unindexed-toggle {
+    margin-top: 6px; padding: 5px 4px;
+    display: flex; align-items: center; justify-content: space-between;
+    background: transparent; border: none; color: var(--text-muted);
+    font-size: 10.5px; cursor: pointer;
+  }
+  .unindexed-toggle:hover { color: var(--text-primary); }
+  .ns-error {
+    margin-top: 6px; padding: 6px 8px; border-radius: 5px;
+    background: rgba(248, 113, 113, 0.12); border: 1px solid rgba(248, 113, 113, 0.35);
+    color: #f87171; font-size: 10.5px; line-height: 1.5; word-break: break-all;
+  }
+  .ws-item.unindexed {
+    opacity: 0.82; font-size: 11px;
+  }
 
   .view { flex: 1; min-width: 0; height: 100vh; position: relative; }
   .term-layer { position: absolute; inset: 0; }

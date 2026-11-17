@@ -7,7 +7,9 @@
   import {
     ListProviders,
     SaveProvider,
+    GetDefaults,
     SetDefaults,
+    SetGraphModel,
     GetEmbeddingConfig,
     SetEmbeddingConfig,
     SetEmbeddingMode,
@@ -40,6 +42,7 @@
   // Defaults selection.
   let defaultProvider = "";
   let defaultModel = "";
+  let graphModel = "";
   let defaultsMsg = "";
   let savingDefaults = false;
 
@@ -304,9 +307,12 @@
     loadError = "";
     try {
       providers = await ListProviders();
-      if (!defaultProvider && configured.length) {
-        defaultProvider = configured[0].name;
-      }
+      const defs = await GetDefaults();
+      if (defs?.defaultProvider) defaultProvider = defs.defaultProvider;
+      else if (!defaultProvider && configured.length) defaultProvider = configured[0].name;
+      if (defs?.defaultModel !== undefined) defaultModel = defs.defaultModel;
+      if (defs?.graphModel !== undefined) graphModel = defs.graphModel;
+
       const embed = await GetEmbeddingConfig();
       embedProvider = embed.provider;
       embedModel = embed.model;
@@ -369,7 +375,8 @@
     savingDefaults = true;
     try {
       await SetDefaults(defaultProvider, defaultModel.trim());
-      defaultsMsg = "已保存默认设置";
+      await SetGraphModel(graphModel.trim());
+      defaultsMsg = "已保存默认设置与图谱提炼模型";
     } catch (e) {
       defaultsMsg = `保存失败:${String(e)}`;
     }
@@ -696,7 +703,7 @@
             <input
               id="def-model"
               class="field mono"
-              placeholder="如 gpt-5.6-sol"
+              placeholder="如 gpt-4o / glm-4-plus"
               list="model-suggestions"
               bind:value={defaultModel}
               disabled={needsSetup}
@@ -706,6 +713,20 @@
                 <option value={m}></option>
               {/each}
             </datalist>
+          </div>
+          <div class="row">
+            <label for="graph-model">知识提炼模型</label>
+            <input
+              id="graph-model"
+              class="field mono"
+              placeholder="留空使用内置默认 gpt-5.6-sol（须为网关实际支持的模型）"
+              list="model-suggestions"
+              bind:value={graphModel}
+              disabled={needsSetup}
+            />
+            <span class="muted hint">
+              建索引/提炼知识时调用。它和上面的「默认模型」不是同一个东西——填成网关不支持的模型会导致提炼全部失败。
+            </span>
           </div>
           <div class="row actions-row">
             <button
@@ -840,22 +861,27 @@
   .settings {
     height: 100%;
     overflow-y: auto;
-    padding: 24px;
+    padding: 28px 32px 48px;
+    background: var(--bg-base);
   }
   .inner {
-    max-width: var(--read-max);
+    max-width: 780px;
     margin: 0 auto;
     display: flex;
     flex-direction: column;
-    gap: 28px;
+    gap: 30px;
   }
   h1 {
-    font-size: 20px;
+    font-size: 21px;
+    font-weight: 700;
     margin: 0;
+    letter-spacing: 0.2px;
   }
   h2 {
     font-size: 15px;
+    font-weight: 600;
     margin: 0 0 12px;
+    color: var(--text-primary);
   }
   section {
     display: flex;
@@ -873,7 +899,7 @@
   .cards {
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 12px;
     margin-top: 12px;
   }
   .muted {
@@ -881,8 +907,9 @@
     font-size: 13px;
   }
   .ok {
-    color: var(--accent);
+    color: var(--success);
     font-size: 13px;
+    font-weight: 500;
   }
   .err {
     color: var(--danger);
@@ -890,18 +917,19 @@
   }
   .banner {
     border-radius: var(--radius-card);
-    padding: 12px 14px;
+    padding: 13px 16px;
     font-size: 13px;
     margin-bottom: 12px;
+    box-shadow: var(--shadow-sm);
   }
   .banner.error {
-    background: color-mix(in srgb, var(--danger) 12%, transparent);
+    background: var(--danger-soft);
     border: 1px solid var(--danger);
     color: var(--danger);
   }
   .banner.guide {
     background: var(--bg-surface);
-    border: 1px solid var(--accent);
+    border: 1px solid var(--accent-border);
     display: flex;
     flex-direction: column;
     gap: 8px;
@@ -910,6 +938,7 @@
   .guide-title {
     font-size: 15px;
     font-weight: 600;
+    color: var(--accent-hover);
   }
   .guide-sub {
     color: var(--text-muted);
@@ -917,15 +946,16 @@
   .defaults {
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 13px;
     background: var(--bg-surface);
     border: 1px solid var(--border);
     border-radius: var(--radius-card);
-    padding: 16px;
+    padding: 18px;
+    box-shadow: var(--shadow-sm);
   }
   .row {
     display: grid;
-    grid-template-columns: 100px 1fr;
+    grid-template-columns: 110px 1fr;
     align-items: center;
     gap: 12px;
   }
@@ -945,7 +975,7 @@
     border: 1px solid var(--border);
     color: var(--text-primary);
     border-radius: var(--radius-control);
-    padding: 6px 10px;
+    padding: 7.5px 11px;
     font-size: 13px;
   }
   .field:focus {
@@ -962,7 +992,7 @@
     background: var(--bg-surface);
     border: 1px solid var(--border);
     border-radius: var(--radius-card);
-    padding: 12px 14px;
+    padding: 13px 16px;
     font-size: 13px;
     color: var(--text-muted);
     line-height: 1.7;
@@ -970,33 +1000,36 @@
   .note code {
     color: var(--text-primary);
     background: var(--bg-elevated);
-    padding: 1px 5px;
+    padding: 1px 6px;
     border-radius: 4px;
     font-size: 12px;
+    font-family: var(--font-mono);
   }
   .note.warn {
-    border-color: var(--warning);
+    border-color: var(--accent-border);
   }
   .btn {
-    background: transparent;
+    background: var(--bg-elevated);
     border: 1px solid var(--border);
-    color: var(--text-muted);
+    color: var(--text-secondary);
     border-radius: var(--radius-control);
-    padding: 6px 14px;
+    padding: 6.5px 15px;
     font-size: 13px;
+    font-weight: 500;
   }
   .btn:hover {
     color: var(--text-primary);
-    border-color: var(--text-muted);
+    border-color: var(--border-strong);
   }
   .btn.primary {
-    background: var(--accent);
+    background: linear-gradient(135deg, var(--accent-hover) 0%, var(--accent) 100%);
     color: var(--accent-fg);
-    border-color: var(--accent);
-    font-weight: 500;
+    border-color: rgba(255, 255, 255, 0.14);
+    font-weight: 600;
+    box-shadow: 0 2px 10px rgba(245, 158, 11, 0.22);
   }
   .btn.primary:hover {
-    filter: brightness(1.1);
+    filter: brightness(1.07);
   }
   .btn.primary:disabled {
     opacity: 0.6;
@@ -1007,18 +1040,19 @@
   }
   .btn.ghost:hover {
     color: var(--text-primary);
-    border-color: var(--text-muted);
+    border-color: var(--border-strong);
   }
 
   /* Add-provider form + presets */
   .add-form {
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 13px;
     background: var(--bg-surface);
-    border: 1px solid var(--border);
+    border: 1px solid var(--border-strong);
     border-radius: var(--radius-card);
-    padding: 16px;
+    padding: 18px;
+    box-shadow: var(--shadow-md);
   }
   .preset-head {
     color: var(--text-muted);
@@ -1038,19 +1072,20 @@
     background: var(--bg-base);
     border: 1px solid var(--border);
     border-radius: var(--radius-card);
-    padding: 10px 12px;
+    padding: 11px 13px;
     cursor: pointer;
   }
   .preset:hover {
-    border-color: var(--text-muted);
+    border-color: var(--border-strong);
+    background: var(--bg-elevated);
   }
   .preset.active {
     border-color: var(--accent);
-    background: color-mix(in srgb, var(--accent) 10%, transparent);
+    background: var(--accent-soft);
   }
   .preset-label {
     font-size: 13px;
-    font-weight: 500;
+    font-weight: 600;
     color: var(--text-primary);
   }
   .preset-desc {
@@ -1062,7 +1097,7 @@
     border: 1px solid var(--border);
     border-left: 3px solid var(--accent);
     border-radius: var(--radius-control);
-    padding: 8px 12px;
+    padding: 9px 13px;
     font-size: 12px;
     color: var(--text-muted);
     line-height: 1.6;
@@ -1082,6 +1117,7 @@
   }
   .chip {
     font-size: 12px;
+    font-family: var(--font-mono);
     color: var(--text-primary);
     background: var(--bg-elevated);
     border: 1px solid var(--border);
@@ -1112,11 +1148,12 @@
   .mcp-card {
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 13px;
     background: var(--bg-surface);
     border: 1px solid var(--border);
     border-radius: var(--radius-card);
-    padding: 16px;
+    padding: 18px;
+    box-shadow: var(--shadow-sm);
   }
   .mcp-desc {
     font-size: 13px;
@@ -1126,9 +1163,10 @@
   .mcp-desc code {
     color: var(--text-primary);
     background: var(--bg-elevated);
-    padding: 1px 5px;
+    padding: 1px 6px;
     border-radius: 4px;
     font-size: 12px;
+    font-family: var(--font-mono);
   }
   .mcp-status {
     display: flex;
@@ -1143,7 +1181,8 @@
     flex: 0 0 8px;
   }
   .dot.on {
-    background: var(--accent);
+    background: var(--success);
+    box-shadow: 0 0 8px var(--success);
   }
   .dot.off {
     background: var(--text-muted);
@@ -1166,8 +1205,8 @@
   .mcp-agents {
     display: flex;
     flex-direction: column;
-    gap: 6px;
-    margin-bottom: 12px;
+    gap: 7px;
+    margin-bottom: 10px;
   }
   .mcp-agent-row {
     display: flex;
@@ -1176,12 +1215,12 @@
     font-size: 13px;
   }
   .mcp-agent-name {
-    font-weight: 500;
-    min-width: 100px;
+    font-weight: 600;
+    min-width: 105px;
   }
   .mcp-ok {
     margin: 0;
-    color: var(--accent);
+    color: var(--success);
     font-size: 13px;
     line-height: 1.6;
   }
@@ -1230,7 +1269,7 @@
   .mode-switch {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 10px;
+    gap: 12px;
   }
   .mode-opt {
     display: flex;
@@ -1241,16 +1280,18 @@
     background: var(--bg-surface);
     border: 1px solid var(--border);
     border-radius: var(--radius-card);
-    padding: 14px 16px;
+    padding: 15px 17px;
     cursor: pointer;
+    box-shadow: var(--shadow-sm);
   }
   .mode-opt:hover {
-    border-color: var(--text-muted);
+    border-color: var(--border-strong);
+    background: var(--bg-elevated);
   }
   .mode-opt.active {
     border-color: var(--accent);
-    background: color-mix(in srgb, var(--accent) 10%, transparent);
-    box-shadow: inset 0 0 0 1px var(--accent);
+    background: var(--accent-soft);
+    box-shadow: inset 0 0 0 1px var(--accent-border), var(--shadow-sm);
   }
   .mode-title {
     font-size: 14px;
@@ -1271,10 +1312,10 @@
   .rebuild-banner {
     margin-top: 10px;
     display: flex; align-items: center; gap: 12px;
-    background: color-mix(in srgb, var(--warning) 12%, transparent);
-    border: 1px solid var(--warning);
+    background: var(--accent-soft);
+    border: 1px solid var(--accent-border);
     border-radius: var(--radius-card);
-    padding: 10px 14px; font-size: 12.5px; line-height: 1.6;
+    padding: 11px 15px; font-size: 12.5px; line-height: 1.6;
   }
   .rebuild-banner span { flex: 1; }
   .btn.sm { padding: 4px 12px; font-size: 12px; white-space: nowrap; }

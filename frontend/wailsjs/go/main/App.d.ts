@@ -52,6 +52,8 @@ export function GenerateArticle(arg1:string,arg2:string):Promise<string>;
 
 export function GenerateCommit(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:boolean):Promise<main.CommitDraft>;
 
+export function GetDefaults():Promise<main.DefaultsConfig>;
+
 export function GetEmbeddingConfig():Promise<main.EmbeddingConfig>;
 
 export function GetGraph(arg1:string):Promise<graph.Graph>;
@@ -104,13 +106,19 @@ export function MCPUninstallAll():Promise<Array<mcpinstall.AgentStatus>>;
 
 export function MatchKnowledge(arg1:string,arg2:string):Promise<main.KnowledgeMatch>;
 
+export function MoveEntity(arg1:string,arg2:string,arg3:string):Promise<void>;
+
 export function NamespacesFor(arg1:string):Promise<Array<string>>;
 
 export function NewConversation(arg1:string,arg2:string,arg3:string):Promise<model.Conversation>;
 
 export function PreviewExport(arg1:string,arg2:string):Promise<main.ExportPreview>;
 
+export function PruneStaleKnowledge(arg1:string,arg2:number,arg3:boolean):Promise<main.PruneResult>;
+
 export function ReadClaudeSession(arg1:string,arg2:string):Promise<Array<claudedata.SessionMessage>>;
+
+export function RememberManualEntity(arg1:string,arg2:main.ManualEntityInput):Promise<void>;
 
 export function RemoveImportedBundle(arg1:string,arg2:string):Promise<void>;
 
@@ -119,6 +127,8 @@ export function RenameConversation(arg1:string,arg2:string):Promise<void>;
 export function RenameEntity(arg1:string,arg2:string,arg3:string):Promise<void>;
 
 export function RepoStatus(arg1:string):Promise<gitx.RepoStatus>;
+
+export function RestampCacheTimes(arg1:string):Promise<number>;
 
 export function ResumeCommand(arg1:string,arg2:string):Promise<string>;
 
@@ -143,6 +153,8 @@ export function SetDefaults(arg1:string,arg2:string):Promise<void>;
 export function SetEmbeddingConfig(arg1:string,arg2:string):Promise<void>;
 
 export function SetEmbeddingMode(arg1:string):Promise<void>;
+
+export function SetGraphModel(arg1:string):Promise<void>;
 
 export function StopGeneration(arg1:string):Promise<void>;
 

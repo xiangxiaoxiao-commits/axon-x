@@ -4,10 +4,10 @@
   import {
     ListClaudeSessions, ReadClaudeSession, ClaudeSessionProgress, ResumeCommand,
     SessionDistilledKnowledge, ExcludeObservation, UnexcludeObservation,
-    EditObservation, ExcludeSession, UnexcludeSession,
+    EditObservation, ExcludeSession, UnexcludeSession, SearchSessions,
   } from "../../wailsjs/go/main/App.js";
   import type { claudedata, main } from "../../wailsjs/go/models";
-  import { currentProject, activeView, resumeRequest } from "../lib/stores";
+  import { currentProject, activeView, resumeRequest, sessionJumpRequest, jumpToEntity } from "../lib/stores";
 
   let sessions: claudedata.SessionMeta[] = [];
   let messages: claudedata.SessionMessage[] = [];
@@ -94,6 +94,50 @@
   // Reload the session list whenever the effective scope changes.
   let loadedFor = " ";
   $: if (scope !== loadedFor) { loadedFor = scope; loadSessions(); }
+
+  // Incremental list rendering limit (prevents DOM jank when a project has hundreds of sessions)
+  let renderLimit = 60;
+  let highlightKnowledge = false;
+
+  // Reset render limit when filter or scope changes
+  $: if (filter !== undefined || modelFilter !== undefined || scope !== undefined) {
+    renderLimit = 60;
+  }
+
+  function onListScroll(e: Event) {
+    const el = e.currentTarget as HTMLElement;
+    if (!el) return;
+    if (el.scrollTop + el.clientHeight >= el.scrollHeight - 160) {
+      if (renderLimit < shownSessions.length) {
+        renderLimit += 60;
+      }
+    }
+  }
+
+  function setScopeOverride(val: string) {
+    scopeOverride = val;
+  }
+
+  // Handle cross-view jump request from GraphView / SearchView / CommandPalette
+  $: if ($sessionJumpRequest && sessionsLoaded && !sessionsLoading) {
+    const req = $sessionJumpRequest;
+    const hit = sessions.find((s) => s.id === req.sessionId || s.id.startsWith(req.sessionId));
+    if (hit) {
+      sessionJumpRequest.set(null);
+      const hitIdx = shownSessions.findIndex((s) => s.id === hit.id);
+      if (hitIdx >= renderLimit) renderLimit = hitIdx + 30;
+      selectSession(hit);
+      if (req.expandKnowledge) {
+        highlightKnowledge = true;
+        setTimeout(() => (highlightKnowledge = false), 2200);
+      }
+    } else if (scopeOverride !== "*") {
+      // Widen scope to all sessions if not found in current project scope
+      setScopeOverride("*");
+    } else {
+      sessionJumpRequest.set(null);
+    }
+  }
 
   async function loadSessions() {
     const mine = ++loadToken;
@@ -233,19 +277,51 @@
     return [...counts.entries()].sort((a, b) => b[1] - a[1]);
   })();
 
-  // Apply title search + model filter, then keep newest-first (backend already
-  // sorts by updatedAt desc, so a stable filter preserves that order).
+  // Apply title search + full-text hits + model filter, then keep newest-first
+  let fullTextSnippets = new Map<string, string>();
+  let ftTimer: any = null;
+
+  $: {
+    clearTimeout(ftTimer);
+    const q = filter.trim();
+    if (q.length >= 2) {
+      ftTimer = setTimeout(async () => {
+        try {
+          const hits = await SearchSessions(q, scope === "*" || scope === "@unassigned" ? "" : scope);
+          const next = new Map<string, string>();
+          for (const h of hits || []) {
+            if (h.sessionId && !next.has(h.sessionId)) {
+              next.set(h.sessionId, h.snippet || "");
+            }
+          }
+          fullTextSnippets = next;
+        } catch {
+          fullTextSnippets = new Map();
+        }
+      }, 180);
+    } else {
+      fullTextSnippets = new Map();
+    }
+  }
+
   $: shownSessions = sessions.filter((s) => {
-    if (filter && !(s.title || "").toLowerCase().includes(filter.toLowerCase())) return false;
+    if (filter) {
+      const q = filter.toLowerCase();
+      const titleHit = (s.title || "").toLowerCase().includes(q);
+      const bodyHit = fullTextSnippets.has(s.id);
+      if (!titleHit && !bodyHit) return false;
+    }
     if (modelFilter && modelFamily(s.model) !== modelFilter) return false;
     return true;
   });
 
+  $: cappedSessions = shownSessions.slice(0, renderLimit);
+
   // Group by working directory (cwd). Sessions without cwd go into "(未知目录)".
-  // Within each group, newest-first is inherited from shownSessions.
+  // Within each group, newest-first is inherited from cappedSessions.
   $: grouped = (() => {
-    const map = new Map<string, typeof shownSessions>();
-    for (const s of shownSessions) {
+    const map = new Map<string, typeof cappedSessions>();
+    for (const s of cappedSessions) {
       const dir = s.cwd || "(未知目录)";
       // Shorten display: use last 2 path segments.
       if (!map.has(dir)) map.set(dir, []);
@@ -265,8 +341,8 @@
 </script>
 
 <div class="browser">
-  <div class="col sessions">
-    <input class="filter" placeholder="搜索会话标题…" bind:value={filter} />
+  <div class="col sessions" on:scroll={onListScroll}>
+    <input class="filter" placeholder="搜索会话标题或对话原文…" bind:value={filter} />
     {#if scopeOptions.length > 1 || scopeOverride}
       <div class="scope-bar">
         {#each scopeOptions as o}
@@ -304,6 +380,11 @@
         </div>
       {/each}
     {/each}
+    {#if shownSessions.length > renderLimit}
+      <button class="load-more-btn" on:click={() => (renderLimit += 60)}>
+        已显示 {renderLimit} / {shownSessions.length} 条会话，点击或下滑加载更多…
+      </button>
+    {/if}
     {#if !scope}
       <div class="empty">在顶部选择一个项目查看它的会话</div>
     {:else if sessionsLoading}
@@ -344,7 +425,7 @@
     {/if}
 
     {#if curSession && knowledge}
-      <div class="kn-card" class:session-excluded={knowledge.sessionExcluded}>
+      <div class="kn-card" class:session-excluded={knowledge.sessionExcluded} class:kn-flash={highlightKnowledge}>
         <div class="kn-head">
           <span class="kn-label">🧠 本会话产出的知识</span>
           {#if !knowledge.indexed}
@@ -364,7 +445,12 @@
         {/if}
         {#each knowledge.entities as ent}
           <div class="kn-ent">
-            <div class="kn-ent-name">{ent.name}<span class="kn-ent-type">{ent.type}</span></div>
+            <div class="kn-ent-name">
+              <button class="kn-ent-link" on:click={() => jumpToEntity(ent.name, $currentProject)} title="在知识图谱中定位此实体">
+                {ent.name} ↗
+              </button>
+              <span class="kn-ent-type">{ent.type}</span>
+            </div>
             {#each ent.observations as obs, i}
               <div class="kn-obs" class:excluded={obs.excluded || knowledge.sessionExcluded}>
                 {#if editingKey === factKey(ent.name, i)}
@@ -392,12 +478,14 @@
     {#if loading}
       <div class="empty">加载中…</div>
     {:else if messages.length}
-      {#each messages as m}
-        <div class="msg {m.role}">
-          <span class="who">{m.role === "user" ? "›" : "●"}</span>
-          <div class="text selectable">{m.text}</div>
-        </div>
-      {/each}
+      <div class="msg-list">
+        {#each messages as m}
+          <div class="msg {m.role}">
+            <span class="who">{m.role === "user" ? "你" : "AI"}</span>
+            <div class="text selectable">{m.text}</div>
+          </div>
+        {/each}
+      </div>
     {:else}
       <div class="empty">选择左侧的会话查看内容</div>
     {/if}
@@ -408,70 +496,95 @@
   .browser {
     display: flex;
     height: 100%;
-    font-family: var(--font-mono);
+    font-family: var(--font-ui);
+    background: var(--bg-base);
   }
   .col {
     overflow-y: auto;
     border-right: 1px solid var(--border);
   }
-  .sessions { flex: 0 0 300px; }
-  .transcript { flex: 1; padding: 16px; min-width: 0; }
+  .sessions {
+    flex: 0 0 326px;
+    background: var(--bg-surface);
+  }
+  .transcript {
+    flex: 1;
+    padding: 20px 28px;
+    min-width: 0;
+  }
   .filter {
     width: 100%;
     background: var(--bg-base);
     border: none;
     border-bottom: 1px solid var(--border);
     color: var(--text-primary);
-    font-family: var(--font-mono);
-    font-size: 12px;
-    padding: 8px 12px;
+    font-size: 12.5px;
+    padding: 10px 14px;
     outline: none;
+  }
+  .filter:focus {
+    box-shadow: inset 0 -2px 0 var(--accent);
   }
   .item {
     display: flex;
     align-items: center;
     gap: 6px;
-    width: 100%;
-    border-bottom: 1px solid var(--border);
+    margin: 3px 8px;
+    border-radius: var(--radius-control);
+    border: 1px solid transparent;
     color: var(--text-primary);
+    transition: background 0.14s, border-color 0.14s;
   }
-  .item:hover { background: var(--bg-elevated); }
+  .item:hover {
+    background: var(--bg-elevated);
+    border-color: var(--border);
+  }
   .item:hover .resume { opacity: 1; }
-  .item.active { background: var(--bg-elevated); box-shadow: inset 2px 0 0 var(--accent); }
+  .item.active {
+    background: linear-gradient(90deg, rgba(245, 158, 11, 0.14) 0%, rgba(245, 158, 11, 0.03) 100%);
+    border-color: rgba(245, 158, 11, 0.3);
+    box-shadow: inset 2.5px 0 0 var(--accent);
+  }
   .item-main {
     flex: 1;
     min-width: 0;
     text-align: left;
     background: transparent;
     border: none;
-    padding: 8px 12px;
+    padding: 9px 11px;
     color: inherit;
   }
   .resume {
     flex: 0 0 auto;
-    margin-right: 10px;
-    background: transparent;
+    margin-right: 8px;
+    background: var(--bg-base);
     border: 1px solid var(--border);
     border-radius: var(--radius-control);
     color: var(--accent);
-    font-family: var(--font-mono);
     font-size: 11px;
-    padding: 3px 8px;
+    font-weight: 600;
+    padding: 3px 9px;
     opacity: 0;
-    transition: opacity .12s;
+    transition: opacity .14s, background .14s;
   }
-  .resume:hover { background: var(--accent); color: var(--bg-base); border-color: var(--accent); }
+  .resume:hover { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
   .resume.sm { opacity: 1; margin-right: 0; }
   .item-title {
-    font-size: 12.5px;
+    font-size: 13px;
+    font-weight: 500;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
+  .item.active .item-title {
+    font-weight: 600;
+    color: #ffffff;
+  }
   .item-sub {
     font-size: 11px;
+    font-family: var(--font-mono);
     color: var(--text-muted);
-    margin-top: 3px;
+    margin-top: 4px;
     display: flex;
     align-items: center;
     gap: 6px;
@@ -480,11 +593,11 @@
     flex: 0 0 auto;
     font-size: 10px;
     line-height: 1;
-    padding: 2px 5px;
-    border-radius: var(--radius-control);
+    padding: 2px 6px;
+    border-radius: 4px;
     color: var(--mc);
-    border: 1px solid color-mix(in srgb, var(--mc) 45%, transparent);
-    background: color-mix(in srgb, var(--mc) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--mc) 42%, transparent);
+    background: color-mix(in srgb, var(--mc) 14%, transparent);
   }
   .scope-bar {
     display: flex;
@@ -494,23 +607,23 @@
     border-bottom: 1px solid var(--border);
   }
   .sc-chip {
-    font-family: var(--font-mono);
-    font-size: 11px;
-    padding: 3px 8px;
-    border-radius: var(--radius-control);
+    font-size: 11.5px;
+    padding: 3px 9px;
+    border-radius: 99px;
     border: 1px solid var(--border);
-    background: transparent;
+    background: var(--bg-elevated);
     color: var(--text-muted);
     cursor: pointer;
-    transition: all .12s;
+    transition: all .14s;
   }
-  .sc-chip:hover { color: var(--text-primary); }
+  .sc-chip:hover { color: var(--text-primary); border-color: var(--border-strong); }
   .sc-chip.on {
-    color: var(--accent);
-    border-color: color-mix(in srgb, var(--accent) 55%, transparent);
-    background: color-mix(in srgb, var(--accent) 14%, transparent);
+    color: var(--accent-hover);
+    border-color: var(--accent-border);
+    background: var(--accent-soft);
+    font-weight: 600;
   }
-  .sc-n { opacity: .6; }
+  .sc-n { opacity: .65; font-family: var(--font-mono); font-size: 10.5px; }
   .model-filter {
     display: flex;
     flex-wrap: wrap;
@@ -522,12 +635,12 @@
     font-family: var(--font-mono);
     font-size: 11px;
     padding: 3px 8px;
-    border-radius: var(--radius-control);
+    border-radius: 99px;
     border: 1px solid var(--border);
     background: transparent;
     color: var(--text-muted);
     cursor: pointer;
-    transition: all .12s;
+    transition: all .14s;
   }
   .mf-chip:hover { color: var(--text-primary); }
   .mf-chip.on {
@@ -535,99 +648,174 @@
     border-color: color-mix(in srgb, var(--mc, var(--accent)) 55%, transparent);
     background: color-mix(in srgb, var(--mc, var(--accent)) 14%, transparent);
   }
-  .mf-n { opacity: .6; }
+  .mf-n { opacity: .65; }
   .group-head {
     position: sticky;
     top: 0;
-    z-index: 1;
-    padding: 6px 12px;
-    font-size: 11px;
+    z-index: 2;
+    padding: 7px 14px 5px;
+    font-family: var(--font-mono);
+    font-size: 10.5px;
     font-weight: 600;
-    letter-spacing: .5px;
+    letter-spacing: .4px;
     color: var(--text-muted);
-    background: var(--bg-base);
+    background: rgba(19, 21, 26, 0.92);
+    backdrop-filter: blur(8px);
     border-bottom: 1px solid var(--border);
+    margin-top: 4px;
   }
-  .gh-n { opacity: .5; font-weight: 400; }
-  .empty-sub { display: block; margin-top: 6px; font-size: 12px; opacity: .7; }
+  .gh-n { opacity: .55; font-weight: 400; }
+  .empty-sub { display: block; margin-top: 6px; font-size: 12px; opacity: .75; }
 
-  .empty { padding: 16px; color: var(--text-muted); font-size: 12px; }
+  .empty { padding: 24px 18px; color: var(--text-muted); font-size: 13px; }
   .progress-card {
-    border: 1px solid var(--border);
-    border-radius: var(--radius-control);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-card);
     background: var(--bg-surface);
-    padding: 10px 12px;
+    padding: 13px 16px;
     margin-bottom: 16px;
+    box-shadow: var(--shadow-sm);
   }
-  .pc-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
-  .pc-label { font-size: 11px; font-weight: 600; color: var(--accent); letter-spacing: .5px; }
-  .pc-cwd { flex: 1; min-width: 0; font-size: 11px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .pc-err { font-size: 11.5px; color: #f85149; margin-bottom: 6px; }
+  .pc-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .pc-label {
+    font-size: 11.5px; font-weight: 700; color: var(--accent-hover);
+    letter-spacing: .4px; background: var(--accent-soft);
+    border: 1px solid var(--accent-border); padding: 1px 8px; border-radius: 99px;
+  }
+  .pc-cwd {
+    flex: 1; min-width: 0; font-family: var(--font-mono); font-size: 11px;
+    color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .pc-err { font-size: 12px; color: var(--danger); margin-bottom: 6px; }
 
   .kn-card {
-    border: 1px solid var(--border); border-radius: 8px;
-    background: var(--bg-elevated); padding: 12px 14px; margin-bottom: 16px;
+    border: 1px solid var(--border-strong); border-radius: var(--radius-card);
+    background: linear-gradient(180deg, rgba(27, 30, 38, 0.85) 0%, rgba(19, 21, 26, 0.9) 100%);
+    padding: 14px 16px; margin-bottom: 18px;
+    box-shadow: var(--shadow-sm);
+    transition: border-color 0.25s, box-shadow 0.25s;
   }
-  .kn-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; }
-  .kn-label { font-size: 12.5px; font-weight: 600; }
+  .kn-card.kn-flash {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.25), var(--shadow-md);
+  }
+  .kn-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+  .kn-label { font-size: 13px; font-weight: 700; color: var(--text-primary); }
   .kn-hint { font-size: 11.5px; color: var(--text-muted); }
-  .kn-ent { margin: 8px 0; }
-  .kn-ent-name { font-size: 12.5px; font-weight: 600; margin-bottom: 3px; }
+  .kn-ent {
+    margin: 10px 0; padding: 8px 10px;
+    background: rgba(12, 13, 16, 0.45);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-control);
+  }
+  .kn-ent-name { font-size: 12.5px; font-weight: 600; margin-bottom: 5px; display: flex; align-items: center; }
+  .kn-ent-link {
+    background: transparent; border: none; padding: 0; color: var(--accent-hover);
+    font-size: 13px; font-weight: 600; cursor: pointer;
+  }
+  .kn-ent-link:hover { color: #fde68a; text-decoration: underline; }
+  .load-more-btn {
+    width: calc(100% - 16px); margin: 6px 8px 12px; padding: 9px 12px;
+    background: var(--bg-elevated); border: 1px solid var(--border);
+    border-radius: var(--radius-control);
+    color: var(--accent); font-size: 12px; font-weight: 500; cursor: pointer;
+  }
+  .load-more-btn:hover { background: var(--bg-hover); border-color: var(--accent-border); }
   .kn-ent-type {
-    font-size: 10.5px; color: var(--text-muted); font-weight: 400;
-    margin-left: 6px; padding: 1px 5px; border: 1px solid var(--border); border-radius: 4px;
+    font-family: var(--font-mono); font-size: 10px; color: var(--text-muted); font-weight: 400;
+    margin-left: 8px; padding: 1px 6px; border: 1px solid var(--border); border-radius: 99px;
   }
   .kn-obs {
     display: flex; align-items: center; gap: 8px;
-    padding: 4px 0 4px 10px; border-left: 2px solid var(--border);
+    padding: 4px 0 4px 10px; border-left: 2px solid var(--border-strong);
   }
-  .kn-obs-text { flex: 1; font-size: 12.5px; line-height: 1.5; }
+  .kn-obs-text { flex: 1; font-size: 12.5px; line-height: 1.55; color: var(--text-secondary); }
   .kn-obs.excluded .kn-obs-text { text-decoration: line-through; color: var(--text-muted); }
   .kn-btn {
     flex: 0 0 auto; font-size: 11px; padding: 2px 8px;
-    background: transparent; border: 1px solid var(--border); border-radius: 4px;
+    background: var(--bg-surface); border: 1px solid var(--border); border-radius: 4px;
     color: var(--text-muted); cursor: pointer; opacity: 0; transition: opacity .12s;
   }
   .kn-obs:hover .kn-btn { opacity: 1; }
   .kn-obs.excluded .kn-btn { opacity: 1; }
-  .kn-btn:hover { border-color: #f85149; color: #f85149; }
+  .kn-btn:hover { border-color: var(--danger); color: var(--danger); }
   .kn-btn.ok:hover { border-color: var(--accent); color: var(--accent); }
   .kn-btn:disabled { opacity: .3; pointer-events: none; }
   .kn-edit {
-    flex: 1; font-family: var(--font-mono); font-size: 12.5px; line-height: 1.5;
+    flex: 1; font-size: 12.5px; line-height: 1.5;
     background: var(--bg-base); color: var(--text-primary);
-    border: 1px solid var(--accent); border-radius: 4px; padding: 4px 6px; resize: vertical;
+    border: 1px solid var(--accent); border-radius: 5px; padding: 5px 8px; resize: vertical;
   }
   .kn-sess-btn {
-    margin-left: auto; font-size: 11px; padding: 2px 8px;
-    background: transparent; border: 1px solid var(--border); border-radius: 4px;
+    margin-left: auto; font-size: 11px; padding: 3px 9px;
+    background: transparent; border: 1px solid var(--border); border-radius: 5px;
     color: var(--text-muted); cursor: pointer;
   }
-  .kn-sess-btn:hover { border-color: #f85149; color: #f85149; }
+  .kn-sess-btn:hover { border-color: var(--danger); color: var(--danger); }
   .kn-sess-btn.on { color: var(--accent); border-color: var(--accent); }
-  .kn-sess-note { font-size: 11.5px; color: #f85149; margin: 4px 0 8px; }
+  .kn-sess-note { font-size: 11.5px; color: var(--danger); margin: 4px 0 8px; }
   .kn-card.session-excluded { opacity: .7; }
-  .pc-block { display: flex; gap: 8px; padding: 4px 0; }
-  .pc-role { flex: 0 0 22px; font-size: 11px; text-align: center; padding-top: 1px; }
-  .pc-role.user { color: var(--accent); }
-  .pc-role.asst { color: var(--text-muted); }
+  .pc-block { display: flex; gap: 10px; padding: 5px 0; align-items: flex-start; }
+  .pc-role {
+    flex: 0 0 26px; font-size: 10.5px; font-weight: 700;
+    text-align: center; padding: 1px 0; border-radius: 4px; margin-top: 2px;
+  }
+  .pc-role.user { color: var(--accent-fg); background: var(--accent); }
+  .pc-role.asst { color: var(--text-secondary); background: var(--bg-elevated); border: 1px solid var(--border); }
   .pc-text {
     white-space: pre-wrap;
     word-break: break-word;
     font-size: 12.5px;
-    line-height: 1.5;
-    color: var(--text-primary);
+    line-height: 1.55;
+    color: var(--text-secondary);
     max-height: 160px;
     overflow-y: auto;
   }
-  .msg { display: flex; gap: 8px; padding: 6px 0; }
-  .msg .who { flex: 0 0 14px; text-align: center; color: var(--text-muted); }
-  .msg.user .who { color: var(--accent); }
+  .msg-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    max-width: 880px;
+  }
+  .msg {
+    display: flex;
+    gap: 12px;
+    padding: 12px 15px;
+    border-radius: var(--radius-card);
+    border: 1px solid var(--border);
+    background: var(--bg-surface);
+    align-items: flex-start;
+  }
+  .msg.user {
+    background: linear-gradient(135deg, rgba(245, 158, 11, 0.1) 0%, rgba(27, 30, 38, 0.65) 100%);
+    border-color: rgba(245, 158, 11, 0.24);
+  }
+  .msg .who {
+    flex: 0 0 28px;
+    height: 22px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 5px;
+    font-size: 11px;
+    font-weight: 700;
+    background: var(--bg-elevated);
+    color: var(--text-muted);
+    border: 1px solid var(--border);
+    margin-top: 1px;
+  }
+  .msg.user .who {
+    background: var(--accent);
+    color: var(--accent-fg);
+    border-color: var(--accent);
+  }
   .msg .text {
+    flex: 1;
+    min-width: 0;
     white-space: pre-wrap;
     word-break: break-word;
-    font-size: 13px;
-    line-height: 1.55;
-    max-width: 820px;
+    font-size: 13.5px;
+    line-height: 1.65;
+    color: var(--text-primary);
   }
 </style>

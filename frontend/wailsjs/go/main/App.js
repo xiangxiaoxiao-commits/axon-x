@@ -86,6 +86,10 @@ export function GenerateCommit(arg1, arg2, arg3, arg4, arg5, arg6) {
   return window['go']['main']['App']['GenerateCommit'](arg1, arg2, arg3, arg4, arg5, arg6);
 }
 
+export function GetDefaults() {
+  return window['go']['main']['App']['GetDefaults']();
+}
+
 export function GetEmbeddingConfig() {
   return window['go']['main']['App']['GetEmbeddingConfig']();
 }
@@ -190,6 +194,10 @@ export function MatchKnowledge(arg1, arg2) {
   return window['go']['main']['App']['MatchKnowledge'](arg1, arg2);
 }
 
+export function MoveEntity(arg1, arg2, arg3) {
+  return window['go']['main']['App']['MoveEntity'](arg1, arg2, arg3);
+}
+
 export function NamespacesFor(arg1) {
   return window['go']['main']['App']['NamespacesFor'](arg1);
 }
@@ -202,8 +210,16 @@ export function PreviewExport(arg1, arg2) {
   return window['go']['main']['App']['PreviewExport'](arg1, arg2);
 }
 
+export function PruneStaleKnowledge(arg1, arg2, arg3) {
+  return window['go']['main']['App']['PruneStaleKnowledge'](arg1, arg2, arg3);
+}
+
 export function ReadClaudeSession(arg1, arg2) {
   return window['go']['main']['App']['ReadClaudeSession'](arg1, arg2);
+}
+
+export function RememberManualEntity(arg1, arg2) {
+  return window['go']['main']['App']['RememberManualEntity'](arg1, arg2);
 }
 
 export function RemoveImportedBundle(arg1, arg2) {
@@ -220,6 +236,10 @@ export function RenameEntity(arg1, arg2, arg3) {
 
 export function RepoStatus(arg1) {
   return window['go']['main']['App']['RepoStatus'](arg1);
+}
+
+export function RestampCacheTimes(arg1) {
+  return window['go']['main']['App']['RestampCacheTimes'](arg1);
 }
 
 export function ResumeCommand(arg1, arg2) {
@@ -268,6 +288,10 @@ export function SetEmbeddingConfig(arg1, arg2) {
 
 export function SetEmbeddingMode(arg1) {
   return window['go']['main']['App']['SetEmbeddingMode'](arg1);
+}
+
+export function SetGraphModel(arg1) {
+  return window['go']['main']['App']['SetGraphModel'](arg1);
 }
 
 export function StopGeneration(arg1) {
